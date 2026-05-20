@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nix Packaging Standard — .github/update.json",
+  "description": "Config consumed by repo-standard/update.sh. See repo-standard/README.md.",
+  "type": "object",
+  "required": ["package", "upstream"],
+  "additionalProperties": false,
+  "properties": {
+    "package": {
+      "type": "string",
+      "description": "Package / repo name."
+    },
+    "upstream": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "github-release",
+            "github-tag",
+            "github-commit",
+            "gitlab-tag",
+            "gitlab-commit",
+            "gitea-commit",
+            "git-ls-remote",
+            "none",
+            "custom"
+          ]
+        },
+        "owner": { "type": "string" },
+        "repo": { "type": "string" },
+        "host": { "type": "string", "description": "GitLab/Gitea host." },
+        "project": { "type": "string", "description": "GitLab project path." },
+        "url": { "type": "string", "description": "git-ls-remote URL." },
+        "branch": {
+          "type": "string",
+          "description": "Branch for *-commit types (default: main)."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "enum": ["github-release", "github-tag", "github-commit"]
+              }
+            }
+          },
+          "then": { "required": ["owner", "repo"] }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": {
+              "type": { "enum": ["gitlab-tag", "gitlab-commit"] }
+            }
+          },
+          "then": { "required": ["project"] }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "gitea-commit" } }
+          },
+          "then": { "required": ["host", "owner", "repo"] }
+        },
+        {
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "git-ls-remote" } }
+          },
+          "then": { "required": ["url"] }
+        }
+      ]
+    },
+    "packageFile": {
+      "type": "string",
+      "default": "package.nix",
+      "description": "File `nix build .#default` centers on."
+    },
+    "versionFile": {
+      "type": "string",
+      "description": "File holding the canonical version literal (default: packageFile)."
+    },
+    "versionAttr": {
+      "type": "string",
+      "default": "version",
+      "description": "Attribute name to match — handles `version = \"x\"` and parameterized `<attr> ? \"x\"`."
+    },
+    "revFile": {
+      "type": "string",
+      "description": "File holding the package src `rev` literal for commit-tracked upstreams (default: versionFile). Set it when several `rev = \"...\"` literals exist so the package src rev is bumped, not a dependency's."
+    },
+    "versionScheme": {
+      "enum": ["literal", "unstable-date"],
+      "default": "literal",
+      "description": "How the version literal is written. 'literal': the upstream string verbatim (a bare 7-char SHA for commit-tracked repos). 'unstable-date': '<versionBase>-unstable-<YYYY-MM-DD>' (nixpkgs VCS-snapshot convention) — commit-tracked types only; comparison is by rev."
+    },
+    "versionBase": {
+      "type": "string",
+      "description": "Base version prefix for versionScheme 'unstable-date' (e.g. last release '2.0.0'). If omitted, derived by stripping any '-unstable-*' suffix from the current version."
+    },
+    "hashes": {
+      "type": "array",
+      "description": "SRI hash fields in evaluation-dependency order (source first).",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Bare field name — auto-located in the first *.nix file declaring it."
+          },
+          {
+            "type": "object",
+            "required": ["field", "file"],
+            "additionalProperties": false,
+            "properties": {
+              "field": { "type": "string" },
+              "file": { "type": "string" }
+            },
+            "description": "Explicit placement when a field name appears in multiple files."
+          }
+        ]
+      }
+    },
+    "verify": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "binary": {
+          "type": ["string", "null"],
+          "description": "Binary under result/bin to run; null to skip."
+        },
+        "args": { "type": ["string", "null"] },
+        "check": {
+          "enum": ["elf", "wrapper", "desktop"],
+          "description": "Artifact check when no binary is run."
+        }
+      }
+    }
+  }
+}
