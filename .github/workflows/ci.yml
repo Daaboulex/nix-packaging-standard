@@ -1,0 +1,36 @@
+# CI for the canonical Nix Packaging Standard itself. The fleet's drift-check
+# guarantees each repo MATCHES this canonical; this guarantees the canonical is
+# CORRECT — shell soundness, a valid schema, the schema accepts every supported
+# config pattern, and update.sh's logic passes behavioral regression tests.
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Shell syntax (bash -n)
+        run: |
+          bash -n update.sh
+          bash -n sync.sh
+          bash -n tests/run.sh
+
+      - name: ShellCheck
+        run: shellcheck update.sh sync.sh tests/run.sh
+
+      - name: Schema is a valid JSON Schema
+        run: pipx run check-jsonschema --check-metaschema update.schema.json
+
+      - name: Every supported config pattern satisfies the schema
+        run: pipx run check-jsonschema --schemafile update.schema.json tests/configs/*.json
+
+      - name: update.sh behavioral regression tests
+        run: bash tests/run.sh

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Nix Packaging Standard — .github/update.json",
-  "description": "Config consumed by repo-standard/update.sh. See repo-standard/README.md.",
+  "description": "Config consumed by the Nix Packaging Standard update.sh. Canonical repo: github.com/Daaboulex/nix-packaging-standard.",
   "type": "object",
   "required": ["package", "upstream"],
   "additionalProperties": false,
@@ -36,6 +36,11 @@
         "branch": {
           "type": "string",
           "description": "Branch for *-commit types (default: main)."
+        },
+        "tagFilter": {
+          "type": "string",
+          "default": ".*",
+          "description": "ERE matched against release/tag names (github-release, github-tag). Selects the newest matching tag — pin to one namespace when upstream publishes several (e.g. \"^[0-9]\" to skip \"android/*\"). Default \".*\" matches all."
         }
       },
       "allOf": [
@@ -76,9 +81,9 @@
       ]
     },
     "packageFile": {
-      "type": "string",
+      "type": ["string", "null"],
       "default": "package.nix",
-      "description": "File `nix build .#default` centers on."
+      "description": "File `nix build .#default` centers on. null/omitted for module-only or non-building repos (upstream type none/trackOnly)."
     },
     "versionFile": {
       "type": "string",
@@ -94,13 +99,28 @@
       "description": "File holding the package src `rev` literal for commit-tracked upstreams (default: versionFile). Set it when several `rev = \"...\"` literals exist so the package src rev is bumped, not a dependency's."
     },
     "versionScheme": {
-      "enum": ["literal", "unstable-date"],
+      "enum": ["literal", "unstable-date", "rev-only"],
       "default": "literal",
-      "description": "How the version literal is written. 'literal': the upstream string verbatim (a bare 7-char SHA for commit-tracked repos). 'unstable-date': '<versionBase>-unstable-<YYYY-MM-DD>' (nixpkgs VCS-snapshot convention) — commit-tracked types only; comparison is by rev."
+      "description": "How the version literal is written. 'literal': the upstream string verbatim (a bare 7-char SHA for commit-tracked repos). 'unstable-date': '<versionBase>-unstable-<YYYY-MM-DD>' (nixpkgs VCS-snapshot convention) — commit-tracked types only; comparison is by rev. 'rev-only': bump rev (+ hash + date) and LEAVE the human-set version string untouched (git-snapshot packages like mesa-git whose version is upstream's self-reported MESA_VERSION); commit-tracked types only; comparison is by rev."
     },
     "versionBase": {
       "type": "string",
       "description": "Base version prefix for versionScheme 'unstable-date' (e.g. last release '2.0.0'). If omitted, derived by stripping any '-unstable-*' suffix from the current version."
+    },
+    "trackOnly": {
+      "type": "boolean",
+      "default": false,
+      "description": "Hand-mirrored repos with no buildable artifact: the updater only DETECTS upstream movement (against trackFile/trackKey) and files a 'remirror-needed' reminder issue — it never writes, builds, or advances a version. Requires a commit-tracked upstream type."
+    },
+    "trackFile": {
+      "type": "string",
+      "default": "upstream-version.json",
+      "description": "trackOnly: JSON file recording the last-mirrored upstream marker."
+    },
+    "trackKey": {
+      "type": "string",
+      "default": "commit",
+      "description": "trackOnly: key in trackFile holding the recorded upstream commit."
     },
     "hashes": {
       "type": "array",
@@ -119,7 +139,7 @@
               "field": { "type": "string" },
               "file": { "type": "string" }
             },
-            "description": "Explicit placement when a field name appears in multiple files."
+            "description": "Explicit placement when a field name appears in multiple files. `file` may be a .json (e.g. version.json) for a JSON-resident hash (\"field\": \"sha256-...\"); required there since the bare-string form only scans *.nix."
           }
         ]
       }
@@ -134,8 +154,8 @@
         },
         "args": { "type": ["string", "null"] },
         "check": {
-          "enum": ["elf", "wrapper", "desktop"],
-          "description": "Artifact check when no binary is run."
+          "enum": ["elf", "wrapper", "desktop", "eval"],
+          "description": "Artifact check when no binary is run. 'eval': eval + clean build are the verification, no artifact-shape assertion (also the behavior when omitted). 'elf'/'wrapper'/'desktop': additionally assert the named artifact exists under result/."
         }
       }
     }

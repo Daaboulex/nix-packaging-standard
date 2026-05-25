@@ -1,0 +1,12 @@
+{
+  "package": "example-release",
+  "upstream": {
+    "type": "github-release",
+    "owner": "acme",
+    "repo": "example",
+    "tagFilter": "^[0-9]"
+  },
+  "packageFile": "package.nix",
+  "hashes": ["hash"],
+  "verify": { "binary": "example", "args": "--version" }
+}

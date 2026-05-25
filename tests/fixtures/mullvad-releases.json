@@ -1,0 +1,8 @@
+[
+  { "tag_name": "android/2026.5", "draft": false, "prerelease": false },
+  { "tag_name": "2026.3-beta1",   "draft": false, "prerelease": true  },
+  { "tag_name": "android/2026.4", "draft": false, "prerelease": false },
+  { "tag_name": "2026.2",         "draft": false, "prerelease": false },
+  { "tag_name": "2026.1",         "draft": false, "prerelease": false },
+  { "tag_name": "android/2026.3", "draft": false, "prerelease": false }
+]
