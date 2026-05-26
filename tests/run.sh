@@ -61,7 +61,19 @@ case "$*" in
   *) exit 0 ;;
 esac
 SH
-chmod +x "$BIN/curl" "$BIN/git" "$BIN/nix"
+# `file` stub: classify by ELF magic (7f 45 4c 46) so the elf-verify test is
+# deterministic and host-independent — real `file` may be absent (e.g. a
+# minimal NixOS) and we don't want the test to depend on its exact wording.
+cat >"$BIN/file" <<'SH'
+#!/usr/bin/env bash
+p="${@: -1}"
+if [ "$(head -c4 "$p" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]; then
+  echo "$p: ELF 64-bit LSB executable"
+else
+  echo "$p: ASCII text"
+fi
+SH
+chmod +x "$BIN/curl" "$BIN/git" "$BIN/nix" "$BIN/file"
 
 run_update() { # run_update <repodir>  -> sets RC; outputs in <repodir>/out.env
   local dir="$1"
@@ -144,6 +156,47 @@ check "marketing version kept"    "26.2.0-devel"  "$(jq -r .version "$d/version.
 check "rev bumped"                "$NEWREV"       "$(jq -r .rev "$d/version.json")"
 check "JSON-resident hash written" "$NEWHASH"     "$(jq -r .hash "$d/version.json")"
 check "new_version is short rev"  "new1111"       "$(get "$d" new_version)"
+
+# ---- Test 4: elf verify is robust to multi-output / non-ELF-first layout ---
+# Regression for vfio-stealth-nix #5. The verify must SCAN for a real ELF, not
+# demand that the first executable be one. qemu is multi-output and ships a
+# non-ELF qemu-ga; the broken per-repo check did `find result/bin | head -1`
+# and failed on it. Here bin/ holds only a non-ELF wrapper and the real ELF
+# lives in lib/, so a correct scan must look past bin/'s first entry. `result`
+# is a symlink (as `nix build` makes it) so the trailing `rm -f result` works,
+# and both bin/ and lib/ exist so the scan's `find` doesn't error on a missing
+# dir under set -e.
+echo "Test 4: elf verify finds the ELF past a non-ELF bin entry"
+d="$WORK/t4"; mkdir -p "$d/.github" "$d/_out/bin" "$d/_out/lib"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "git-ls-remote", "url": "u", "branch": "main" },
+  "packageFile": "version.json", "versionScheme": "rev-only",
+  "hashes": [], "verify": { "check": "elf" } }
+JSON
+printf '{ "rev": "old0000000000000000000000000000000000000a", "version": "1.0", "date": "x" }\n' >"$d/version.json"
+printf '#!/bin/sh\necho wrapper\n' >"$d/_out/bin/qemu-ga"   # non-ELF, scanned first
+printf '\177ELF\002\001\001\0' >"$d/_out/lib/libqemu.so"    # real ELF magic, in lib/
+chmod +x "$d/_out/bin/qemu-ga"
+ln -s _out "$d/result"                                       # nix build => symlink, not a dir
+: >"$d/.nixflag"                                             # make the nix-build stub succeed
+STUB_GIT_REV="new2222222222222222222222222222222222222c" run_update "$d"
+check "elf verify passes (exit 0)"   "0"    "$RC"
+check "update recorded"              "true" "$(get "$d" updated)"
+check "no verification-error"        ""     "$(get "$d" error_type)"
+
+# ---- Test 4b: elf verify fails cleanly when NO ELF exists anywhere ---------
+echo "Test 4b: elf verify fails when no ELF artifact is present"
+d="$WORK/t4b"; mkdir -p "$d/.github" "$d/_out/bin" "$d/_out/lib"
+cp "$WORK/t4/.github/update.json" "$d/.github/update.json"
+printf '{ "rev": "old0000000000000000000000000000000000000a", "version": "1.0", "date": "x" }\n' >"$d/version.json"
+printf '#!/bin/sh\necho only-a-script\n' >"$d/_out/bin/qemu-ga"   # non-ELF; lib/ stays empty
+chmod +x "$d/_out/bin/qemu-ga"
+ln -s _out "$d/result"
+: >"$d/.nixflag"
+STUB_GIT_REV="new2222222222222222222222222222222222222c" run_update "$d"
+check "no-ELF exits 1"                "1"                  "$RC"
+check "error_type verification-error" "verification-error" "$(get "$d" error_type)"
 
 echo
 echo "------------------------------------------"
