@@ -4,9 +4,10 @@
 # assertions + every mkIf path) against a minimal config, WITHOUT building the
 # system/home closure. A cheap activation-error gate for module repos — plain
 # `nix flake check` only proves a module evaluates as a *definition*, not that
-# it instantiates against a real configuration. The check derivation only
-# echoes the instantiated toplevel's drvPath, so evaluating it forces the whole
-# module to evaluate while building it stays trivial.
+# it instantiates against a real configuration. The check forces the
+# instantiated drvPath via `builtins.seq` (so options + assertions evaluate and
+# throw on failure) but stores only a context-free string — it never depends on
+# or realizes the closure, so the check is eval-only and cheap, even in CI.
 {
   nixosModuleCheck =
     {
@@ -33,9 +34,9 @@
         ];
       };
     in
-    pkgs.runCommand "module-eval" { } ''
-      echo "instantiated: ${sys.config.system.build.toplevel.drvPath}" > "$out"
-    '';
+    pkgs.runCommand "module-eval" {
+      ok = builtins.seq sys.config.system.build.toplevel.drvPath "instantiated";
+    } ''echo "$ok" > "$out"'';
 
   homeModuleCheck =
     {
@@ -60,7 +61,7 @@
         ];
       };
     in
-    pkgs.runCommand "module-eval" { } ''
-      echo "instantiated: ${hm.activationPackage.drvPath}" > "$out"
-    '';
+    pkgs.runCommand "module-eval" {
+      ok = builtins.seq hm.activationPackage.drvPath "instantiated";
+    } ''echo "$ok" > "$out"'';
 }
