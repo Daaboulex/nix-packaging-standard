@@ -5,8 +5,9 @@
 #
 # Provides, in the consumer's own module fixpoint (so each repo stays
 # self-contained and reproducible against its own lock):
-#   - the git-hooks lint/format gate (nixfmt-rfc-style, typos, rumdl,
-#     check-readme-sections), the formatter, and a dev shell;
+#   - the git-hooks lint/format gate (nixfmt-rfc-style, typos, rumdl with its
+#     config, and the standard's own check-readme-sections script), the
+#     formatter, and a dev shell — so repos carry no .rumdl.toml or linter scripts;
 #   - every declared package aliased into `checks` (so `nix flake check` /
 #     nix-fast-build actually BUILD the package — nix#13470);
 #   - `std-conformance`: a hermetic check that the synced workflow/script
@@ -34,11 +35,20 @@
       pre-commit.settings.hooks = {
         nixfmt-rfc-style.enable = true;
         typos.enable = true;
-        rumdl.enable = true;
+        # rumdl config lives HERE, not in a per-repo .rumdl.toml: MD013
+        # (line length) is impractical for prose, links, and tables.
+        rumdl = {
+          enable = true;
+          settings.configuration = {
+            MD013.enabled = false;
+          };
+        };
+        # The README-section linter is the standard's own script (no per-repo
+        # scripts/check-readme-sections.sh to copy and let drift).
         check-readme-sections = {
           enable = true;
           name = "check-readme-sections";
-          entry = "bash scripts/check-readme-sections.sh";
+          entry = "bash ${../scripts/check-readme-sections.sh}";
           files = "README\\.md$";
           language = "system";
         };

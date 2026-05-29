@@ -24,7 +24,6 @@ declare -A FILES=(
   ["update.yml"]=".github/workflows/update.yml"
   ["maintenance.yml"]=".github/workflows/maintenance.yml"
   ["ci.yml"]=".github/workflows/ci.yml"
-  [".rumdl.toml"]=".rumdl.toml"
 )
 
 CHECK=0
