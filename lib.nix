@@ -15,6 +15,7 @@
       system,
       module,
       config ? { },
+      overlays ? [ ], # apply the repo's overlay if the module refs overlay-only pkgs
     }:
     let
       pkgs = nixpkgs.legacyPackages.${system};
@@ -26,6 +27,7 @@
           (
             { lib, ... }:
             {
+              nixpkgs.overlays = overlays;
               boot.isContainer = true; # skip bootloader/fileSystem requirements
               networking.useHostResolvConf = lib.mkForce false; # let systemd-resolved modules eval
               system.stateVersion = lib.trivial.release;
@@ -45,9 +47,13 @@
       system,
       module,
       config ? { },
+      overlays ? [ ], # apply the repo's overlay if the module refs overlay-only pkgs
     }:
     let
-      pkgs = nixpkgs.legacyPackages.${system};
+      pkgs = import nixpkgs {
+        inherit system overlays;
+        config.allowUnfree = true;
+      };
       hm = home-manager.lib.homeManagerConfiguration {
         inherit pkgs;
         modules = [
