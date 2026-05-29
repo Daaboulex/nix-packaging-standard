@@ -16,11 +16,15 @@ set -euo pipefail
 STD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPOS_DIR="${PKG_REPOS_DIR:?set PKG_REPOS_DIR to the directory holding the packaging-repo clones}"
 
-# canonical file in the standard repo  ->  destination path inside each repo
+# canonical file in the standard repo  ->  destination path inside each repo.
+# sync.sh BOOTSTRAPS these into a repo; the std-conformance flake check
+# (flakeModules.base) then enforces byte-identity — no curl-based drift-check.
 declare -A FILES=(
   ["update.sh"]="scripts/update.sh"
   ["update.yml"]=".github/workflows/update.yml"
-  ["drift-check.yml"]=".github/workflows/drift-check.yml"
+  ["maintenance.yml"]=".github/workflows/maintenance.yml"
+  ["ci.yml"]=".github/workflows/ci.yml"
+  [".rumdl.toml"]=".rumdl.toml"
 )
 
 CHECK=0

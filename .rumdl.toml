@@ -1,0 +1,4 @@
+# Canonical markdown-lint baseline — Nix Packaging Standard.
+# MD013 (line length): prose, URLs, and tables routinely exceed 80 columns.
+[MD013]
+enabled = false

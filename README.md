@@ -3,55 +3,110 @@
 Canonical source of the shared tooling used by every `*-nix` packaging repo in
 the [Daaboulex](https://github.com/Daaboulex) NixOS package fleet.
 
-**This repo is the single source of truth.** Per-repo copies are synced from
-here by `sync.sh`; never edit a per-repo copy directly — the per-repo
-`drift-check` workflow will fail CI if they diverge.
+**This repo is the single source of truth**, consumed two ways:
 
-History: prior to 2026-05-19 there was no canonical copy — each repo carried
-its own `update.sh`, and the copies silently diverged (3+ variants). The
-standard was first centralized inside `Daaboulex/nixos:repo-standard/`, then
-promoted to this dedicated repo on 2026-05-20 so the standard versions
-independently of the consuming flake.
+1. **Nix-side logic** (lint/format gate, dev shell, package→check aliasing,
+   conformance + schema checks) is a flake-parts **flakeModule** that each repo
+   imports via a pinned `inputs.std` — versioned, type-checked, reproducible.
+2. **GitHub Actions YAML + scripts** (which cannot be a Nix import) are
+   bootstrapped into each repo by `sync.sh`, and their byte-identity to the
+   canonical is then enforced by the `std-conformance` flake check — no
+   curl-based drift workflow, no `raw.githubusercontent` dependency.
+
+## How a repo consumes the standard
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-parts.url = "github:hercules-ci/flake-parts";
+    git-hooks = {
+      url = "github:cachix/git-hooks.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    std = {
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.0.0"; # pin a tag
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.git-hooks.follows = "git-hooks";
+    };
+  };
+
+  outputs =
+    inputs@{ flake-parts, ... }:
+    flake-parts.lib.mkFlake { inherit inputs; } {
+      systems = [ "x86_64-linux" ]; # add "aarch64-linux" only if it builds
+      imports = [ inputs.std.flakeModules.base ]; # + archetype modules as needed
+      perSystem =
+        { pkgs, ... }:
+        {
+          packages.default = pkgs.callPackage ./package.nix { };
+        };
+    };
+}
+```
+
+Pin a **release tag**, never `main`: an eval-breaking change in the standard
+must never reach a repo except by a deliberate, reviewed lock bump.
+
+## `flakeModules`
+
+| Module | Provides |
+| --- | --- |
+| `base` | git-hooks gate (`nixfmt-rfc-style`, `typos`, `rumdl`, `check-readme-sections`), `formatter`, `devShells.default`, every declared package aliased into `checks` (so `nix flake check` BUILDS it), `std-conformance` (synced files byte-match the canonical), `std-update-json` (validates `.github/update.json` against the schema) |
+
+Archetype modules (`module-eval`, `python`, `kernel`, `multi-component`) are
+added here as each archetype's first repo is converted — never speculatively.
 
 ## Files
 
-| File                 | Synced to (per repo)                | Purpose                              |
-| -------------------- | ----------------------------------- | ------------------------------------ |
-| `update.sh`          | `scripts/update.sh`                 | Detect + apply upstream updates      |
-| `update.yml`         | `.github/workflows/update.yml`      | Scheduled Update workflow            |
-| `drift-check.yml`    | `.github/workflows/drift-check.yml` | CI: synced files match the canonical |
-| `update.schema.json` | _(not synced — reference)_          | JSON Schema for `update.json`        |
-| `sync.sh`            | _(not synced — run from here)_      | Push canonical files into repos      |
-| `README.md`          | _(this file)_                       | The standard, documented             |
+| File | Bootstrapped to (per repo) | Purpose |
+| --- | --- | --- |
+| `flake.nix` | _(not synced)_ | Exposes `flakeModules.*` |
+| `flake-modules/base.nix` | _(imported, not synced)_ | The shared flakeModule |
+| `update.sh` | `scripts/update.sh` | Detect + apply upstream updates |
+| `ci.yml` | `.github/workflows/ci.yml` | Archetype-blind CI (build every output) |
+| `maintenance.yml` | `.github/workflows/maintenance.yml` | Weekly `flake.lock` refresh |
+| `update.yml` | `.github/workflows/update.yml` | Scheduled Update workflow |
+| `.rumdl.toml` | `.rumdl.toml` | Markdown-lint baseline |
+| `update.schema.json` | _(reference, not synced)_ | JSON Schema for `update.json` |
+| `sync.sh` | _(run from here)_ | Bootstrap canonical files into repos |
+
+The synced workflow files + `scripts/update.sh` are byte-identical fleet-wide
+and enforced by `std-conformance`. Keep them **stable** across minor standard
+releases — evolve via additive flakeModules. A change to a synced file is a
+major bump that re-syncs every repo in one coordinated batch.
+
+## CI model
+
+One archetype-blind `ci.yml`, identical fleet-wide. It runs the AI-artifact
+guard, then on a `[ubuntu-latest, ubuntu-24.04-arm]` matrix builds every output
+the flake declares for that runner's system via
+`nix-fast-build --skip-cached` — so a repo that declares no outputs for an arch
+simply no-ops there (declared == built). There is no per-repo build target, no
+archetype conditional, and no binary-cache token: `cache.nixos.org` substitutes
+every unmodified dependency for free.
 
 ## `sync.sh`
 
 ```bash
 git clone https://github.com/Daaboulex/nix-packaging-standard.git
 cd nix-packaging-standard
+export PKG_REPOS_DIR=/path/to/repos   # directory holding the packaging clones
 
-# Point at the directory holding the packaging-repo clones (each must be its
-# own git clone of its repo, with .github/update.json present).
-export PKG_REPOS_DIR=/path/to/repos
-
-./sync.sh                       # sync canonical files into all repos
-./sync.sh coolercontrol-nix     # named repos only
-./sync.sh --check               # report drift only, exit 1 if any
+./sync.sh                       # bootstrap canonical files into all repos
+./sync.sh ripgrep-nix           # named repos only
+./sync.sh --check               # report drift, change nothing, exit 1 if any
 ```
 
-Each repo commits + pushes its own changes. The synced `drift-check.yml`
-workflow then fails CI if any synced file (`scripts/update.sh` + the two
-canonical workflows) diverges from the canonical — it compares each file's
-sha256 against
-`raw.githubusercontent.com/Daaboulex/nix-packaging-standard/main/`.
-(`custom`-type repos keep a bespoke `update.sh` and skip that one file.)
-Run `sync.sh --check` for the same check locally.
+`custom`-type repos keep a bespoke `scripts/update.sh` (skipped here).
+Enforcement is the per-repo `std-conformance` flake check; `sync.sh --check` is
+the same comparison locally.
 
 ## `.github/update.json` schema
 
 ```jsonc
 {
-  "package": "openviking",            // package / repo name
+  "package": "ripgrep",               // package / repo name
   "upstream": { "type": "...", ... }, // see upstream types below
   "packageFile": "package.nix",       // file `nix build .#default` centers on
   "versionFile": "flake.nix",         // file holding the canonical version
@@ -73,35 +128,14 @@ Run `sync.sh --check` for the same check locally.
 ```
 
 - **`versionAttr`** matches both `version = "x"` and parameterized
-  `<attr> ? "x"` default-argument forms — so `portmasterVersion ? "2.1.7"`
-  works with `"versionAttr": "portmasterVersion"`.
-- **`versionFile`** decouples the version literal's location from
-  `packageFile` (e.g. the literal lives in `flake.nix` while `package.nix`
-  only takes it as an argument).
-- **`revFile`** scopes the `rev` literal bump for commit-tracked upstreams
-  (defaults to `versionFile`). Set it explicitly when a repo carries
-  several `rev = "..."` literals — e.g. a bundled dependency's `rev` — so
-  the updater bumps the package's own src `rev`, not a dependency's.
+  `<attr> ? "x"` default-argument forms.
+- **`versionFile`** decouples the version literal's location from `packageFile`.
+- **`revFile`** scopes the `rev` literal bump for commit-tracked upstreams.
 - **`hashes`** entries list SRI hash fields in evaluation-dependency order
-  (source hash first, then vendor hashes). Each entry is either a bare field
-  name — auto-located in the first `*.nix` file declaring it — or
-  `{"field","file"}` to disambiguate when a name like `hash` appears in
-  several files (source `hash` in `flake.nix` vs bundled-wheel `hash`s in
-  `package.nix`).
-- For commit-tracked packages prefer **`versionFile: "version.json"`**: the
-  updater writes `{version, rev, date}` cleanly instead of clobbering a
-  semantic version string with a bare SHA.
-- **`versionScheme`** controls the written version literal. `literal`
-  (default) writes the upstream string verbatim — a bare 7-char SHA for
-  commit-tracked types. `unstable-date` writes
-  `<versionBase>-unstable-<YYYY-MM-DD>` (the nixpkgs VCS-snapshot
-  convention, orderable by `builtins.compareVersions`); the `rev` attr
-  still tracks every commit, and update detection compares the `rev`, not
-  the date string. `unstable-date` is valid only for commit-tracked
-  upstream types.
-- **`versionBase`** is the base prefix for `unstable-date` (e.g. the last
-  release tag, `"2.0.0"`). If omitted, it is derived by stripping any
-  `-unstable-*` suffix from the current version.
+  (source first), each a bare field name or `{"field","file"}` to disambiguate.
+- For commit-tracked packages prefer **`versionFile: "version.json"`**.
+- **`versionScheme`** controls the written version literal; `unstable-date`
+  writes `<versionBase>-unstable-<YYYY-MM-DD>` (commit-tracked only).
 
 ### Upstream types
 
@@ -109,10 +143,9 @@ Run `sync.sh --check` for the same check locally.
 `gitlab-commit` · `gitea-commit` · `git-ls-remote` · `none` · `custom`
 
 `none` — module/multi-component repos with nothing to track.
-`custom` — the repo ships its own `scripts/update.sh` (multi-channel apps
-such as gemini-cli stable/preview/nightly, or non-API sources like OCCT).
-Custom repos are sanctioned exceptions: the canonical `update.sh` exits 0
-early for them; their bespoke script must honour the same exit contract.
+`custom` — the repo ships its own `scripts/update.sh` (multi-channel apps, or
+non-API sources like OCCT). The canonical `update.sh` exits 0 early for them;
+their bespoke script must honour the same exit contract.
 
 ## `update.sh` contract
 
@@ -122,16 +155,22 @@ early for them; their bespoke script must honour the same exit contract.
 - **exit 2** — network / API error → no issue, retried next run.
 - Outputs (to `$GITHUB_OUTPUT`): `updated`, `old_version`, `new_version`,
   `package_name`, `upstream_url`, `error_type`.
-- Flow: read version → fetch upstream → compare → write version (+ rev) →
-  extract each hash (build-fail-parse) → verify (eval → build → artifact).
 
-## `update.yml` behaviour
+## `update.yml` / `maintenance.yml` behaviour
 
-- Success → silent commit + push to the default branch.
-- Failure (`exit 1`) → `update-failed` issue with the build log + a recovery
-  branch; previous failure issues auto-close on the next success.
-- `EXIT_CODE=${PIPESTATUS[0]}` captures `update.sh`'s real exit — **not**
-  `tee`'s. (The historic `$?` bug silently swallowed every failure.)
+- Update success → silent commit + push to the default branch.
+- Update failure (`exit 1`) → `update-failed` issue with the build log + a
+  recovery branch; previous failure issues auto-close on the next success.
+- `EXIT_CODE=${PIPESTATUS[0]}` captures the real exit — **not** `tee`'s.
+- Maintenance: weekly `nix flake update`, rebuild, push only if green, else open
+  a labeled issue; plus stale-branch cleanup (>30 days).
+
+## History
+
+Pre-2026-05-19 each repo carried its own `update.sh` and they silently diverged.
+The standard was centralized, then promoted to this dedicated repo 2026-05-20.
+v2.0.0 (2026-05) replaced file-copy + a curl-based `drift-check` with the
+flake-parts `flakeModule` + in-flake `std-conformance` model above.
 
 ## License
 

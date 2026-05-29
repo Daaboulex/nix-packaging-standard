@@ -1,0 +1,64 @@
+# Canonical CI workflow — Nix Packaging Standard.
+# Source of truth: github:Daaboulex/nix-packaging-standard. Synced into each
+# packaging repo by sync.sh; its byte-identity is then enforced by the
+# `std-conformance` flake check (flakeModules.base), so it cannot drift.
+#
+# Archetype-blind by design: this file knows nothing about what kind of repo
+# it runs in. It builds every output the flake declares for the runner's
+# system (`nix-fast-build` over `.#checks.<system>`, which includes every
+# package aliased in by flakeModules.base, the git-hooks lint/format check,
+# the conformance + schema checks, and any repo-specific smoke check).
+# Per-arch native runners: declared == built (a flake that declares no
+# outputs for an arch simply no-ops on that runner).
+name: CI
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  no-ai-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Fail if AI artifacts are tracked
+        run: |
+          set -e
+          FORBIDDEN='^(CLAUDE\.md|GEMINI\.md|AGENTS\.md|AI-progress\.json|AI-tasks\.json|\.session-handoff.*\.md|\.claude/|\.gemini/|\.codex/|\.ai-context/|\.cursor/|\.superpowers/|\.planning/|memory/|handoffs/|deferred-work\.jsonl|self-improvements-pending-.*\.jsonl)'
+          MATCHES=$(git ls-files | grep -E "$FORBIDDEN" || true)
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Tracked AI artifacts detected. These must be gitignored, never committed:"
+            echo "$MATCHES" | sed 's/^/  - /'
+            exit 1
+          fi
+          echo "Clean — no AI artifacts tracked."
+
+  build:
+    needs: no-ai-files
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22 (node24)
+
+      - name: Build + check every output declared for this system
+        run: |
+          SYS=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+          if ! nix eval ".#checks.$SYS" --apply 'x: builtins.attrNames x != [ ]' 2>/dev/null | grep -qx true; then
+            echo "Flake declares no checks for $SYS — skipping (declared == built)."
+            exit 0
+          fi
+          # Substitution (cache.nixos.org) reuses every unmodified path for free;
+          # --skip-cached builds ONLY what no substituter already has.
+          nix run nixpkgs#nix-fast-build -- --skip-cached --no-nom --flake ".#checks.$SYS"
