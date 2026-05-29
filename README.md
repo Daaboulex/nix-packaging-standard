@@ -25,7 +25,7 @@ the [Daaboulex](https://github.com/Daaboulex) NixOS package fleet.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.0.0"; # pin a tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.2.3"; # pin a tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -54,8 +54,28 @@ must never reach a repo except by a deliberate, reviewed lock bump.
 | --- | --- |
 | `base` | git-hooks gate (`nixfmt-rfc-style`, `typos`, `rumdl`, `check-readme-sections`), `formatter`, `devShells.default`, every declared package aliased into `checks` (so `nix flake check` BUILDS it), `std-conformance` (synced files byte-match the canonical), `std-update-json` (validates `.github/update.json` against the schema) |
 
-Archetype modules (`module-eval`, `python`, `kernel`, `multi-component`) are
-added here as each archetype's first repo is converted — never speculatively.
+## `lib`
+
+Helpers consumed as `inputs.std.lib.*`. Module repos add a module-instantiation
+check that forces FULL evaluation (options + assertions + every `mkIf` path)
+without building the closure — eval-only and cheap, even in CI.
+
+| Helper | Use case |
+| --- | --- |
+| `nixosModuleCheck { nixpkgs, system, module, config?, overlays? }` | NixOS module repos. `overlays` supplies the repo's overlay when the module refs overlay-only pkgs. |
+| `homeModuleCheck { nixpkgs, home-manager, system, module, config?, overlays? }` | Home Manager module repos. Imports nixpkgs with `config.allowUnfree = true` for unfree packages. |
+
+Example:
+
+```nix
+checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
+  inherit (inputs) nixpkgs;
+  inherit system;
+  overlays = [ self.overlays.default ];
+  module = ./module.nix;
+  config.programs.foo.enable = true;
+};
+```
 
 ## Files
 
@@ -67,7 +87,6 @@ added here as each archetype's first repo is converted — never speculatively.
 | `ci.yml` | `.github/workflows/ci.yml` | Archetype-blind CI (build every output) |
 | `maintenance.yml` | `.github/workflows/maintenance.yml` | Weekly `flake.lock` refresh |
 | `update.yml` | `.github/workflows/update.yml` | Scheduled Update workflow |
-| `.rumdl.toml` | `.rumdl.toml` | Markdown-lint baseline |
 | `update.schema.json` | _(reference, not synced)_ | JSON Schema for `update.json` |
 | `sync.sh` | _(run from here)_ | Bootstrap canonical files into repos |
 
@@ -75,6 +94,26 @@ The synced workflow files + `scripts/update.sh` are byte-identical fleet-wide
 and enforced by `std-conformance`. Keep them **stable** across minor standard
 releases — evolve via additive flakeModules. A change to a synced file is a
 major bump that re-syncs every repo in one coordinated batch.
+
+## Per-repo extensions
+
+The standard is designed for dendritic extension — each repo adds what it needs
+in its own `perSystem`, never by patching the standard:
+
+- **Module collision** (`disabledModules`): when nixpkgs ships a module at the
+  same option path, the repo's `module.nix` adds
+  `disabledModules = [ "programs/foo.nix" ];` (streamcontroller, coolercontrol).
+- **Custom devShell**: `lib.mkForce` the standard's lint-only default to fold in
+  the repo's own build toolchain (eden: cmake/ninja/ccache).
+- **Typos exclusions**: `_typos.toml` with `[files] extend-exclude` to skip
+  vendored/forked C++ source (vkBasalt, lmstudio).
+- **Rumdl exclusions/overrides**: in `perSystem`, extend
+  `pre-commit.settings.hooks.rumdl.excludes` or `.settings.configuration` to
+  skip vendored markdown or disable rules the README legitimately triggers
+  (vkBasalt: `MD033` for inline-HTML screenshots).
+- **Unfree**: `config.nixpkgs.config.allowUnfree = true` in the module-eval
+  config (lmstudio); standalone `pkgs` import with `config.allowUnfree = true`
+  in `perSystem` (mesa-git).
 
 ## CI model
 
