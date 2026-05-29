@@ -1,0 +1,66 @@
+# std.lib — helpers consumed as inputs.std.lib.*
+#
+# Module instantiation checks: force FULL evaluation of a module (options +
+# assertions + every mkIf path) against a minimal config, WITHOUT building the
+# system/home closure. A cheap activation-error gate for module repos — plain
+# `nix flake check` only proves a module evaluates as a *definition*, not that
+# it instantiates against a real configuration. The check derivation only
+# echoes the instantiated toplevel's drvPath, so evaluating it forces the whole
+# module to evaluate while building it stays trivial.
+{
+  nixosModuleCheck =
+    {
+      nixpkgs,
+      system,
+      module,
+      config ? { },
+    }:
+    let
+      pkgs = nixpkgs.legacyPackages.${system};
+      sys = nixpkgs.lib.nixosSystem {
+        inherit system;
+        modules = [
+          module
+          config
+          (
+            { lib, ... }:
+            {
+              boot.isContainer = true; # skip bootloader/fileSystem requirements
+              networking.useHostResolvConf = lib.mkForce false; # let systemd-resolved modules eval
+              system.stateVersion = lib.trivial.release;
+            }
+          )
+        ];
+      };
+    in
+    pkgs.runCommand "module-eval" { } ''
+      echo "instantiated: ${sys.config.system.build.toplevel.drvPath}" > "$out"
+    '';
+
+  homeModuleCheck =
+    {
+      nixpkgs,
+      home-manager,
+      system,
+      module,
+      config ? { },
+    }:
+    let
+      pkgs = nixpkgs.legacyPackages.${system};
+      hm = home-manager.lib.homeManagerConfiguration {
+        inherit pkgs;
+        modules = [
+          module
+          config
+          {
+            home.username = "ci";
+            home.homeDirectory = "/home/ci";
+            home.stateVersion = "24.05";
+          }
+        ];
+      };
+    in
+    pkgs.runCommand "module-eval" { } ''
+      echo "instantiated: ${hm.activationPackage.drvPath}" > "$out"
+    '';
+}

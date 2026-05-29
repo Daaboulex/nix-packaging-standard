@@ -20,10 +20,13 @@
 
       # The shared contract consumed by every packaging repo via
       #   imports = [ inputs.std.flakeModules.base ];
-      # `base` is the proven, fleet-wide surface. Archetype modules
-      # (python/kernel/module-eval/multi-component) are added here as each
-      # archetype's first repo is converted — never speculatively.
+      # `base` is the proven, fleet-wide surface.
       flake.flakeModules.base = ./flake-modules/base.nix;
+
+      # Helper functions consumed as inputs.std.lib.*. Module repos add a
+      # module-instantiation check with nixosModuleCheck / homeModuleCheck.
+      # Added as each archetype's first repo is converted — never speculatively.
+      flake.lib = import ./lib.nix;
 
       perSystem =
         { pkgs, ... }:
