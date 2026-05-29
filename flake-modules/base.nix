@@ -23,13 +23,23 @@
     let
       src = inputs.self;
 
+      # custom-updater repos ship a bespoke scripts/update.sh — exclude it from
+      # the byte-conformance check (it is intentionally not the canonical).
+      updateJson =
+        if builtins.pathExists (src + "/.github/update.json") then
+          builtins.fromJSON (builtins.readFile (src + "/.github/update.json"))
+        else
+          { };
+      isCustom = (updateJson.upstream.type or "") == "custom";
+
       # consumer path -> canonical shipped in this standard
-      synced = {
+      syncedAll = {
         ".github/workflows/ci.yml" = ../ci.yml;
         ".github/workflows/maintenance.yml" = ../maintenance.yml;
         ".github/workflows/update.yml" = ../update.yml;
         "scripts/update.sh" = ../update.sh;
       };
+      synced = if isCustom then builtins.removeAttrs syncedAll [ "scripts/update.sh" ] else syncedAll;
     in
     {
       pre-commit.settings.hooks = {
