@@ -10,6 +10,17 @@
       "type": "string",
       "description": "Package / repo name."
     },
+    "description": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Canonical GitHub repo description, applied by sync-meta.sh. Convention: '<Upstream Name> packaged for NixOS — <one concise clause>' (HM-only: '… Home Manager module — …'; original projects describe directly). No cross-repo references, no marketing fluff, one clause."
+    },
+    "topics": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+      "description": "Canonical GitHub repo topics, applied by sync-meta.sh. Convention: 'nix', 'nixos', 'flake' baseline + 'nixos-module'/'home-manager' where applicable + the software name + a few domain topics. Lowercase, hyphenated."
+    },
     "upstream": {
       "type": "object",
       "required": ["type"],

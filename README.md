@@ -25,7 +25,7 @@ the [Daaboulex](https://github.com/Daaboulex) NixOS package fleet.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.3.2"; # pin a tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.4.0"; # pin a tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -47,6 +47,44 @@ the [Daaboulex](https://github.com/Daaboulex) NixOS package fleet.
 
 Pin a **release tag**, never `main`: an eval-breaking change in the standard
 must never reach a repo except by a deliberate, reviewed lock bump.
+
+## Repo conventions
+
+Every fleet repo follows these. Metadata (description + topics) is declared in
+`.github/update.json` and applied with `sync-meta.sh`, so it can't silently drift.
+
+- **Default branch**: `main`, and a single branch — the `maintenance.yml`
+  cleanup job prunes stale `update/*` branches.
+- **License**: the repo's `LICENSE` is **MIT** — it licenses *your* Nix packaging
+  code, which is permissive and reusable. The packaged software's licence is
+  declared in the derivation's `meta.license`, which **must be accurate**. Two
+  exceptions keep upstream's licence verbatim: **forks** (the repo vendors
+  upstream source) and **derivative transcriptions** (e.g. a module that
+  re-expresses GPL config). Proprietary upstreams: MIT packaging + `meta.license`
+  marked unfree.
+- **Topics**: `nix`, `nixos`, `flake` baseline; add `nixos-module` /
+  `home-manager` when the repo ships one; then the software name and a few domain
+  topics. Lowercase, hyphenated.
+- **Description**: `<Upstream Name> packaged for NixOS — <one concise clause>`.
+  HM-only → "… Home Manager module — …"; forks lead with the fork's value-add;
+  original (non-packaging) projects describe themselves directly. ≤120 chars,
+  one clause, **no cross-repo references, no marketing fluff**.
+
+### Git-tracked / overlay packages (`*-git`)
+
+Packages that track an upstream branch (mesa-git, scx-git) follow the pinned-repo
+rules above, plus:
+
+- **Inherit, don't fork** the nixpkgs build closure — override `src`/`rev`/hashes
+  on the nixpkgs derivation; do not fork shared libraries (libdrm, libbpf) or
+  strip the validated driver/build flags. The closure stays in lockstep with
+  nixpkgs and bleeding-edge drift is contained to `src`.
+- **Relax exact-output assertions** — an `installCheck` that asserts the precise
+  set of produced binaries/outputs breaks on every upstream add/remove; check
+  "produced a reasonable set" instead.
+- **Crates** come from `static.crates.io` (the `crates.io/api/v1` download
+  endpoint rate-limits CI and 403s); `ci.yml` also retries transient fetch
+  failures once.
 
 ## `flakeModules`
 
@@ -89,6 +127,7 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `update.yml` | `.github/workflows/update.yml` | Scheduled Update workflow |
 | `update.schema.json` | _(reference, not synced)_ | JSON Schema for `update.json` |
 | `sync.sh` | _(run from here)_ | Bootstrap canonical files into repos |
+| `sync-meta.sh` | _(run from here)_ | Apply repo description + topics from `update.json` to GitHub |
 
 The synced workflow files + `scripts/update.sh` are byte-identical fleet-wide
 and enforced by `std-conformance`. Keep them **stable** across minor standard
