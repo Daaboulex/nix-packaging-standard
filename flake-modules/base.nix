@@ -43,7 +43,12 @@
     in
     {
       pre-commit.settings.hooks = {
-        nixfmt-rfc-style.enable = true;
+        # Use pkgs.nixfmt directly: pkgs.nixfmt-rfc-style is now an alias of it
+        # and emits a deprecation warning on every eval. Same formatter, no noise.
+        nixfmt-rfc-style = {
+          enable = true;
+          package = pkgs.nixfmt;
+        };
         typos.enable = true;
         # rumdl config lives HERE, not in a per-repo .rumdl.toml: MD013
         # (line length) is impractical for prose, links, and tables.
@@ -64,7 +69,7 @@
         };
       };
 
-      formatter = pkgs.nixfmt-rfc-style;
+      formatter = pkgs.nixfmt;
 
       devShells.default = pkgs.mkShell {
         inputsFrom = [ config.pre-commit.devShell ];
