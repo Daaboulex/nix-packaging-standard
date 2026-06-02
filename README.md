@@ -102,6 +102,7 @@ without building the closure — eval-only and cheap, even in CI.
 | --- | --- |
 | `nixosModuleCheck { nixpkgs, system, module, config?, overlays? }` | NixOS module repos. `overlays` supplies the repo's overlay when the module refs overlay-only pkgs. |
 | `homeModuleCheck { nixpkgs, home-manager, system, module, config?, overlays? }` | Home Manager module repos. Imports nixpkgs with `config.allowUnfree = true` for unfree packages. |
+| `drvEvalCheck { pkgs, name?, drv }` | Packages whose closure is not on `cache.nixos.org` and cannot build on a free CI runner (CUDA/ROCm, very large builds). Forces `drv`'s full build-graph evaluation without realizing it. See the off-CI exception below. |
 
 Example:
 
@@ -163,6 +164,16 @@ the flake declares for that runner's system via
 simply no-ops there (declared == built). There is no per-repo build target, no
 archetype conditional, and no binary-cache token: `cache.nixos.org` substitutes
 every unmodified dependency for free.
+
+**Exception — off-CI packages.** A package whose closure is not on
+`cache.nixos.org` and cannot build on a free runner (CUDA/ROCm toolchains, very
+large builds) is exposed via `flake.packages.<system>` — a real `nix build .#x`
+target — instead of `perSystem.packages` (which `base` aliases into `checks` and
+so builds). CI gates it with `std.lib.drvEvalCheck`, forcing its full
+build-graph evaluation without realizing it: CI proves it *evaluates* (catching
+dependency/version breakage) while the heavy build runs off-CI against a project
+cache (e.g. `cachix use cuda-maintainers`). Document that substituter in the
+repo README — declare the off-CI build, never silently drop coverage.
 
 ## `sync.sh`
 

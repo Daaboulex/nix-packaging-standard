@@ -70,4 +70,23 @@
     pkgs.runCommand "module-eval" {
       ok = builtins.seq hm.activationPackage.drvPath "instantiated";
     } ''echo "$ok" > "$out"'';
+
+  # Eval-only gate for a PACKAGE whose closure is not on cache.nixos.org and
+  # cannot build on a free CI runner (CUDA/ROCm toolchains, very large builds).
+  # Same idiom as the module checks: force the derivation's full build graph to
+  # EVALUATE (catching dep/version/accelerator breakage) via `builtins.seq
+  # drv.drvPath`, while storing only a context-free string — so CI never depends
+  # on or realizes the heavy closure. Pair it with exposing the package via
+  # `flake.packages.<system>` (NOT `perSystem.packages`, which `base` auto-builds)
+  # so CI eval-gates it instead of building; the real build happens off-CI against
+  # a project cache. See the README "declared == built" exception.
+  drvEvalCheck =
+    {
+      pkgs,
+      name ? "drv-eval",
+      drv,
+    }:
+    pkgs.runCommand name {
+      ok = builtins.seq drv.drvPath "evaluated";
+    } ''echo "$ok" > "$out"'';
 }
