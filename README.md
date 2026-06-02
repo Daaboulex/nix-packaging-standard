@@ -25,7 +25,7 @@ the [Daaboulex](https://github.com/Daaboulex) NixOS package fleet.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.2.3"; # pin a tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.3.0"; # pin a tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
