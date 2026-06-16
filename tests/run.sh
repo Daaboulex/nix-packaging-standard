@@ -198,6 +198,24 @@ STUB_GIT_REV="new2222222222222222222222222222222222222c" run_update "$d"
 check "no-ELF exits 1"                "1"                  "$RC"
 check "error_type verification-error" "verification-error" "$(get "$d" error_type)"
 
+# ---- Test 5: first-party convention (none + self owner) is a clean no-op ----
+# Owner-authored software declares upstream {type:none, owner:<self>}: the repo
+# IS the upstream, so there is nothing to poll. The extra owner field must not
+# trip the updater -- it must take the plain `none` branch and exit 0 cleanly,
+# writing nothing. Guards the first-party convention against a future regression
+# that starts treating a none-type's owner as something to fetch.
+echo "Test 5: first-party (none + self owner) -> no-op, exit 0"
+d="$WORK/t5"; mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "none", "owner": "Daaboulex", "repo": "x" },
+  "packageFile": "flake.nix", "hashes": [], "verify": { "check": "wrapper" } }
+JSON
+run_update "$d"
+check "first-party exits 0" "0"     "$RC"
+check "updated=false"       "false" "$(get "$d" updated)"
+check "no error_type"       ""      "$(get "$d" error_type)"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

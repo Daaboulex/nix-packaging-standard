@@ -25,7 +25,7 @@ the [Daaboulex](https://github.com/Daaboulex) NixOS package fleet.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.4.0"; # pin a tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.5.0"; # pin a tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -35,7 +35,7 @@ the [Daaboulex](https://github.com/Daaboulex) NixOS package fleet.
     inputs@{ flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [ "x86_64-linux" ]; # add "aarch64-linux" only if it builds
-      imports = [ inputs.std.flakeModules.base ]; # + archetype modules as needed
+      imports = [ inputs.std.flakeModules.base ];
       perSystem =
         { pkgs, ... }:
         {
@@ -49,6 +49,16 @@ Pin a **release tag**, never `main`: an eval-breaking change in the standard
 must never reach a repo except by a deliberate, reviewed lock bump.
 
 ## Repo conventions
+
+Every consumer repo is the **same shape**: a Nix package (plus an overlay and,
+where useful, a NixOS/Home Manager module) for one piece of software. There is no
+per-repo "archetype" taxonomy beyond a single declared field. **`upstream.type`
+in `.github/update.json` is the repo's update path** (how, or whether, a new
+version is detected): `github-release` / `github-commit` / `custom` / `none` are
+values of that one field, not different kinds of repo, and the standard treats
+every repo identically except along that axis. Your own software is the `none`
+path with yourself named as the upstream (first-party); see the update-type
+paths below.
 
 Every fleet repo follows these. Metadata (description + topics) is declared in
 `.github/update.json` and applied with `sync-meta.sh`, so it can't silently drift.
@@ -129,6 +139,7 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `update.schema.json` | _(reference, not synced)_ | JSON Schema for `update.json` |
 | `sync.sh` | _(run from here)_ | Bootstrap canonical files into repos |
 | `sync-meta.sh` | _(run from here)_ | Apply repo description + topics from `update.json` to GitHub |
+| `scripts/fleet-audit.sh` | _(run from here)_ | The fleet's green/red oracle: conformance + metadata + archetype + branches + issues + CI, local and remote |
 
 The synced workflow files + `scripts/update.sh` are byte-identical fleet-wide
 and enforced by `std-conformance`. Keep them **stable** across minor standard
@@ -191,6 +202,36 @@ export PKG_REPOS_DIR=/path/to/repos   # directory holding the packaging clones
 Enforcement is the per-repo `std-conformance` flake check; `sync.sh --check` is
 the same comparison locally.
 
+## `fleet-audit`
+
+The fleet's single green/red oracle. It composes the per-file checks above with
+the fleet-wide conditions no single repo can prove on its own, and exits 0 only
+when every one passes.
+
+```bash
+export PKG_REPOS_DIR=/path/to/repos
+./scripts/fleet-audit.sh              # full audit, local + remote
+./scripts/fleet-audit.sh --local      # flake-state only (no gh)
+./scripts/fleet-audit.sh --remote     # GitHub state only
+./scripts/fleet-audit.sh --no-build   # eval + conformance, skip full builds
+./scripts/fleet-audit.sh --skip-nix   # skip nix flake check (fast structural pass)
+./scripts/fleet-audit.sh ripgrep-nix  # named repos only
+```
+
+It checks, per consumer (every dir with a `.github/update.json`):
+
+- **local** -- `sync.sh --check` (synced files byte-match), `sync-meta.sh
+  --check` (GitHub metadata matches `update.json`), a known `upstream.type`,
+  complete metadata (`description` + `topics`), the first-party discipline (a
+  self-owned version + a `CHANGELOG.md`), and `nix flake check`
+  (`std-conformance` + eval; full builds are proven remotely by CI);
+- **remote** (`gh`) -- a single `main` branch (no stale `update/*`), zero open
+  issues, and a green latest run of CI / Maintenance / Update on `main`.
+
+A repo with no git remote (an unpushed WIP) is audited locally and skipped
+remotely. The standard itself, the private `site` registry, and the `Daaboulex`
+profile carry no `update.json` and are out of scope by construction.
+
 ## `.github/update.json` schema
 
 ```jsonc
@@ -204,8 +245,9 @@ the same comparison locally.
                                       //   "version"; e.g. "portmasterVersion")
   "revFile": "package.nix",           // file holding the src `rev` literal
                                       //   (default: versionFile)
-  "versionScheme": "unstable-date",   // optional; "literal" (default) or
-                                      //   "unstable-date" (commit-tracked)
+  "versionScheme": "unstable-date",   // optional; "literal" (default),
+                                      //   "unstable-date", or "rev-only"
+                                      //   (the latter two: commit-tracked)
   "versionBase": "2.0.0",             // base for "unstable-date" (optional)
   "hashes": [                         // SRI hash fields, dependency order:
     "hash",                           //   bare name -> auto-located, or
@@ -223,8 +265,26 @@ the same comparison locally.
 - **`hashes`** entries list SRI hash fields in evaluation-dependency order
   (source first), each a bare field name or `{"field","file"}` to disambiguate.
 - For commit-tracked packages prefer **`versionFile: "version.json"`**.
-- **`versionScheme`** controls the written version literal; `unstable-date`
-  writes `<versionBase>-unstable-<YYYY-MM-DD>` (commit-tracked only).
+- **`versionScheme`** controls the written version literal (commit-tracked types
+  only). `literal` (default) writes the upstream string verbatim (a bare 7-char
+  SHA for commit-tracked repos); `unstable-date` writes
+  `<versionBase>-unstable-<YYYY-MM-DD>` (the nixpkgs VCS-snapshot convention);
+  `rev-only` bumps `rev` (+ hash + date) and LEAVES the human-set `version`
+  string untouched (git-snapshot packages like mesa-git whose version is
+  upstream's self-reported value). Comparison is by `rev` for both non-`literal`
+  schemes.
+- **`tagFilter`** (an ERE under `upstream`, for `github-release`/`github-tag`)
+  pins to one tag namespace when upstream publishes several (e.g. `^[0-9]` to
+  skip an `android/*` namespace); the newest matching tag wins.
+- **`trackOnly: true`** is the hand-mirrored mode: the updater only DETECTS
+  upstream movement (against `trackFile`/`trackKey`, default
+  `upstream-version.json`/`commit`) and files a `remirror-needed` reminder issue
+  -- it never writes, builds, or advances a version. Requires a commit-tracked
+  upstream type.
+- **`verify.check`** is one of `elf` / `wrapper` / `desktop` / `eval`. `eval`
+  (also the default when omitted) makes eval + a clean build the whole
+  verification; the others additionally assert the named artifact exists under
+  `result/`. `verify.binary` (+ `verify.args`) instead runs a built binary.
 
 ### Upstream types
 
@@ -235,6 +295,16 @@ the same comparison locally.
 `custom` — the repo ships its own `scripts/update.sh` (multi-channel apps, or
 non-API sources like OCCT). The canonical `update.sh` exits 0 early for them;
 their bespoke script must honour the same exit contract.
+
+**First-party** (owner-authored software: gpucycler, corecycler) is the `none`
+path with the fleet owner named as the upstream:
+`upstream: { "type": "none", "owner": "<you>", "repo": "<self>" }`. The repo IS
+the upstream, so version and releases are self-owned (a hand-cut tag plus a
+`CHANGELOG.md` entry) and nothing external is polled: `update.sh` no-ops on the
+`none` branch. A bare `none` with no `owner` is a third-party package with no
+tracked upstream (a pinned module/overlay); `none` with the fleet owner is
+first-party. `fleet-audit` enforces the discipline (a self-owned version literal
+plus a `CHANGELOG.md`).
 
 ## `update.sh` contract
 

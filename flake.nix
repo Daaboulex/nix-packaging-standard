@@ -25,17 +25,17 @@
 
       # Helper functions consumed as inputs.std.lib.*. Module repos add a
       # module-instantiation check with nixosModuleCheck / homeModuleCheck.
-      # Added as each archetype's first repo is converted — never speculatively.
+      # Added as repos need them, never speculatively.
       flake.lib = import ./lib.nix;
 
       perSystem =
         { pkgs, ... }:
         {
-          formatter = pkgs.nixfmt-rfc-style;
+          formatter = pkgs.nixfmt;
           devShells.default = pkgs.mkShell {
             packages = with pkgs; [
               nil
-              nixfmt-rfc-style
+              nixfmt
               jq
               shellcheck
               check-jsonschema
