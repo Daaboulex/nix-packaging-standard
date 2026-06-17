@@ -1,0 +1,8 @@
+{
+  "package": "example-amd64-only",
+  "upstream": { "type": "none" },
+  "packageFile": "package.nix",
+  "platforms": { "aarch64-linux": "amd64-only upstream binary" },
+  "hashes": [],
+  "verify": { "check": "eval" }
+}

@@ -188,6 +188,67 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     fi
   done
 
+  # --- architecture honesty -------------------------------------------------
+  # The fleet targets a canonical arch set (x86_64-linux + aarch64-linux); CI
+  # runs a native runner for each. A repo's SUPPORTED arches are its flake
+  # `systems` -- the executable truth CI builds. `declared == built` means an
+  # arch a repo does NOT declare is silently unsupported and CI goes green by
+  # not trying. This gate forbids that silence: every canonical arch a repo
+  # drops must carry a one-line reason in update.json `platforms`, and a reason
+  # for an arch the repo DOES build is stale. Needs `nix eval`; skipped under
+  # --skip-nix. The canonical set and each repo's supported set are read from
+  # `formatter` attrNames -- defined per declared system in the standard and in
+  # every consumer (via base), so it is the evaluable system set, not a literal.
+  if [ "$NIX_MODE" != "skip" ]; then
+    hdr "per-repo: architecture honesty (declared systems vs documented drops)"
+    canon_json="$(nix eval --json "$STD#formatter" --apply 'builtins.attrNames' 2>/tmp/fa-arch.log)"
+    if [ -z "$canon_json" ]; then
+      red "architecture: could not read canonical arch set from the standard ($(tr '\n' ' ' </tmp/fa-arch.log))"
+    else
+      mapfile -t CANON < <(jq -r '.[]' <<<"$canon_json")
+      for repo in "${CONSUMERS[@]}"; do
+        dir="$REPOS_DIR/$repo"
+        uj="$dir/.github/update.json"
+        [ -f "$dir/flake.nix" ] || {
+          red "$repo: no flake.nix (architecture)"
+          continue
+        }
+        sup_json="$(nix eval --json "$dir#formatter" --apply 'builtins.attrNames' 2>/tmp/fa-arch.log)"
+        if [ -z "$sup_json" ]; then
+          red "$repo: could not read declared systems ($(tr '\n' ' ' </tmp/fa-arch.log))"
+          continue
+        fi
+        repo_arch_ok=1
+        # A platforms reason for an arch outside the canonical set is meaningless.
+        while IFS= read -r k; do
+          [ -z "$k" ] && continue
+          if ! jq -e --arg a "$k" 'index($a)' <<<"$canon_json" >/dev/null; then
+            red "$repo: platforms reason for non-canonical arch '$k'"
+            repo_arch_ok=0
+          fi
+        done < <(jq -r '.platforms // {} | keys[]' "$uj" 2>/dev/null)
+        # Bind declared-systems to documented drops, per canonical arch.
+        for arch in "${CANON[@]}"; do
+          reason="$(jq -r --arg a "$arch" '.platforms[$a] // ""' "$uj" 2>/dev/null)"
+          if jq -e --arg a "$arch" 'index($a)' <<<"$sup_json" >/dev/null; then
+            if [ -n "$reason" ]; then
+              red "$repo: builds $arch but update.json declares a drop reason for it (stale)"
+              repo_arch_ok=0
+            fi
+          else
+            if [ -z "$reason" ]; then
+              red "$repo: silently drops $arch (not in systems, no platforms reason)"
+              repo_arch_ok=0
+            fi
+          fi
+        done
+        [ "$repo_arch_ok" -eq 1 ] && ok "$repo: architecture honest ($(jq -r '.[]' <<<"$sup_json" | tr '\n' ' '))"
+      done
+    fi
+  else
+    warn "architecture honesty skipped (--skip-nix; needs nix eval)"
+  fi
+
   if [ "$NIX_MODE" != "skip" ]; then
     flag=""
     [ "$NIX_MODE" = "no-build" ] && flag="--no-build"

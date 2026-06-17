@@ -25,7 +25,7 @@ the [Daaboulex](https://github.com/Daaboulex) NixOS package fleet.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.5.0"; # pin a tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.6.0"; # pin a tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -34,7 +34,7 @@ the [Daaboulex](https://github.com/Daaboulex) NixOS package fleet.
   outputs =
     inputs@{ flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
-      systems = [ "x86_64-linux" ]; # add "aarch64-linux" only if it builds
+      systems = [ "x86_64-linux" "aarch64-linux" ]; # see "Architecture and platforms"
       imports = [ inputs.std.flakeModules.base ];
       perSystem =
         { pkgs, ... }:
@@ -88,6 +88,9 @@ Every fleet repo follows these. Metadata (description + topics) is declared in
   HM-only → "… Home Manager module — …"; forks lead with the fork's value-add;
   original (non-packaging) projects describe themselves directly. ≤120 chars,
   one clause, **no cross-repo references, no marketing fluff**.
+- **Architecture**: the flake's `systems` is the supported arch set; every arch
+  dropped from the fleet canonical set carries a reason in `platforms` — see
+  [Architecture and platforms](#architecture-and-platforms).
 
 ### Git-tracked / overlay packages (`*-git`)
 
@@ -195,6 +198,35 @@ dependency/version breakage) while the heavy build runs off-CI against a project
 cache (e.g. `cachix use cuda-maintainers`). Document that substituter in the
 repo README — declare the off-CI build, never silently drop coverage.
 
+## Architecture and platforms
+
+The fleet's canonical target set is **`x86_64-linux` + `aarch64-linux`**, and
+`ci.yml` runs a native runner for each (`ubuntu-latest`, `ubuntu-24.04-arm`). A
+repo's **supported arches are its flake `systems`** — the executable truth CI
+builds; nothing restates it.
+
+Because CI is `declared == built`, an arch a repo does **not** list in `systems`
+is silently unsupported: the runner for it finds no outputs and goes green *by
+not trying*. That silence is the trap — a green check that never meant the arch
+works. So the standard makes every dropped arch **declared, with a reason**:
+
+- **To support an arch** — add it to `systems`. The native runner then builds
+  and proves it on every push; nothing else to declare.
+- **To drop an arch** — record a one-line reason in `.github/update.json`
+  `platforms`, keyed by the dropped arch:
+
+  ```jsonc
+  "platforms": { "aarch64-linux": "amd64-only upstream .deb" }
+  ```
+
+`fleet-audit` binds the two: it reads each repo's evaluable `systems` and, for
+every canonical arch the repo does not build, requires a `platforms` reason — a
+silent drop is **RED**, and a reason for an arch the repo *does* build is stale
+(**RED**). `"untested"` is **not** a reason: declare the arch and let the arm
+runner settle it. Genuine x86-only constraints are the real reasons — 32-bit-only
+(`pkgsi686Linux`), a prebuilt amd64 binary/`.deb`, x86 assembly in upstream
+source, or an x86-pinned kernel/firmware.
+
 ## `sync.sh`
 
 ```bash
@@ -232,8 +264,9 @@ It checks, per consumer (every dir with a `.github/update.json`):
 - **local** -- `sync.sh --check` (synced files byte-match), `sync-meta.sh
   --check` (GitHub metadata matches `update.json`), a known `upstream.type`,
   complete metadata (`description` + `topics`), the first-party discipline (a
-  self-owned version + a `CHANGELOG.md`), and `nix flake check`
-  (`std-conformance` + eval; full builds are proven remotely by CI);
+  self-owned version + a `CHANGELOG.md`), architecture honesty (every canonical
+  arch the flake does not build carries a `platforms` reason), and `nix flake
+  check` (`std-conformance` + eval; full builds are proven remotely by CI);
 - **remote** (`gh`) -- a single `main` branch (no stale `update/*`), zero open
   issues, and a green latest run of CI / Maintenance / Update on `main`.
 
@@ -267,6 +300,11 @@ profile carry no `update.json` and are out of scope by construction.
 }
 ```
 
+- **`platforms`** documents the *exceptions* to the canonical arch set: an
+  object keyed by each canonical arch the flake's `systems` does NOT build, whose
+  value is the one-line drop reason. Absent means the repo builds the full set.
+  The supported set is never restated here — it stays in `systems`. See
+  [Architecture and platforms](#architecture-and-platforms).
 - **`versionAttr`** matches both `version = "x"` and parameterized
   `<attr> ? "x"` default-argument forms.
 - **`versionFile`** decouples the version literal's location from `packageFile`.

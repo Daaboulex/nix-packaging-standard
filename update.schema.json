@@ -21,6 +21,19 @@
       "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
       "description": "Canonical GitHub repo topics, applied by sync-meta.sh. Convention: 'nix', 'nixos', 'flake' baseline + 'nixos-module'/'home-manager' where applicable + the software name + a few domain topics. Lowercase, hyphenated."
     },
+    "platforms": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Documented exceptions to the fleet's canonical architecture set (x86_64-linux + aarch64-linux). The SUPPORTED set is the flake's `systems` — the executable truth CI builds; this field carries only the REASON each canonical arch the repo does NOT build is dropped. Absent: the repo builds the full canonical set. fleet-audit binds the two — a canonical arch missing from `systems` with no reason here is a silent drop (RED); a reason for an arch the flake DOES build is stale (RED).",
+      "properties": {
+        "aarch64-linux": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One-line reason this repo does not build aarch64-linux (e.g. 'amd64-only upstream .deb', 'x86-only asm in upstream Rust', 'no pkgsi686Linux on aarch64'). 'untested' is not a reason — declare it in `systems` and let the arm runner verify instead."
+        }
+      }
+    },
     "upstream": {
       "type": "object",
       "required": ["type"],
