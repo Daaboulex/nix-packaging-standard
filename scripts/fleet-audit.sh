@@ -236,12 +236,20 @@ if [ "$DO_REMOTE" -eq 1 ]; then
     fi
   done
 
-  hdr "remote: zero open issues"
+  hdr "remote: Issues enabled + zero open"
   for repo in "${CONSUMERS[@]}"; do
     has_remote "$repo" || continue
+    # Issues must be ENABLED: update.yml/maintenance.yml report a failed update or
+    # lock bump by FILING an issue. A repo with Issues disabled swallows every such
+    # failure silently, so a disabled-Issues repo is a hard red, not a clean pass.
+    en="$(gh repo view "$OWNER/$repo" --json hasIssuesEnabled --jq '.hasIssuesEnabled' 2>/dev/null)"
+    if [ "$en" != "true" ]; then
+      red "$repo: GitHub Issues are disabled (the update/maintenance workflows cannot report failures)"
+      continue
+    fi
     n="$(gh issue list -R "$OWNER/$repo" --state open --json number --jq 'length' 2>/dev/null)"
     if [ "${n:-x}" = "0" ]; then
-      ok "$repo: no open issues"
+      ok "$repo: Issues enabled, none open"
     elif [ -z "${n:-}" ]; then
       red "$repo: could not query issues"
     else

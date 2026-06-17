@@ -70,6 +70,10 @@ Every fleet repo follows these. Metadata (description + topics) is declared in
   consumer `.github/dependabot.yml` would only open `github-actions` PRs that
   cannot be merged (they break `std-conformance`), so consumers carry none —
   dependabot lives only on this standard repo. `fleet-audit` enforces this.
+- **Issues enabled**: `update.yml`/`maintenance.yml` report a failed update or
+  lock bump by filing an issue, so every repo keeps GitHub Issues enabled — a
+  disabled-Issues repo would swallow those failures silently. `fleet-audit`
+  enforces this.
 - **License**: the repo's `LICENSE` is **MIT** — it licenses *your* Nix packaging
   code, which is permissive and reusable. The packaged software's licence is
   declared in the derivation's `meta.license`, which **must be accurate**. Two
