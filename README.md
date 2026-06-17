@@ -65,6 +65,11 @@ Every fleet repo follows these. Metadata (description + topics) is declared in
 
 - **Default branch**: `main`, and a single branch — the `maintenance.yml`
   cleanup job prunes stale `update/*` branches.
+- **No per-repo dependabot**: GitHub Actions are pinned by SHA in the synced
+  workflows and bumped centrally in this standard, then re-synced fleet-wide. A
+  consumer `.github/dependabot.yml` would only open `github-actions` PRs that
+  cannot be merged (they break `std-conformance`), so consumers carry none —
+  dependabot lives only on this standard repo. `fleet-audit` enforces this.
 - **License**: the repo's `LICENSE` is **MIT** — it licenses *your* Nix packaging
   code, which is permissive and reusable. The packaged software's licence is
   declared in the derivation's `meta.license`, which **must be accurate**. Two
