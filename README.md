@@ -112,7 +112,7 @@ rules above, plus:
 
 | Module | Provides |
 | --- | --- |
-| `base` | git-hooks gate (`nixfmt-rfc-style`, `typos`, `rumdl`, `check-readme-sections`), `formatter`, `devShells.default`, every declared package aliased into `checks` (so `nix flake check` BUILDS it), `std-conformance` (synced files byte-match the canonical), `std-update-json` (validates `.github/update.json` against the schema) |
+| `base` | git-hooks gate (`nixfmt-rfc-style`, `typos`, `rumdl`, `check-readme-sections`), `formatter`, `devShells.default`, every declared package aliased into `checks` on the systems its `meta.platforms` supports (so `nix flake check` BUILDS it), `std-conformance` (synced files byte-match the canonical), `std-update-json` (validates `.github/update.json` against the schema) |
 
 ## `lib`
 
@@ -181,12 +181,14 @@ in its own `perSystem`, never by patching the standard:
 ## CI model
 
 One archetype-blind `ci.yml`, identical fleet-wide. It runs the AI-artifact
-guard, then on a `[ubuntu-latest, ubuntu-24.04-arm]` matrix builds every output
-the flake declares for that runner's system via
-`nix-fast-build --skip-cached` — so a repo that declares no outputs for an arch
-simply no-ops there (declared == built). There is no per-repo build target, no
-archetype conditional, and no binary-cache token: `cache.nixos.org` substitutes
-every unmodified dependency for free.
+guard, reclaims ~20 GB of preinstalled toolchains nix never uses (large source
+builds otherwise exhaust the runner's ~14 GB default disk), then on a
+`[ubuntu-latest, ubuntu-24.04-arm]` matrix builds every output the flake declares
+for that runner's system via `nix-fast-build --skip-cached` — so a repo that
+declares no outputs for an arch, **or a package whose `meta.platforms` excludes
+it**, simply no-ops there (declared == built, per system *and* per package). There
+is no per-repo build target, no archetype conditional, and no binary-cache token:
+`cache.nixos.org` substitutes every unmodified dependency for free.
 
 **Exception — off-CI packages.** A package whose closure is not on
 `cache.nixos.org` and cannot build on a free runner (CUDA/ROCm toolchains, very
