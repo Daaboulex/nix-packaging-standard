@@ -323,6 +323,11 @@ profile carry no `update.json` and are out of scope by construction.
 - **`revFile`** scopes the `rev` literal bump for commit-tracked upstreams.
 - **`hashes`** entries list SRI hash fields in evaluation-dependency order
   (source first), each a bare field name or `{"field","file"}` to disambiguate.
+  The updater rewrites a field **by name**, so each hash needs a **distinct**
+  attribute name (`hash`, `cargoHash`, `vendorHash`, `npmDepsHash`, ...): two
+  `hash = "..."` literals in one file collide and the updater clobbers both with
+  one value. Bind the extra hash to a named literal (`cargoHash = "sha256-...";`
+  then `hash = cargoHash;`) so it is uniquely targetable.
 - For commit-tracked packages prefer **`versionFile: "version.json"`**.
 - **`versionScheme`** controls the written version literal (commit-tracked types
   only). `literal` (default) writes the upstream string verbatim (a bare 7-char
