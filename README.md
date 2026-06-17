@@ -124,7 +124,7 @@ without building the closure — eval-only and cheap, even in CI.
 | --- | --- |
 | `nixosModuleCheck { nixpkgs, system, module, config?, overlays? }` | NixOS module repos. `overlays` supplies the repo's overlay when the module refs overlay-only pkgs. |
 | `homeModuleCheck { nixpkgs, home-manager, system, module, config?, overlays? }` | Home Manager module repos. Imports nixpkgs with `config.allowUnfree = true` for unfree packages. |
-| `drvEvalCheck { pkgs, name?, drv }` | Packages whose closure is not on `cache.nixos.org` and cannot build on a free CI runner (CUDA/ROCm, very large builds). Forces `drv`'s full build-graph evaluation without realizing it. See the off-CI exception below. |
+| `drvEvalCheck { pkgs, name?, drv }` | Packages whose closure is not on `cache.nixos.org` and cannot build on a free CI runner (CUDA/ROCm, very large builds). Forces `drv`'s full build-graph evaluation without realizing it; skips with a trivial pass on a system the drv's `meta.platforms` excludes. See the off-CI exception below. |
 
 Example:
 
@@ -226,6 +226,16 @@ silent drop is **RED**, and a reason for an arch the repo *does* build is stale
 runner settle it. Genuine x86-only constraints are the real reasons — 32-bit-only
 (`pkgsi686Linux`), a prebuilt amd64 binary/`.deb`, x86 assembly in upstream
 source, or an x86-pinned kernel/firmware.
+
+**Per-package, not just per-repo.** `flakeModules.base` aliases a package into
+`checks.<system>` only when it is `lib.meta.availableOn` that system, and
+`std.lib.drvEvalCheck` skips on a system the drv's `meta.platforms` excludes. So a
+repo may mix arch-portable and x86_64-only packages in one flake — each builds only
+where its own `meta` allows (a package with an x86-only dependency must say so in
+its `meta.platforms`). Accordingly `fleet-audit` treats an arch as **supported only
+when the repo builds a real output there** (a `package-*` or module/repo check) — not
+when it merely lists the system; declaring an arch that builds nothing real still
+needs a documented `platforms` reason.
 
 ## `sync.sh`
 

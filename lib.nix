@@ -86,7 +86,16 @@
       name ? "drv-eval",
       drv,
     }:
-    pkgs.runCommand name {
-      ok = builtins.seq drv.drvPath "evaluated";
-    } ''echo "$ok" > "$out"'';
+    # Honor the drv's own meta.platforms. On a system the package declares it does
+    # NOT support, forcing drv.drvPath throws "Refusing to evaluate ... not
+    # available on the requested hostPlatform" (e.g. an x86_64-only off-CI package
+    # eval-gated in a repo that ALSO builds aarch64-linux). Skip with a trivial
+    # pass there -- the same per-package `declared == built` honesty flakeModules.base
+    # applies to perSystem.packages, extended to the off-CI eval gate.
+    if !(pkgs.lib.meta.availableOn pkgs.stdenv.hostPlatform drv) then
+      pkgs.runCommand name { } ''echo "skipped: ${name} not available on ${pkgs.stdenv.hostPlatform.system}" > "$out"''
+    else
+      pkgs.runCommand name {
+        ok = builtins.seq drv.drvPath "evaluated";
+      } ''echo "$ok" > "$out"'';
 }

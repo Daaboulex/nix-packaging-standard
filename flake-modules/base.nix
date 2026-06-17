@@ -40,6 +40,14 @@
         "scripts/update.sh" = ../update.sh;
       };
       synced = if isCustom then builtins.removeAttrs syncedAll [ "scripts/update.sh" ] else syncedAll;
+
+      # Only alias a package into `checks` on systems it actually supports (its
+      # own meta.platforms / badPlatforms). Without this, an x86_64-only package
+      # in a repo that ALSO declares aarch64-linux aborts the aarch64 build with
+      # "Refusing to evaluate ... not available on the requested hostPlatform".
+      # True package-level `declared == built`: each package builds only where
+      # its meta allows, so a repo may mix arch-portable and x86-only packages.
+      buildable = lib.filterAttrs (_: p: lib.meta.availableOn pkgs.stdenv.hostPlatform p) config.packages;
     in
     {
       pre-commit.settings.hooks = {
@@ -76,7 +84,7 @@
         packages = [ pkgs.nil ];
       };
 
-      checks = (lib.mapAttrs' (n: v: lib.nameValuePair "package-${n}" v) config.packages) // {
+      checks = (lib.mapAttrs' (n: v: lib.nameValuePair "package-${n}" v) buildable) // {
         std-conformance = pkgs.runCommand "std-conformance" { } (
           (lib.concatStringsSep "\n" (
             lib.mapAttrsToList (dst: canon: ''

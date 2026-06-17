@@ -196,9 +196,10 @@ if [ "$DO_LOCAL" -eq 1 ]; then
   # not trying. This gate forbids that silence: every canonical arch a repo
   # drops must carry a one-line reason in update.json `platforms`, and a reason
   # for an arch the repo DOES build is stale. Needs `nix eval`; skipped under
-  # --skip-nix. The canonical set and each repo's supported set are read from
-  # `formatter` attrNames -- defined per declared system in the standard and in
-  # every consumer (via base), so it is the evaluable system set, not a literal.
+  # --skip-nix. The canonical set is the standard's own per-system `formatter`
+  # attrNames; per-repo support is read from `checks.<arch>` -- a repo supports
+  # an arch only if it builds a REAL output there (a package or module/repo
+  # check), not the per-system boilerplate every declared system carries.
   if [ "$NIX_MODE" != "skip" ]; then
     hdr "per-repo: architecture honesty (declared systems vs documented drops)"
     canon_json="$(nix eval --json "$STD#formatter" --apply 'builtins.attrNames' 2>/tmp/fa-arch.log)"
@@ -213,11 +214,6 @@ if [ "$DO_LOCAL" -eq 1 ]; then
           red "$repo: no flake.nix (architecture)"
           continue
         }
-        sup_json="$(nix eval --json "$dir#formatter" --apply 'builtins.attrNames' 2>/tmp/fa-arch.log)"
-        if [ -z "$sup_json" ]; then
-          red "$repo: could not read declared systems ($(tr '\n' ' ' </tmp/fa-arch.log))"
-          continue
-        fi
         repo_arch_ok=1
         # A platforms reason for an arch outside the canonical set is meaningless.
         while IFS= read -r k; do
@@ -227,22 +223,32 @@ if [ "$DO_LOCAL" -eq 1 ]; then
             repo_arch_ok=0
           fi
         done < <(jq -r '.platforms // {} | keys[]' "$uj" 2>/dev/null)
-        # Bind declared-systems to documented drops, per canonical arch.
+        # "Supports arch" == builds a REAL output there: a package or module/repo
+        # check, NOT the per-system boilerplate base emits for every declared
+        # system (std-conformance, std-update-json, pre-commit). So declaring an
+        # arch in `systems` while building nothing real on it is NOT support -- it
+        # needs a documented drop reason, same as not declaring it. This is what
+        # keeps per-package meta.platforms filtering honest.
+        built_arches=""
         for arch in "${CANON[@]}"; do
           reason="$(jq -r --arg a "$arch" '.platforms[$a] // ""' "$uj" 2>/dev/null)"
-          if jq -e --arg a "$arch" 'index($a)' <<<"$sup_json" >/dev/null; then
+          real="$(nix eval --json "$dir#checks.$arch" --apply \
+            'cs: builtins.length (builtins.filter (n: n != "std-conformance" && n != "std-update-json" && n != "pre-commit") (builtins.attrNames cs))' \
+            2>/dev/null)"
+          if [ -n "$real" ] && [ "$real" -gt 0 ] 2>/dev/null; then
+            built_arches="$built_arches $arch"
             if [ -n "$reason" ]; then
               red "$repo: builds $arch but update.json declares a drop reason for it (stale)"
               repo_arch_ok=0
             fi
           else
             if [ -z "$reason" ]; then
-              red "$repo: silently drops $arch (not in systems, no platforms reason)"
+              red "$repo: does not build $arch (no real output) and has no platforms reason"
               repo_arch_ok=0
             fi
           fi
         done
-        [ "$repo_arch_ok" -eq 1 ] && ok "$repo: architecture honest ($(jq -r '.[]' <<<"$sup_json" | tr '\n' ' '))"
+        [ "$repo_arch_ok" -eq 1 ] && ok "$repo: architecture honest (builds:${built_arches:- none})"
       done
     fi
   else
