@@ -21,8 +21,13 @@
 # registry, the `Daaboulex` profile) are out of scope by construction. A repo
 # with no git remote (an unpushed WIP) is audited locally and skipped remotely.
 #
-# Exit 0 iff every in-scope check passes. Fails closed: a missing tool, an
-# unreadable file, or an ambiguous result is a failure, never a pass.
+# Exit codes (tri-state, so a caller can tell certification from a fast scan
+# from a defect): 0 = fully certified (every dimension ran, all pass); 1 = a
+# real defect (RED); 2 = usage / environment error (cannot run); 3 = PARTIAL --
+# ran clean but did NOT exercise every certification dimension (e.g. --local,
+# --remote, --skip-nix, or no network reached the remote half), so certification
+# is not claimed. Fails closed: a missing tool, an unreadable file, or an
+# ambiguous result is a failure, never a pass; a partial run never reports 0.
 
 set -uo pipefail
 
@@ -58,6 +63,7 @@ warns=0
 red() { printf 'FAIL  %s\n' "$1"; fails=$((fails + 1)); }
 ok() { printf 'ok    %s\n' "$1"; }
 warn() { printf 'warn  %s\n' "$1"; warns=$((warns + 1)); }
+info() { printf 'info  %s\n' "$1"; }
 hdr() { printf '\n== %s ==\n' "$1"; }
 
 need() {
@@ -255,6 +261,50 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     warn "architecture honesty skipped (--skip-nix; needs nix eval)"
   fi
 
+  # --- off-CI build surface -------------------------------------------------
+  # ci.yml builds ONLY `.#checks.<system>`. Packages exposed via
+  # `flake.packages.<system>` are the standard's off-CI escape hatch (CUDA/ROCm,
+  # very large builds): their CLOSURE is realized by NEITHER CI nor a local
+  # `nix flake check` -- only off-CI against a project cache. They must stay
+  # eval-gated (a drvEvalCheck in `checks`, which this run's nix flake check
+  # exercises), but their build success is never proven here. Name them so a
+  # green audit is never misread as "the off-CI build works". This is the
+  # accepted off-CI exception (it does NOT fail the audit); it scopes what GREEN
+  # means. Needs `nix eval`; skipped under --skip-nix.
+  if [ "$NIX_MODE" != "skip" ]; then
+    hdr "per-repo: off-CI build surface (realize NOT proven by CI / flake check)"
+    canon_offci="$(nix eval --json "$STD#formatter" --apply 'builtins.attrNames' 2>/dev/null)"
+    mapfile -t OFFCANON < <(jq -r '.[]?' <<<"${canon_offci:-[]}")
+    offci_any=0
+    for repo in "${CONSUMERS[@]}"; do
+      dir="$REPOS_DIR/$repo"
+      [ -f "$dir/flake.nix" ] || continue
+      # An off-CI target is a `flake.packages.<arch>` whose build is in NO check:
+      # flakeModules.base aliases each perSystem package into `checks` as
+      # `package-<name>` (so CI builds it), so a package with no matching
+      # `package-<name>` check is the off-CI escape hatch -- its closure is
+      # realized off-CI only. Cheap + alias-proof: read attribute names only (no
+      # drvPath, so the heavy CUDA/ROCm graph is never instantiated here), and
+      # fail closed (an ambiguous `default` alias is listed, never dropped).
+      targets=""
+      for arch in "${OFFCANON[@]}"; do
+        pkgs="$(nix eval --json "$dir#packages.$arch" --apply 'builtins.attrNames' 2>/dev/null || echo '[]')"
+        checks="$(nix eval --json "$dir#checks.$arch" --apply 'builtins.attrNames' 2>/dev/null || echo '[]')"
+        while IFS= read -r n; do
+          [ -z "$n" ] && continue
+          case " $targets " in *" $n "*) : ;; *) targets="$targets $n" ;; esac
+        done < <(jq -rn --argjson p "$pkgs" --argjson c "$checks" '
+          ($c | map(select(startswith("package-")) | ltrimstr("package-"))) as $built
+          | $p | map(select(. as $n | ($built | index($n)) | not)) | .[]')
+      done
+      if [ -n "$targets" ]; then
+        offci_any=1
+        info "$repo: off-CI target(s) [${targets# }] -- realize proven off-CI only (project cache), not by CI/flake check; must stay eval-gated"
+      fi
+    done
+    [ "$offci_any" -eq 0 ] && ok "no off-CI build targets (every declared build is covered by CI)"
+  fi
+
   if [ "$NIX_MODE" != "skip" ]; then
     flag=""
     [ "$NIX_MODE" = "no-build" ] && flag="--no-build"
@@ -368,11 +418,36 @@ if [ "$DO_REMOTE" -eq 1 ]; then
 fi
 
 # ============================================================================
+# Coverage-honest verdict. "FLEET GREEN" is the FULL-certification signal and
+# must mean every dimension actually ran: local conformance/eval/arch AND the
+# remote half (open-issues, branches, and CI-green -- the ONLY proof that builds
+# realize and that no failure issue is open). A partial run (only one half, or
+# --skip-nix) cannot make that claim, so it gets a clearly-scoped PARTIAL
+# verdict naming what was NOT audited -- never a bare GREEN, and never exit 0.
+# Tri-state: 0 = GREEN (fully certified), 1 = RED (a real defect), 3 = PARTIAL
+# (ran clean but coverage incomplete). 2 stays reserved for usage/environment
+# errors. Fail-closed: absent coverage is surfaced, not silently passed.
+fully_certified=0
+if [ "$DO_LOCAL" -eq 1 ] && [ "$DO_REMOTE" -eq 1 ] && [ "$NIX_MODE" != "skip" ]; then
+  fully_certified=1
+fi
+
 hdr "summary"
 printf 'repos audited: %d   failures: %d   warnings: %d\n' "${#CONSUMERS[@]}" "$fails" "$warns"
-if [ "$fails" -eq 0 ]; then
-  echo "FLEET GREEN"
-  exit 0
+printf 'coverage: local=%d remote=%d nix=%s\n' "$DO_LOCAL" "$DO_REMOTE" "$NIX_MODE"
+if [ "$fails" -gt 0 ]; then
+  echo "FLEET RED"
+  exit 1
 fi
-echo "FLEET RED"
-exit 1
+if [ "$fully_certified" -ne 1 ]; then
+  missing=""
+  [ "$DO_REMOTE" -ne 1 ] && missing="$missing remote(open-issues,branches,CI-green=build+issue proof)"
+  [ "$DO_LOCAL" -ne 1 ] && missing="$missing local(conformance,metadata,eval,arch)"
+  [ "$NIX_MODE" = "skip" ] && missing="$missing nix(eval,arch,off-CI-surface,flake-check)"
+  echo "FLEET PARTIAL (local checks clean; NOT fully certified)"
+  echo "  not audited:${missing:- none}"
+  echo "  to fully certify: PKG_REPOS_DIR=$REPOS_DIR $0 ${TARGETS[*]:-}"
+  exit 3
+fi
+echo "FLEET GREEN"
+exit 0

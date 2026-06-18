@@ -104,6 +104,14 @@ rules above, plus:
 - **Relax exact-output assertions** — an `installCheck` that asserts the precise
   set of produced binaries/outputs breaks on every upstream add/remove; check
   "produced a reasonable set" instead.
+- **Skip flaky upstream tests with `doCheck = false`, not file-by-file** —
+  overriding a nixpkgs package (even only to dodge a test) changes its
+  derivation, forcing a from-source rebuild that re-runs the package's WHOLE
+  upstream test suite. Disabling one fragile test path at a time is whack-a-mole:
+  the next numerically- or timing-fragile test breaks the next bump. If you
+  change none of the package's code, skip its check phase entirely
+  (`doCheck = false`) — its real correctness is already gated by nixpkgs' own
+  build (the canonical case: unsloth's `accelerate` override).
 - **Crates** come from `static.crates.io` (the `crates.io/api/v1` download
   endpoint rate-limits CI and 403s); `ci.yml` also retries transient fetch
   failures once.
@@ -259,7 +267,18 @@ the same comparison locally.
 
 The fleet's single green/red oracle. It composes the per-file checks above with
 the fleet-wide conditions no single repo can prove on its own, and exits 0 only
-when every one passes.
+when every one passes **in a full run**.
+
+It is **coverage-honest**: a run reports `FLEET GREEN` only when it exercised
+*every* certification dimension -- the local half (conformance, metadata, eval,
+arch) **and** the remote half (open issues, branches, and CI-green, the only
+proof that builds realize and that no failure issue is open). A partial run
+(`--local`, `--remote`, `--skip-nix`, or one where the network never reached the
+remote half) reports `FLEET PARTIAL`, names what it did not audit, and never
+claims certification. Exit codes are tri-state so a caller can tell the states
+apart: **0** = GREEN (fully certified), **1** = RED (a real defect), **2** =
+usage/environment error (could not run), **3** = PARTIAL (ran clean, coverage
+incomplete). Anything wanting certification checks for `0`.
 
 ```bash
 export PKG_REPOS_DIR=/path/to/repos
@@ -279,6 +298,12 @@ It checks, per consumer (every dir with a `.github/update.json`):
   self-owned version + a `CHANGELOG.md`), architecture honesty (every canonical
   arch the flake does not build carries a `platforms` reason), and `nix flake
   check` (`std-conformance` + eval; full builds are proven remotely by CI);
+- **off-CI surface** -- names each package whose closure CI never realizes
+  (exposed via `flake.packages.<system>` with no `package-<name>` check, the
+  off-CI escape hatch): an informational line, so a green audit is never misread
+  as "the off-CI CUDA/ROCm build works" -- its build is proven only off-CI
+  against a project cache, and it must stay eval-gated. Does not fail the audit;
+  it scopes what GREEN means;
 - **remote** (`gh`) -- a single `main` branch (no stale `update/*`), zero open
   issues, and a green latest run of CI / Maintenance / Update on `main`.
 
