@@ -334,15 +334,36 @@ if [ "$DO_REMOTE" -eq 1 ]; then
   need gh
   REQUIRED_WF=("CI" "Maintenance" "Update")
 
+  # gh, with ONE retry on a transient failure (token/keyring races, secondary
+  # rate-limits, a network blip). On success: stdout on stdout, exit 0. On a
+  # persistent failure: exit non-zero with gh's stderr in /tmp/fa-gh.log, so the
+  # caller fails CLOSED with the real reason instead of misreading an error body
+  # as data -- a 401 body is not a stale branch, an empty hasIssuesEnabled is not
+  # "Issues disabled". (Both were real false-REDs before this guard.)
+  gh_try() {
+    local out
+    out="$(command gh "$@" 2>/tmp/fa-gh.log)" && {
+      printf '%s' "$out"
+      return 0
+    }
+    sleep 2
+    out="$(command gh "$@" 2>/tmp/fa-gh.log)" || return 1
+    printf '%s' "$out"
+  }
+  gherr() { tr '\n' ' ' </tmp/fa-gh.log | head -c 160; }
+
   hdr "remote: branches normalized (single main, no stale update/*)"
   for repo in "${CONSUMERS[@]}"; do
     has_remote "$repo" || {
       warn "$repo: no git remote - remote checks skipped (local-only repo)"
       continue
     }
-    branches="$(gh api "repos/$OWNER/$repo/branches" --jq '.[].name' 2>/tmp/fa-gh.log)"
+    if ! branches="$(gh_try api "repos/$OWNER/$repo/branches" --jq '.[].name')"; then
+      red "$repo: could not list branches (gh error: $(gherr))"
+      continue
+    fi
     if [ -z "$branches" ]; then
-      red "$repo: could not list branches ($(tr '\n' ' ' </tmp/fa-gh.log))"
+      red "$repo: no branches returned (unexpected empty result)"
       continue
     fi
     extra="$(grep -vxE 'main' <<<"$branches" || true)"
@@ -359,18 +380,22 @@ if [ "$DO_REMOTE" -eq 1 ]; then
     # Issues must be ENABLED: update.yml/maintenance.yml report a failed update or
     # lock bump by FILING an issue. A repo with Issues disabled swallows every such
     # failure silently, so a disabled-Issues repo is a hard red, not a clean pass.
-    en="$(gh repo view "$OWNER/$repo" --json hasIssuesEnabled --jq '.hasIssuesEnabled' 2>/dev/null)"
+    if ! en="$(gh_try repo view "$OWNER/$repo" --json hasIssuesEnabled --jq '.hasIssuesEnabled')"; then
+      red "$repo: could not query Issues setting (gh error: $(gherr))"
+      continue
+    fi
     if [ "$en" != "true" ]; then
       red "$repo: GitHub Issues are disabled (the update/maintenance workflows cannot report failures)"
       continue
     fi
-    n="$(gh issue list -R "$OWNER/$repo" --state open --json number --jq 'length' 2>/dev/null)"
+    if ! n="$(gh_try issue list -R "$OWNER/$repo" --state open --json number --jq 'length')"; then
+      red "$repo: could not query issues (gh error: $(gherr))"
+      continue
+    fi
     if [ "${n:-x}" = "0" ]; then
       ok "$repo: Issues enabled, none open"
-    elif [ -z "${n:-}" ]; then
-      red "$repo: could not query issues"
     else
-      titles="$(gh issue list -R "$OWNER/$repo" --state open --json number,title --jq '[.[]|"#\(.number) \(.title)"]|join("; ")' 2>/dev/null)"
+      titles="$(gh_try issue list -R "$OWNER/$repo" --state open --json number,title --jq '[.[]|"#\(.number) \(.title)"]|join("; ")' || true)"
       red "$repo: $n open issue(s): $titles"
     fi
   done
@@ -378,10 +403,13 @@ if [ "$DO_REMOTE" -eq 1 ]; then
   hdr "remote: CI complete + green (latest run per required workflow on main)"
   for repo in "${CONSUMERS[@]}"; do
     has_remote "$repo" || continue
-    runs="$(gh run list -R "$OWNER/$repo" --branch main -L 40 \
-      --json workflowName,conclusion,status 2>/dev/null)"
+    if ! runs="$(gh_try run list -R "$OWNER/$repo" --branch main -L 40 \
+      --json workflowName,conclusion,status)"; then
+      red "$repo: could not list workflow runs (gh error: $(gherr))"
+      continue
+    fi
     if [ -z "$runs" ]; then
-      red "$repo: could not list workflow runs"
+      red "$repo: no workflow runs returned (unexpected empty result)"
       continue
     fi
     repo_ok=1
