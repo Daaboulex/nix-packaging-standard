@@ -304,12 +304,47 @@ It checks, per consumer (every dir with a `.github/update.json`):
   as "the off-CI CUDA/ROCm build works" -- its build is proven only off-CI
   against a project cache, and it must stay eval-gated. Does not fail the audit;
   it scopes what GREEN means;
+- **temporary overlays** -- every `overlays/<name>.nix` fix is shape-checked
+  (`meta.reason`, `meta.added`, `dropWhen`, `overlay`, plus an exported
+  `overlays.probe`) and NAMED with its reason and age, so a live nixpkgs
+  workaround is always visible fleet-wide; a malformed or orphaned one fails
+  the audit;
 - **remote** (`gh`) -- a single `main` branch (no stale `update/*`), zero open
   issues, and a green latest run of CI / Maintenance / Update on `main`.
 
 A repo with no git remote (an unpushed WIP) is audited locally and skipped
 remotely. The standard itself, the private `site` registry, and the `Daaboulex`
 profile carry no `update.json` and are out of scope by construction.
+
+## Temporary nixpkgs overlays (self-healing)
+
+When a nixpkgs regression blocks a repo (a package breaks on the new default
+python, a dependency stops building), the bridge is a TEMPORARY overlay, never
+an ad-hoc pin: one fix per file under `overlays/`, mirroring the main config's
+`parts/overlays/_fixes` convention:
+
+```nix
+{
+  meta = {
+    reason = "torchao is disabled on python 3.14, nixpkgs' default python3";
+    added = "2026-07-13";
+    upstream = "https://github.com/NixOS/nixpkgs/...";   # optional
+  };
+  # Probed against pkgs WITHOUT the fixes (overlays.probe): true means
+  # nixpkgs works normally again and CI removes this file.
+  dropWhen = pkgs: (builtins.tryEval pkgs.python3Packages.torchao.drvPath).success;
+  overlay = final: prev: { ... };
+}
+```
+
+The repo composes `overlays.default` = its permanent glue + every fix, and
+exports `overlays.probe` = the glue alone. `scripts/heal-overlays.sh` (synced,
+run by Maintenance at the repo's cadence) evaluates every `dropWhen` against
+the probe pkgs; a fix that fires is deleted, the full check suite verifies the
+removal, and only a green tree is pushed -- a red verification restores the
+fix and files a `maintenance` issue instead. The lock keeps moving under
+automated maintenance, the workaround stays captured and visible (fleet-audit
+names each one), and it retires itself the moment nixpkgs actually heals.
 
 ## `.github/update.json` schema
 

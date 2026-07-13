@@ -216,6 +216,35 @@ check "first-party exits 0" "0"     "$RC"
 check "updated=false"       "false" "$(get "$d" updated)"
 check "no error_type"       ""      "$(get "$d" error_type)"
 
+# ---- Tests 6-8: heal-overlays.sh boundary behavior --------------------------
+# The probe path needs a real flake + nix; these tests pin the fail-closed
+# boundaries that need neither: no dir is a clean no-op, an empty dir and a
+# malformed fix are hard errors.
+HEAL="$STD/heal-overlays.sh"
+run_heal() { (cd "$1" && GITHUB_OUTPUT="$1/out.env" bash "$HEAL" >"$1/log" 2>&1); RC=$?; }
+geth() { grep "^$2=" "$1/out.env" 2>/dev/null | tail -1 | cut -d= -f2-; }
+
+echo "Test 6: heal-overlays without overlays/ -> clean no-op, exit 0"
+d="$WORK/t6"; mkdir -p "$d"
+run_heal "$d"
+check "no-dir exits 0" "0" "$RC"
+check "healed empty"   ""  "$(geth "$d" healed)"
+
+echo "Test 7: heal-overlays with empty overlays/ -> fail closed, exit 1"
+d="$WORK/t7"; mkdir -p "$d/overlays"
+run_heal "$d"
+check "empty dir exits 1" "1" "$RC"
+
+if command -v nix >/dev/null 2>&1; then
+  echo "Test 8: heal-overlays malformed fix (no meta/dropWhen) -> fail closed, exit 1"
+  d="$WORK/t8"; mkdir -p "$d/overlays"
+  echo '{ overlay = final: prev: { }; }' >"$d/overlays/broken.nix"
+  run_heal "$d"
+  check "malformed exits 1" "1" "$RC"
+else
+  echo "Test 8 skipped (nix unavailable)"
+fi
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

@@ -307,6 +307,46 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     [ "$offci_any" -eq 0 ] && ok "no off-CI build targets (every declared build is covered by CI)"
   fi
 
+  # --- temporary overlays (captured + heal-wired) ----------------------------
+  # A nixpkgs regression is bridged by overlays/<name>.nix -- one
+  # { meta, dropWhen, overlay } fix per file (the standard's mirror of the main
+  # config's parts/overlays/_fixes). Each must be well-formed and the repo must
+  # export overlays.probe (the composition WITHOUT fixes) for the heal probe.
+  # Every live fix is NAMED here so a workaround can never hide; the heal job
+  # in maintenance.yml removes one automatically once its dropWhen fires.
+  if [ "$NIX_MODE" != "skip" ]; then
+    hdr "per-repo: temporary overlays (overlays/*.nix -- captured + heal-wired)"
+    tmpov_any=0
+    for repo in "${CONSUMERS[@]}"; do
+      dir="$REPOS_DIR/$repo"
+      [ -d "$dir/overlays" ] || continue
+      mapfile -t ovfiles < <(find "$dir/overlays" -maxdepth 1 -name '*.nix' | sort)
+      if [ ${#ovfiles[@]} -eq 0 ]; then
+        red "$repo: overlays/ exists but holds no .nix fix (remove the empty dir)"
+        continue
+      fi
+      if ! nix eval "$dir#overlays.probe" >/dev/null 2>&1; then
+        red "$repo: has overlays/ fixes but exports no overlays.probe (the heal probe needs it)"
+      fi
+      for f in "${ovfiles[@]}"; do
+        name="$(basename "$f" .nix)"
+        m="$(nix eval --json --impure --expr \
+          "let v = import $f; in { r = v.meta.reason; a = v.meta.added; d = v ? dropWhen; o = v ? overlay; }" \
+          2>/dev/null)" || {
+          red "$repo: overlays/$name.nix malformed (needs meta.reason, meta.added, dropWhen, overlay)"
+          continue
+        }
+        if ! jq -e '.d and .o and (.r | type == "string" and length > 0) and (.a | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))' <<<"$m" >/dev/null; then
+          red "$repo: overlays/$name.nix malformed meta or missing dropWhen/overlay"
+          continue
+        fi
+        tmpov_any=1
+        info "$repo: temporary overlay '$name' (added $(jq -r .a <<<"$m")): $(jq -r .r <<<"$m")"
+      done
+    done
+    [ "$tmpov_any" -eq 0 ] && ok "no temporary overlays in the fleet"
+  fi
+
   if [ "$NIX_MODE" != "skip" ]; then
     flag=""
     [ "$NIX_MODE" = "no-build" ] && flag="--no-build"

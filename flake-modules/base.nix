@@ -38,6 +38,7 @@
         ".github/workflows/maintenance.yml" = ../maintenance.yml;
         ".github/workflows/update.yml" = ../update.yml;
         "scripts/update.sh" = ../update.sh;
+        "scripts/heal-overlays.sh" = ../heal-overlays.sh;
       };
       synced = if isCustom then builtins.removeAttrs syncedAll [ "scripts/update.sh" ] else syncedAll;
 

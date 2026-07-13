@@ -21,6 +21,7 @@ REPOS_DIR="${PKG_REPOS_DIR:?set PKG_REPOS_DIR to the directory holding the packa
 # (flakeModules.base) then enforces byte-identity — no curl-based drift-check.
 declare -A FILES=(
   ["update.sh"]="scripts/update.sh"
+  ["heal-overlays.sh"]="scripts/heal-overlays.sh"
   ["update.yml"]=".github/workflows/update.yml"
   ["maintenance.yml"]=".github/workflows/maintenance.yml"
   ["ci.yml"]=".github/workflows/ci.yml"
