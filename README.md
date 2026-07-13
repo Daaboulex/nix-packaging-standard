@@ -316,6 +316,18 @@ A repo with no git remote (an unpushed WIP) is audited locally and skipped
 remotely. The standard itself, the private `site` registry, and the `Daaboulex`
 profile carry no `update.json` and are out of scope by construction.
 
+## Self-contained dev state
+
+A project dev shell never writes `$HOME`: the default shell exports each
+shell-provided tool's cache/home into the project's gitignored `.devshell/`
+(`std.lib.devStateHook` -- currently `PRE_COMMIT_HOME`; language shells extend
+from the same `$DEVSHELL_STATE` seam, e.g. `CARGO_TARGET_DIR`). The synced
+canonical `.envrc` (`use flake`, activate once with `direnv allow`) makes
+nix-direnv capture those exports for every in-project entry point -- `nix
+develop`, `nix run`, `nix shell`, and raw tool calls. Build outputs (`result*`),
+`.direnv/`, and `.devshell/` stay untracked via the baseline `.gitignore`; the
+`std-devstate` check fails a repo whose baseline entries went missing.
+
 ## Temporary nixpkgs overlays (self-healing)
 
 When a nixpkgs regression blocks a repo (a package breaks on the new default

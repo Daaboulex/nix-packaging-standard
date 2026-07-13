@@ -25,6 +25,7 @@ declare -A FILES=(
   ["update.yml"]=".github/workflows/update.yml"
   ["maintenance.yml"]=".github/workflows/maintenance.yml"
   ["ci.yml"]=".github/workflows/ci.yml"
+  [".envrc"]=".envrc"
 )
 
 CHECK=0

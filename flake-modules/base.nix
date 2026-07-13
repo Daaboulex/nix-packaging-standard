@@ -39,6 +39,7 @@
         ".github/workflows/update.yml" = ../update.yml;
         "scripts/update.sh" = ../update.sh;
         "scripts/heal-overlays.sh" = ../heal-overlays.sh;
+        ".envrc" = ../.envrc;
       };
       synced = if isCustom then builtins.removeAttrs syncedAll [ "scripts/update.sh" ] else syncedAll;
 
@@ -83,6 +84,10 @@
       devShells.default = pkgs.mkShell {
         inputsFrom = [ config.pre-commit.devShell ];
         packages = [ pkgs.nil ];
+        # Self-contained dev state: shell-provided tools keep caches/homes in
+        # the project's gitignored .devshell/, never $HOME. Custom shells
+        # append the same hook (inputs.std.lib.devStateHook).
+        shellHook = (import ../lib.nix).devStateHook;
       };
 
       checks = (lib.mapAttrs' (n: v: lib.nameValuePair "package-${n}" v) buildable) // {
@@ -98,6 +103,19 @@
           ))
           + "\ntouch \"$out\"\n"
         );
+
+        # Self-contained dev state: the baseline .gitignore must keep build
+        # outputs and shell state out of the tree -- the dev shell writes tool
+        # caches into .devshell/ by contract (lib.devStateHook), and a missing
+        # ignore entry would let that state (or result symlinks) get committed.
+        std-devstate = pkgs.runCommand "std-devstate" { } ''
+          gi=${src + "/.gitignore"}
+          [ -f "$gi" ] || { echo "::error::no .gitignore (fleet baseline required)"; exit 1; }
+          grep -qxF "result" "$gi" || { echo "::error::.gitignore misses baseline entry: result"; exit 1; }
+          grep -qxF ".direnv/" "$gi" || { echo "::error::.gitignore misses baseline entry: .direnv/"; exit 1; }
+          grep -qxF ".devshell/" "$gi" || { echo "::error::.gitignore misses baseline entry: .devshell/"; exit 1; }
+          touch "$out"
+        '';
 
         std-update-json =
           pkgs.runCommand "std-update-json" { nativeBuildInputs = [ pkgs.check-jsonschema ]; }

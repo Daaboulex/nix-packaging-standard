@@ -98,4 +98,17 @@
       pkgs.runCommand name {
         ok = builtins.seq drv.drvPath "evaluated";
       } ''echo "$ok" > "$out"'';
+
+  # Self-contained dev state (the fleet rule: a project dev shell never writes
+  # $HOME): export shell-provided tools' caches/homes into the project's
+  # gitignored .devshell/. base wires this into the default dev shell; a repo
+  # with custom shells sets `shellHook = inputs.std.lib.devStateHook;` (or
+  # appends it). nix-direnv (.envrc `use flake`) captures the exports for every
+  # in-project entry point, not just `nix develop`. Extend per language from
+  # the same seam (e.g. CARGO_TARGET_DIR="$DEVSHELL_STATE/cargo-target").
+  devStateHook = ''
+    export DEVSHELL_STATE="$PWD/.devshell"
+    mkdir -p "$DEVSHELL_STATE"
+    export PRE_COMMIT_HOME="$DEVSHELL_STATE/pre-commit"
+  '';
 }
