@@ -182,6 +182,27 @@
           "description": "Artifact check when no binary is run. 'eval': eval + clean build are the verification, no artifact-shape assertion (also the behavior when omitted). 'elf'/'wrapper'/'desktop': additionally assert the named artifact exists under result/."
         }
       }
+    },
+    "pythonRequirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Env+source python app (python.withPackages + upstream source, no wheel metadata): reconcile the upstream requirements file against the env. update.sh auto-adds a nixpkgs-resolvable new requirement above the '# std:requirements-auto-add' marker in envFile; lib.requirementsCoveredCheck gates real coverage in CI and the update verification build.",
+      "required": ["file"],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Requirements file path inside the upstream source (e.g. requirements.txt)."
+        },
+        "envFile": {
+          "type": "string",
+          "description": "Repo file holding the withPackages list and the auto-add marker (default package.nix)."
+        },
+        "ignore": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Requirement names (PEP503-normalized) knowingly not shipped: dev/packaging tooling the app never imports on shipped paths, or dist-name mismatches provided under another attr. One source of truth for BOTH update.sh's auto-add and lib.requirementsCoveredCheck."
+        }
+      }
     }
   }
 }

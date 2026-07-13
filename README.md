@@ -331,6 +331,23 @@ develop`, `nix run`, `nix shell`, and raw tool calls. Build outputs (`result*`),
 `node_modules/`, venvs) stay untracked via the baseline `.gitignore`; the
 `std-devstate` check fails a repo whose core entries went missing.
 
+## Python env+source apps: requirements coverage
+
+An app packaged as a `python.withPackages` env plus upstream source (no wheel
+build) gets no `pythonRuntimeDepsCheck`, so a new upstream requirement would
+ship silently and fail only at the user's runtime import. Two pieces close
+the loop:
+
+- `std.lib.requirementsCoveredCheck { pkgs, env, src, file?, ignore? }` -- a
+  CI check comparing the source's requirements file against the distributions
+  actually present in the built env, failing by name.
+- `update.json` `pythonRequirements { file, envFile? }` -- update.sh fetches
+  the new tag's requirements file and auto-adds each nixpkgs-resolvable new
+  requirement above the `# std:requirements-auto-add` marker in `envFile`;
+  the coverage check then proves it during the update's verification build.
+  An unmappable name (pypi name != nixpkgs attr) fails the run naming the
+  requirement instead of shipping broken.
+
 ## Temporary nixpkgs overlays (self-healing)
 
 When a nixpkgs regression blocks a repo (a package breaks on the new default

@@ -99,6 +99,57 @@
         ok = builtins.seq drv.drvPath "evaluated";
       } ''echo "$ok" > "$out"'';
 
+  # requirements.txt coverage gate for env+source python apps: an app shipped
+  # as python.withPackages + upstream source has no wheel metadata, so
+  # pythonRuntimeDepsCheckHook never runs -- a new upstream requirement ships
+  # silently and fails only at the user's runtime import. Compares the
+  # PEP503-normalized requirement names in the source's requirements file
+  # against the distributions actually present in the built env and fails
+  # naming every missing one. Version pins are deliberately ignored (the env
+  # ships nixpkgs' versions); extras and environment markers are stripped.
+  # Pair with update.json pythonRequirements (update.sh auto-adds resolvable
+  # new requirements at the '# std:requirements-auto-add' marker).
+  requirementsCoveredCheck =
+    {
+      pkgs,
+      env, # the python.withPackages env
+      src, # upstream source containing the requirements file
+      file ? "requirements.txt",
+      ignore ? [ ], # requirement names knowingly not shipped (PEP503-normalized)
+    }:
+    pkgs.runCommand "requirements-covered"
+      {
+        nativeBuildInputs = [ env ];
+        ignored = builtins.concatStringsSep " " ignore;
+      }
+      ''
+        python - "$ignored" <<'PY'
+        import re
+        import sys
+        from importlib import metadata
+
+        def norm(name):
+            return re.sub(r"[-_.]+", "-", name).lower()
+
+        ignored = {norm(n) for n in sys.argv[1].split()}
+        have = {norm(d.metadata["Name"]) for d in metadata.distributions()}
+        missing = []
+        for line in open("${src}/${file}"):
+            line = line.split("#")[0].split(";")[0].strip()
+            if not line:
+                continue
+            req = re.split(r"[\[<>=!~ ]", line)[0].strip()
+            if req and norm(req) not in have and norm(req) not in ignored:
+                missing.append(req)
+        if missing:
+            print("requirements not present in the env:", ", ".join(missing))
+            print("add each to the withPackages list (or the check's ignore list)")
+            sys.exit(1)
+        print("ok: every requirement is present in the env")
+        PY
+        touch "$out"
+      '';
+
   # Self-contained dev state (the fleet rule: a project dev shell never writes
   # $HOME, and per-project build/cache dirs stay out of the tree): export each
   # tool's cache/home/build dir into the project's gitignored .devshell/. base

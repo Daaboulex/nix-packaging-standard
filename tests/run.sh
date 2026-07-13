@@ -42,6 +42,13 @@ BIN="$WORK/bin"
 mkdir -p "$BIN"
 cat >"$BIN/curl" <<'SH'
 #!/usr/bin/env bash
+for a in "$@"; do
+  case "$a" in
+  *raw.githubusercontent*)
+    [ -n "${STUB_CURL_RAW_FILE:-}" ] && { cat "$STUB_CURL_RAW_FILE"; exit 0; }
+    ;;
+  esac
+done
 cat "$STUB_CURL_FILE"
 SH
 cat >"$BIN/git" <<'SH'
@@ -53,6 +60,7 @@ cat >"$BIN/nix" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
   *"flake check"*) exit 0 ;;
+  "eval "*) echo true; exit 0 ;;
   *build*)
     [ -f "$STUB_NIX_FLAG" ] && exit 0
     : >"$STUB_NIX_FLAG"
@@ -80,6 +88,7 @@ run_update() { # run_update <repodir>  -> sets RC; outputs in <repodir>/out.env
   (
     cd "$dir" && GITHUB_OUTPUT="$dir/out.env" PATH="$BIN:$PATH" \
       STUB_CURL_FILE="${STUB_CURL_FILE:-}" STUB_GIT_REV="${STUB_GIT_REV:-}" \
+      STUB_CURL_RAW_FILE="${STUB_CURL_RAW_FILE:-}" \
       STUB_NIX_MISMATCH="${STUB_NIX_MISMATCH:-}" STUB_NIX_FLAG="$dir/.nixflag" \
       bash "$UPDATE" >"$dir/log" 2>&1
   )
@@ -244,6 +253,36 @@ if command -v nix >/dev/null 2>&1; then
 else
   echo "Test 8 skipped (nix unavailable)"
 fi
+
+# ---- Test 9: pythonRequirements auto-add above the marker -------------------
+# A new upstream requirement (dasbus) whose normalized name exists as a
+# python3Packages attr (nix eval stub answers true) is inserted above the
+# marker; a requirement already in the env list (loguru) is left alone.
+echo "Test 9: pythonRequirements auto-add inserts new dep above marker"
+d="$WORK/t9"; mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "github-release", "owner": "o", "repo": "r", "tagFilter": "^[0-9]" },
+  "packageFile": "version.json", "hashes": [], "verify": { "check": "eval" },
+  "pythonRequirements": { "file": "requirements.txt", "envFile": "env.nix", "ignore": ["skipme"] } }
+JSON
+printf '{ "version": "2026.1", "rev": "x", "hash": "sha256-x", "date": "x" }\n' >"$d/version.json"
+cat >"$d/env.nix" <<'NIX'
+      ps: with ps; [
+        loguru
+        # std:requirements-auto-add
+      ]
+NIX
+printf 'loguru==0.7.2\ndasbus==1.7\nskipme==1.0\n# a comment\n' >"$WORK/t9-reqs.txt"
+: >"$d/.nixflag"
+STUB_CURL_FILE="$STD/tests/fixtures/mullvad-releases.json" \
+  STUB_CURL_RAW_FILE="$WORK/t9-reqs.txt" run_update "$d"
+check "update exits 0"        "0"      "$RC"
+check "updated=true"          "true"   "$(get "$d" updated)"
+check "auto_added=dasbus"     "dasbus" "$(get "$d" auto_added)"
+check "dasbus sits above the marker" "dasbus" \
+  "$(grep -B1 'std:requirements-auto-add' "$d/env.nix" | head -1 | tr -d ' ')"
+check "loguru not duplicated" "1" "$(grep -c 'loguru' "$d/env.nix")"
 
 echo
 echo "------------------------------------------"
