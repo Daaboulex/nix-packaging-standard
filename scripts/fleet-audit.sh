@@ -182,11 +182,13 @@ if [ "$DO_LOCAL" -eq 1 ]; then
       # Mirror update.sh's version read: the configured versionAttr in the
       # configured versionFile (defaults: attr `version`, file packageFile), with
       # the same negative-lookbehind so `version` cannot match `fooVersion` -- not
-      # a broad repo scan a dependency's version literal could satisfy.
+      # a broad repo scan a dependency's version literal could satisfy. A JSON
+      # versionFile (version.json, package.json) is read structurally via jq --
+      # the Nix-literal grep can never match JSON's `"version": "..."` syntax.
       vattr="$(jq -r '.versionAttr // "version"' "$uj")"
       vfile="$(jq -r '.versionFile // .packageFile // "package.nix"' "$uj")"
       if { [ -f "$dir/$vfile" ] && grep -qP "(?<![A-Za-z_])${vattr}\s*[?=]\s*\"" "$dir/$vfile"; } ||
-        { [ "$vfile" = "version.json" ] && [ -f "$dir/version.json" ] && jq -e '.version' "$dir/version.json" >/dev/null 2>&1; }; then
+        { [[ "$vfile" == *.json ]] && [ -f "$dir/$vfile" ] && jq -e --arg a "$vattr" '.[$a] | select(type == "string")' "$dir/$vfile" >/dev/null 2>&1; }; then
         :
       else
         red "$repo: first-party repo declares no '$vattr' literal in $vfile"
