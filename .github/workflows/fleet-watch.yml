@@ -1,0 +1,83 @@
+# Fleet CI watch -- nix-packaging-standard repo ONLY (never synced to
+# consumers). A consumer's red CI can otherwise sit silent between fleet-audit
+# runs; this weekly sweep reads every consumer's latest run per required
+# workflow on its default branch and keeps exactly ONE open issue here naming
+# the red or missing ones, closing it when the fleet is clean.
+name: Fleet CI watch
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9 (node24)
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repos = await github.paginate(github.rest.repos.listForUser, {
+              username: owner, per_page: 100
+            });
+            const bad = [];
+            for (const r of repos) {
+              if (r.archived || r.fork) continue;
+              // A consumer carries .github/update.json on its default branch.
+              try {
+                await github.rest.repos.getContent({ owner, repo: r.name, path: '.github/update.json' });
+              } catch (e) { continue; }
+              for (const wf of ['ci.yml', 'maintenance.yml', 'update.yml']) {
+                let verdict = 'missing';
+                try {
+                  const runs = await github.rest.actions.listWorkflowRuns({
+                    owner, repo: r.name, workflow_id: wf,
+                    branch: r.default_branch, per_page: 1
+                  });
+                  const run = runs.data.workflow_runs[0];
+                  if (run) verdict = run.conclusion || run.status;
+                } catch (e) { verdict = 'missing'; }
+                // A run still in flight is not a defect; flag real reds and holes.
+                if (!['success', 'in_progress', 'queued', 'waiting', 'pending'].includes(verdict)) {
+                  bad.push(`${r.name}: ${wf} = ${verdict}`);
+                }
+              }
+            }
+            const title = 'Fleet: red or missing CI on consumers';
+            const open = await github.rest.issues.listForRepo({
+              owner, repo: context.repo.repo, state: 'open'
+            });
+            const existing = open.data.find(i => i.title === title);
+            if (bad.length === 0) {
+              if (existing) {
+                await github.rest.issues.createComment({
+                  owner, repo: context.repo.repo, issue_number: existing.number,
+                  body: 'Fleet clean on this sweep; closing.'
+                });
+                await github.rest.issues.update({
+                  owner, repo: context.repo.repo, issue_number: existing.number,
+                  state: 'closed', state_reason: 'completed'
+                });
+              }
+              return;
+            }
+            const body = [
+              'Latest run per required workflow on the default branch, non-success only:',
+              '',
+              ...bad.map(b => `- ${b}`),
+              '',
+              'Filed by the weekly Fleet CI watch (.github/workflows/fleet-watch.yml);',
+              'it updates this issue each sweep and closes it when the fleet is clean.'
+            ].join('\n');
+            if (existing) {
+              await github.rest.issues.update({
+                owner, repo: context.repo.repo, issue_number: existing.number, body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner, repo: context.repo.repo, title, body
+              });
+            }

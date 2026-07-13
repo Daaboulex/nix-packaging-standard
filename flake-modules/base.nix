@@ -39,6 +39,7 @@
         ".github/workflows/update.yml" = ../update.yml;
         "scripts/update.sh" = ../update.sh;
         "scripts/heal-overlays.sh" = ../heal-overlays.sh;
+        "scripts/classify-build-failure.sh" = ../classify-build-failure.sh;
         ".envrc" = ../.envrc;
       };
       synced = if isCustom then builtins.removeAttrs syncedAll [ "scripts/update.sh" ] else syncedAll;

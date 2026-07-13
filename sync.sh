@@ -22,6 +22,7 @@ REPOS_DIR="${PKG_REPOS_DIR:?set PKG_REPOS_DIR to the directory holding the packa
 declare -A FILES=(
   ["update.sh"]="scripts/update.sh"
   ["heal-overlays.sh"]="scripts/heal-overlays.sh"
+  ["classify-build-failure.sh"]="scripts/classify-build-failure.sh"
   ["update.yml"]=".github/workflows/update.yml"
   ["maintenance.yml"]=".github/workflows/maintenance.yml"
   ["ci.yml"]=".github/workflows/ci.yml"

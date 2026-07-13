@@ -347,6 +347,56 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     [ "$tmpov_any" -eq 0 ] && ok "no temporary overlays in the fleet"
   fi
 
+  # --- license consistency (README badge <-> LICENSE file) -------------------
+  # The README license badge is static text; nothing else ties it to the
+  # LICENSE actually shipped, so a relicense or copy-paste badge could drift
+  # silently. Fingerprint the LICENSE and require the badge to agree.
+  # meta.license accuracy vs upstream remains the documented out-of-band
+  # judgment (module/overlay repos carry no gateable literal).
+  hdr "per-repo: license consistency (README badge matches LICENSE)"
+  for repo in "${CONSUMERS[@]}"; do
+    dir="$REPOS_DIR/$repo"
+    [ -f "$dir/LICENSE" ] || {
+      red "$repo: no LICENSE file"
+      continue
+    }
+    [ -f "$dir/README.md" ] || {
+      red "$repo: no README.md"
+      continue
+    }
+    lic=""
+    grep -q 'Permission is hereby granted, free of charge' "$dir/LICENSE" && lic="MIT"
+    if grep -q 'GNU GENERAL PUBLIC LICENSE' "$dir/LICENSE"; then
+      if head -5 "$dir/LICENSE" | grep -q 'Version 2'; then lic="GPL-2.0"; else lic="GPL-3.0"; fi
+    fi
+    grep -q 'GNU AFFERO GENERAL PUBLIC LICENSE' "$dir/LICENSE" && lic="AGPL-3.0"
+    grep -q 'Altered source versions must be plainly marked' "$dir/LICENSE" && lic="Zlib"
+    grep -q 'This is free and unencumbered software' "$dir/LICENSE" && lic="Unlicense"
+    if [ -z "$lic" ]; then
+      red "$repo: LICENSE not recognized by the fingerprint set (extend fleet-audit)"
+      continue
+    fi
+    badge="$(grep -oE 'License: [A-Za-z0-9 .+-]+' "$dir/README.md" | head -1 | sed 's/License: //' | tr -d ' ')"
+    if [ -z "$badge" ]; then
+      red "$repo: README has no license badge"
+      continue
+    fi
+    lic_ok=0
+    case "$lic" in
+    MIT) echo "$badge" | grep -qiE '^MIT' && lic_ok=1 ;;
+    GPL-2.0) echo "$badge" | grep -qiE 'gpl.*2' && lic_ok=1 ;;
+    GPL-3.0) echo "$badge" | grep -qiE 'gpl.*3' && lic_ok=1 ;;
+    AGPL-3.0) echo "$badge" | grep -qi 'agpl' && lic_ok=1 ;;
+    Zlib) echo "$badge" | grep -qi 'zlib' && lic_ok=1 ;;
+    Unlicense) echo "$badge" | grep -qi 'unlicense' && lic_ok=1 ;;
+    esac
+    if [ "$lic_ok" -eq 1 ]; then
+      ok "$repo: license badge matches LICENSE ($lic)"
+    else
+      red "$repo: license badge '$badge' does not match LICENSE ($lic)"
+    fi
+  done
+
   if [ "$NIX_MODE" != "skip" ]; then
     flag=""
     [ "$NIX_MODE" = "no-build" ] && flag="--no-build"

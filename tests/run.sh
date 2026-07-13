@@ -284,6 +284,31 @@ check "dasbus sits above the marker" "dasbus" \
   "$(grep -B1 'std:requirements-auto-add' "$d/env.nix" | head -1 | tr -d ' ')"
 check "loguru not duplicated" "1" "$(grep -c 'loguru' "$d/env.nix")"
 
+# ---- Tests 10-11: classify-build-failure.sh ---------------------------------
+CLASSIFY="$STD/classify-build-failure.sh"
+run_classify() { (GITHUB_OUTPUT="$1/out.env" bash "$CLASSIFY" "$2" >"$1/clog" 2>&1); RC=$?; }
+
+echo "Test 10: classifier names hash-mismatch and extracts every failed drv"
+d="$WORK/t10"; mkdir -p "$d"; : >"$d/out.env"
+cat >"$d/build.log" <<'LOG'
+error: Cannot build '/nix/store/aaaa-foo-1.0.drv'.
+some noise
+hash mismatch in fixed-output derivation '/nix/store/bbbb-src.drv'
+error: Cannot build '/nix/store/cccc-bar-2.0.drv'.
+ERROR:nix_fast_build:Failed attributes: .#checks.x86_64-linux.package-foo .#checks.x86_64-linux.package-bar
+LOG
+run_classify "$d" "$d/build.log"
+check "classifier exits 0"      "0" "$RC"
+check "class hash-mismatch"     "upstream-rerelease-hash-mismatch" "$(get "$d" class)"
+check "both failed drvs listed" "2" "$(get "$d" failed_drvs | tr ' ' '\n' | grep -c drv)"
+check "failed attrs captured"   ".#checks.x86_64-linux.package-foo .#checks.x86_64-linux.package-bar" "$(get "$d" failed_attrs)"
+
+echo "Test 11: classifier fail-safe on a missing log -> unclassified"
+d="$WORK/t11"; mkdir -p "$d"; : >"$d/out.env"
+run_classify "$d" "$d/nope.log"
+check "missing log exits 0"  "0"            "$RC"
+check "class unclassified"   "unclassified" "$(get "$d" class)"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

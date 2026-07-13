@@ -348,6 +348,20 @@ the loop:
   An unmappable name (pypi name != nixpkgs attr) fails the run naming the
   requirement instead of shipping broken.
 
+## Rolling-CI failure handling
+
+Rolling inputs break in classes, and every class is either fenced or NAMED:
+update verification builds run with `--keep-going`, so one red run enumerates
+every failing dependency instead of fix-one-discover-next; the maintenance
+issue carries a machine class (`transient-infra`,
+`upstream-rerelease-hash-mismatch`, `nixpkgs-package-drop`,
+`missing-python-dep`, `requirements-coverage`, or an honest `unclassified`)
+plus the complete failed-attribute and failed-derivation lists
+(`scripts/classify-build-failure.sh`); temporary overlays bridge nixpkgs
+regressions and remove themselves when upstream heals; and the weekly Fleet
+CI watch (standard repo only) keeps one open issue naming any consumer whose
+required workflow is red or missing, closing it when the fleet is clean.
+
 ## Temporary nixpkgs overlays (self-healing)
 
 When a nixpkgs regression blocks a repo (a package breaks on the new default
