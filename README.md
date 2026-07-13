@@ -318,15 +318,18 @@ profile carry no `update.json` and are out of scope by construction.
 
 ## Self-contained dev state
 
-A project dev shell never writes `$HOME`: the default shell exports each
-shell-provided tool's cache/home into the project's gitignored `.devshell/`
-(`std.lib.devStateHook` -- currently `PRE_COMMIT_HOME`; language shells extend
-from the same `$DEVSHELL_STATE` seam, e.g. `CARGO_TARGET_DIR`). The synced
+A project dev shell never writes `$HOME`, and per-project build/cache dirs
+stay out of the tree: the default shell exports each tool's cache/home/build
+dir into the project's gitignored `.devshell/` (`std.lib.devStateHook` --
+pre-commit, ruff, mypy, python bytecode, pip, cargo target, npm cache; extend
+per tool from the `$DEVSHELL_STATE` seam. `CARGO_HOME`/`HF_HOME` stay
+machine-global by explicit choice: shared registry/model caches). The synced
 canonical `.envrc` (`use flake`, activate once with `direnv allow`) makes
 nix-direnv capture those exports for every in-project entry point -- `nix
 develop`, `nix run`, `nix shell`, and raw tool calls. Build outputs (`result*`),
-`.direnv/`, and `.devshell/` stay untracked via the baseline `.gitignore`; the
-`std-devstate` check fails a repo whose baseline entries went missing.
+`.direnv/`, `.devshell/`, and ad-hoc tool litter (coverage, `dist/`, `target/`,
+`node_modules/`, venvs) stay untracked via the baseline `.gitignore`; the
+`std-devstate` check fails a repo whose core entries went missing.
 
 ## Temporary nixpkgs overlays (self-healing)
 

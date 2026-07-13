@@ -34,3 +34,21 @@ __pycache__/
 .ruff_cache/
 .rumdl_cache/
 .mypy_cache/
+.hypothesis/
+
+# Coverage output
+.coverage
+.coverage.*
+htmlcov/
+coverage/
+
+# Ad-hoc build/test litter (nix builds run sandboxed; these appear only from
+# manual tool runs in a dev shell)
+build/
+dist/
+target/
+*.egg-info/
+.eggs/
+node_modules/
+.venv/
+venv/

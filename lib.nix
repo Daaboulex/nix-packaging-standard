@@ -100,15 +100,23 @@
       } ''echo "$ok" > "$out"'';
 
   # Self-contained dev state (the fleet rule: a project dev shell never writes
-  # $HOME): export shell-provided tools' caches/homes into the project's
-  # gitignored .devshell/. base wires this into the default dev shell; a repo
-  # with custom shells sets `shellHook = inputs.std.lib.devStateHook;` (or
-  # appends it). nix-direnv (.envrc `use flake`) captures the exports for every
-  # in-project entry point, not just `nix develop`. Extend per language from
-  # the same seam (e.g. CARGO_TARGET_DIR="$DEVSHELL_STATE/cargo-target").
+  # $HOME, and per-project build/cache dirs stay out of the tree): export each
+  # tool's cache/home/build dir into the project's gitignored .devshell/. base
+  # wires this into the default dev shell; a repo with custom shells sets
+  # `shellHook = inputs.std.lib.devStateHook;` (or appends it). nix-direnv
+  # (.envrc `use flake`) captures the exports for every in-project entry
+  # point, not just `nix develop`. Deliberately NOT pinned here: CARGO_HOME
+  # and HF_HOME (shared registry/model caches belong to the machine config,
+  # an explicit owner choice). Extend per tool from the same seam.
   devStateHook = ''
     export DEVSHELL_STATE="$PWD/.devshell"
     mkdir -p "$DEVSHELL_STATE"
     export PRE_COMMIT_HOME="$DEVSHELL_STATE/pre-commit"
+    export RUFF_CACHE_DIR="$DEVSHELL_STATE/ruff"
+    export MYPY_CACHE_DIR="$DEVSHELL_STATE/mypy"
+    export PYTHONPYCACHEPREFIX="$DEVSHELL_STATE/pycache"
+    export PIP_CACHE_DIR="$DEVSHELL_STATE/pip"
+    export CARGO_TARGET_DIR="$DEVSHELL_STATE/cargo-target"
+    export npm_config_cache="$DEVSHELL_STATE/npm-cache"
   '';
 }
