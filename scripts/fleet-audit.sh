@@ -193,6 +193,13 @@ if [ "$DO_LOCAL" -eq 1 ]; then
       else
         red "$repo: first-party repo declares no '$vattr' literal in $vfile"
       fi
+      # python first-party: the single-top-level-package gate must be WIRED
+      # (std.lib.pythonSitePackagesCheck), not merely available -- a flat
+      # top-level module collides in any merged site-packages (README "Python
+      # apps: one top-level package").
+      if [ -f "$dir/pyproject.toml" ] && ! grep -q 'pythonSitePackagesCheck' "$dir/flake.nix" 2>/dev/null; then
+        red "$repo: python first-party repo does not wire std.lib.pythonSitePackagesCheck in flake.nix"
+      fi
     fi
   done
 

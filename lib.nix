@@ -150,6 +150,51 @@
         touch "$out"
       '';
 
+  # One top-level import package per python application: site-packages is a
+  # global namespace shared by every package in a merged environment (a Nix
+  # profile's buildEnv, a venv). A flat top-level module (cli.py, utils.py)
+  # collides there with any other application shipping the same generic name
+  # and the whole profile fails to build on the conflict -- corecycler's flat
+  # cli.py vs hermes-agent's flat cli.py broke a home profile (2026-07-20).
+  # Inspects the BUILT output (the ground truth a profile merges), not the
+  # pyproject declaration: everything must live under the one declared package.
+  pythonSitePackagesCheck =
+    {
+      pkgs,
+      drv,
+      package, # the single allowed top-level import package name
+      name ? "python-site-packages",
+    }:
+    pkgs.runCommand name { } ''
+      shopt -s nullglob dotglob
+      spdirs=("${drv}"/lib/python*/site-packages)
+      if [ "''${#spdirs[@]}" -ne 1 ]; then
+        echo "expected exactly one site-packages under ${drv}/lib, found ''${#spdirs[@]}"
+        exit 1
+      fi
+      sp="''${spdirs[0]}"
+      if [ ! -d "$sp/${package}" ]; then
+        echo "declared package '${package}' missing from site-packages"
+        exit 1
+      fi
+      bad=0
+      for entry in "$sp"/*; do
+        base="''${entry##*/}"
+        case "$base" in
+        "${package}" | *.dist-info) ;;
+        *)
+          echo "flat top-level entry in site-packages: $base"
+          bad=1
+          ;;
+        esac
+      done
+      if [ "$bad" -ne 0 ]; then
+        echo "every module must live under the '${package}' package"
+        exit 1
+      fi
+      echo "ok: single top-level package '${package}'" > "$out"
+    '';
+
   # Self-contained dev state (the fleet rule: a project dev shell never writes
   # $HOME, and per-project build/cache dirs stay out of the tree): export each
   # tool's cache/home/build dir into the project's gitignored .devshell/. base

@@ -25,7 +25,7 @@ the [Daaboulex](https://github.com/Daaboulex) NixOS package fleet.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.7.1"; # pin a tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.12.0"; # pin a tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -133,6 +133,7 @@ without building the closure — eval-only and cheap, even in CI.
 | `nixosModuleCheck { nixpkgs, system, module, config?, overlays? }` | NixOS module repos. `overlays` supplies the repo's overlay when the module refs overlay-only pkgs. |
 | `homeModuleCheck { nixpkgs, home-manager, system, module, config?, overlays? }` | Home Manager module repos. Imports nixpkgs with `config.allowUnfree = true` for unfree packages. |
 | `drvEvalCheck { pkgs, name?, drv }` | Packages whose closure is not on `cache.nixos.org` and cannot build on a free CI runner (CUDA/ROCm, very large builds). Forces `drv`'s full build-graph evaluation without realizing it; skips with a trivial pass on a system the drv's `meta.platforms` excludes. See the off-CI exception below. |
+| `pythonSitePackagesCheck { pkgs, drv, package, name? }` | First-party python application repos. Proves the BUILT output ships exactly one top-level import package (plus its dist-info) in `site-packages` -- a flat top-level module (`cli.py`, `utils.py`) collides with any other application in a merged environment. See "Python apps: one top-level package" below. |
 
 Example:
 
@@ -295,7 +296,8 @@ It checks, per consumer (every dir with a `.github/update.json`):
 - **local** -- `sync.sh --check` (synced files byte-match), `sync-meta.sh
   --check` (GitHub metadata matches `update.json`), a known `upstream.type`,
   complete metadata (`description` + `topics`), the first-party discipline (a
-  self-owned version + a `CHANGELOG.md`), architecture honesty (every canonical
+  self-owned version + a `CHANGELOG.md`, and a python app wires the
+  single-package site-packages gate), architecture honesty (every canonical
   arch the flake does not build carries a `platforms` reason), and `nix flake
   check` (`std-conformance` + eval; full builds are proven remotely by CI);
 - **off-CI surface** -- names each package whose closure CI never realizes
@@ -347,6 +349,19 @@ the loop:
   the coverage check then proves it during the update's verification build.
   An unmappable name (pypi name != nixpkgs attr) fails the run naming the
   requirement instead of shipping broken.
+
+## Python apps: one top-level package
+
+`site-packages` is a global namespace: every application in a merged
+environment (a Nix profile's `buildEnv`, a venv) lands in the same directory,
+so a flat top-level module (`cli.py`, `utils.py`) collides with any other
+application shipping the same generic name and the profile fails to build on
+the conflict. First-party python apps therefore ship EVERYTHING under one
+package named after the project (`src/<name>/...`, entry points
+`<name>.module:fn`, no setuptools `py-modules`) and wire
+`std.lib.pythonSitePackagesCheck { pkgs, drv, package }` so the built output
+proves it stays that way. fleet-audit reds a first-party python repo (a
+`pyproject.toml` at the root) that does not wire the check.
 
 ## Rolling-CI failure handling
 
