@@ -134,6 +134,7 @@ without building the closure — eval-only and cheap, even in CI.
 | `homeModuleCheck { nixpkgs, home-manager, system, module, config?, overlays? }` | Home Manager module repos. Imports nixpkgs with `config.allowUnfree = true` for unfree packages. |
 | `drvEvalCheck { pkgs, name?, drv }` | Packages whose closure is not on `cache.nixos.org` and cannot build on a free CI runner (CUDA/ROCm, very large builds). Forces `drv`'s full build-graph evaluation without realizing it; skips with a trivial pass on a system the drv's `meta.platforms` excludes. See the off-CI exception below. |
 | `pythonSitePackagesCheck { pkgs, drv, package, name? }` | First-party python application repos. Proves the BUILT output ships exactly one top-level import package (plus its dist-info) in `site-packages` -- a flat top-level module (`cli.py`, `utils.py`) collides with any other application in a merged environment. See "Python apps: one top-level package" below. |
+| `pristineBinaryCheck { pkgs, package, binaryPath, name? }` | Prebuilt self-reading binaries (embedded resources / appended payloads). Asserts the installed binary is byte-identical to `package.src`, so no fixup phase can silently corrupt it. See "Prebuilt self-reading binaries" below. |
 
 Example:
 
@@ -208,6 +209,12 @@ build-graph evaluation without realizing it: CI proves it *evaluates* (catching
 dependency/version breakage) while the heavy build runs off-CI against a project
 cache (e.g. `cachix use cuda-maintainers`). Document that substituter in the
 repo README — declare the off-CI build, never silently drop coverage.
+
+On a dev host with binfmt emulation (qemu-aarch64 for image builds),
+`nix flake check` treats foreign arches as locally buildable and grinds
+their check set under emulation. Gate locally scoped to the native system
+(`nix-fast-build --flake .#checks.<system>`) and let each arch's native CI
+runner validate its own leg.
 
 ## Architecture and platforms
 
@@ -363,6 +370,55 @@ package named after the project (`src/<name>/...`, entry points
 proves it stays that way. fleet-audit reds a first-party python repo (a
 `pyproject.toml` at the root) that does not wire the check.
 
+## Prebuilt self-reading binaries
+
+Some prebuilt binaries read their own file at runtime -- embedded resource
+maps, appended payloads, .NET single-file bundles. `autoPatchelfHook`,
+explicit `patchelf`, or `strip` grows or reshapes the ELF, the embedded
+offsets shift, and the binary breaks at runtime while every build stays
+green (OCCT's launcher died with "No map found" after a ~38KB patchelf
+growth). The rules:
+
+- Install the binary byte-pristine: no patchelf, no strip, `dontStrip` as
+  needed. Gate it with `lib.pristineBinaryCheck` so the property is
+  enforced, not assumed.
+- Launch through the host loader instead of patching the interpreter:
+  `/lib64/ld-linux-x86-64.so.2` exists on FHS distros and via nix-ld on
+  NixOS. Guard in the wrapper with a clear failure message when absent.
+- Supply libraries via wrapper env (`LD_LIBRARY_PATH`, `LD_PRELOAD` shims),
+  never via ELF surgery on the self-reading file. Patching COPIES of
+  ordinary libraries stays fine.
+- Runtime self-extraction targets `$TMPDIR` on some apps; hardened hosts
+  mount `/tmp` noexec, so the wrapper exports an exec-allowed `TMPDIR`
+  (XDG data or cache) before exec.
+- `substituteInPlace` only with `--replace-fail` / `--replace-warn`; bare
+  `--replace` is deprecated and hides missing-pattern drift.
+
+Upstreams with rolling download URLs can also re-release in place: the FOD
+hash is the discriminator. Recorded hash == current upstream means local
+corruption (fixup phases); a mismatch means upstream replaced the artifact
+-- re-pin and note it.
+
+## Steam compatibility tools
+
+Prebuilt Proton forks (GE-Proton, Proton-CachyOS) package as two-output
+derivations mirroring nixpkgs `proton-ge-bin`: a stub `out` plus
+`steamcompattool` holding the tool, consumed via
+`programs.steam.extraCompatPackages`.
+
+- Normalize the `compatibilitytool.vdf` identity to a stable, version-free
+  name (`substituteInPlace --replace-fail`), overridable via a
+  `steamDisplayName` argument. Steam maps games to the vdf identity: a
+  versioned name breaks every per-game mapping on each release.
+- The shape check asserts the tool layout (`compatibilitytool.vdf`, the
+  `proton` entry point), the stable identity prefix, and -- via a grep for
+  `package.version` -- that no versioned identity leaked.
+- Package every variant upstream publishes (ISA tiers, arm64) as a variant
+  map in one `package.nix`; a new upstream variant is one added entry. The
+  baseline variant forces all variant sources (an `allVariantSources` list
+  attr) so `update.sh`'s hash convergence reaches every hash through
+  `.#default`.
+
 ## Rolling-CI failure handling
 
 Rolling inputs break in classes, and every class is either fenced or NAMED:
@@ -515,6 +571,8 @@ Pre-2026-05-19 each repo carried its own `update.sh` and they silently diverged.
 The standard was centralized, then promoted to this dedicated repo 2026-05-20.
 v2.0.0 (2026-05) replaced file-copy + a curl-based `drift-check` with the
 flake-parts `flakeModule` + in-flake `std-conformance` model above.
+v2.13.0 (2026-07) added `pristineBinaryCheck` plus the prebuilt
+self-reading-binary and Steam compatibility-tool conventions.
 
 ## License
 

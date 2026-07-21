@@ -99,6 +99,24 @@
         ok = builtins.seq drv.drvPath "evaluated";
       } ''echo "$ok" > "$out"'';
 
+  # Byte-equality gate for prebuilt binaries that read themselves at runtime
+  # (embedded resource maps, appended payloads, .NET single-file bundles).
+  # patchelf/strip on such a binary shifts its embedded offsets and breaks it
+  # at runtime while the build stays green -- install the file pristine, launch
+  # it through the host loader (nix-ld on NixOS), supply deps via wrapper env,
+  # and let this check prove the installed bytes equal the fetched source.
+  pristineBinaryCheck =
+    {
+      pkgs,
+      package,
+      binaryPath,
+      name ? "${package.pname or package.name}-binary-pristine",
+    }:
+    pkgs.runCommand name { } ''
+      cmp ${package.src} "${package}/${binaryPath}"
+      touch "$out"
+    '';
+
   # requirements.txt coverage gate for env+source python apps: an app shipped
   # as python.withPackages + upstream source has no wheel metadata, so
   # pythonRuntimeDepsCheckHook never runs -- a new upstream requirement ships
