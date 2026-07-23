@@ -168,6 +168,29 @@
         ]
       }
     },
+    "variantAssets": {
+      "type": "object",
+      "required": ["assetPrefix"],
+      "additionalProperties": false,
+      "description": "Multi-arch prebuilt-binary release mode (github-release only, mutually exclusive with `hashes`). The updater enumerates the newest matching release's assets, takes each <variant> from <assetPrefix><tag>-<variant><assetSuffix>, prefetches it unpacked (the FOD hash a fetchzip yields), and regenerates the marker-delimited rolling `variants` attrset in sourceFile — between `# std:variants-begin` and `# std:variants-end`. A newly published variant (a future x86_64_v4) is picked up with no config change; a dropped one disappears; pins outside the markers are never touched.",
+      "properties": {
+        "sourceFile": {
+          "type": "string",
+          "default": "sources.nix",
+          "description": "File holding the marker-delimited rolling `variants` attrset."
+        },
+        "assetPrefix": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Literal text before the tag in the asset name, e.g. \"proton-\" for \"proton-<tag>-<variant>.tar.xz\"."
+        },
+        "assetSuffix": {
+          "type": "string",
+          "default": ".tar.xz",
+          "description": "Literal text after the variant in the asset name."
+        }
+      }
+    },
     "verify": {
       "type": "object",
       "additionalProperties": false,
