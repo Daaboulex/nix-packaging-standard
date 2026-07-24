@@ -124,6 +124,14 @@
               check-jsonschema --schemafile ${../update.schema.json} ${src + "/.github/update.json"}
               touch "$out"
             '';
+
+        std-no-deprecated-system = pkgs.runCommand "std-no-deprecated-system" { } ''
+          if grep -rnE '\b(final|prev|pkgs|stdenv)\.system\b|inherit[[:space:]]*\((final|prev|pkgs|stdenv)\)[[:space:]]*system\b' ${src} --include='*.nix'; then
+            echo "::error::deprecated 'system' read above -- use stdenv.hostPlatform.system (nixpkgs aliases.nix warnAlias, 25.11+)"
+            exit 1
+          fi
+          touch "$out"
+        '';
       };
     };
 }
