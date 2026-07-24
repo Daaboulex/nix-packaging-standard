@@ -196,6 +196,7 @@ github-release)
   # list — not trusting /releases/latest — is what lets a repo ignore a foreign
   # release namespace; GitHub's "latest" flag can point at any of them.
   RC=0
+  # shellcheck disable=SC2016  # $f is a jq variable (--arg f), not a shell one
   fetch_paged_match \
     "https://api.github.com/repos/$OWNER/$REPO/releases?per_page=100" \
     'map(select((.draft | not) and (.prerelease | not)) | .tag_name | select(test($f)))[0] // empty' || RC=$?
@@ -220,6 +221,7 @@ github-tag)
   OWNER=$(echo "$CONFIG" | jq -r '.upstream.owner')
   REPO=$(echo "$CONFIG" | jq -r '.upstream.repo')
   RC=0
+  # shellcheck disable=SC2016  # $f is a jq variable (--arg f), not a shell one
   fetch_paged_match \
     "https://api.github.com/repos/$OWNER/$REPO/tags?per_page=100" \
     'map(.name | select(test($f)))[0] // empty' || RC=$?
