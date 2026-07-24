@@ -1,0 +1,36 @@
+[
+  {
+    "tag_name": "GE-Proton11-2",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "GE-Proton11-2-aarch64.sha512sum",
+        "browser_download_url": "https://example.invalid/GE-Proton11-2-aarch64.sha512sum"
+      },
+      {
+        "name": "GE-Proton11-2-aarch64.tar.gz",
+        "browser_download_url": "https://example.invalid/GE-Proton11-2-aarch64.tar.gz"
+      },
+      {
+        "name": "GE-Proton11-2.sha512sum",
+        "browser_download_url": "https://example.invalid/GE-Proton11-2.sha512sum"
+      },
+      {
+        "name": "GE-Proton11-2.tar.gz",
+        "browser_download_url": "https://example.invalid/GE-Proton11-2.tar.gz"
+      }
+    ]
+  },
+  {
+    "tag_name": "GE-Proton11-1",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "GE-Proton11-1.tar.gz",
+        "browser_download_url": "https://example.invalid/GE-Proton11-1.tar.gz"
+      }
+    ]
+  }
+]

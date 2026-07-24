@@ -59,6 +59,10 @@ SH
 cat >"$BIN/nix" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
+  *"prefetch-file"*)
+    printf '{"hash":"sha256-%s="}\n' \
+      "$(printf '%s' "${@: -1}" | sha256sum | cut -c1-43)"
+    exit 0 ;;
   *"flake check"*) exit 0 ;;
   "eval "*) echo true; exit 0 ;;
   *build*)
@@ -308,6 +312,84 @@ d="$WORK/t11"; mkdir -p "$d"; : >"$d/out.env"
 run_classify "$d" "$d/nope.log"
 check "missing log exits 0"  "0"            "$RC"
 check "class unclassified"   "unclassified" "$(get "$d" class)"
+
+echo "Test 12: two source hashes are unattributable -> config-error before any fetch"
+d="$WORK/t12"; mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "github-release", "owner": "o", "repo": "r", "tagFilter": "^[0-9]" },
+  "packageFile": "package.nix", "hashes": [ "hashX64", "hashArm64" ], "verify": { "check": "eval" } }
+JSON
+printf 'version = "2026.1";\nhashX64 = "sha256-a";\nhashArm64 = "sha256-b";\n' >"$d/package.nix"
+STUB_CURL_FILE="$STD/tests/fixtures/mullvad-releases.json" run_update "$d"
+check "two source hashes exit 1"  "1"            "$RC"
+check "error_type config-error"   "config-error" "$(get "$d" error_type)"
+check "failed before version read" ""            "$(get "$d" old_version)"
+
+echo "Test 12b: one source hash alongside vendor hashes stays allowed"
+d="$WORK/t12b"; mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "github-release", "owner": "o", "repo": "r", "tagFilter": "^[0-9]" },
+  "packageFile": "version.json",
+  "hashes": [ "hash", "cargoHash", "vendorHash", "npmDepsHash" ], "verify": { "check": "eval" } }
+JSON
+printf '{ "version": "2026.2", "rev": "x", "hash": "sha256-x", "date": "x" }\n' >"$d/version.json"
+STUB_CURL_FILE="$STD/tests/fixtures/mullvad-releases.json" run_update "$d"
+check "source plus vendor hashes accepted" "0"     "$RC"
+check "no config error"                    ""      "$(get "$d" error_type)"
+
+echo "Test 13: variantAssets with a non-empty hashes[] -> config-error"
+d="$WORK/t13"; mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "github-release", "owner": "o", "repo": "r", "tagFilter": "^GE-Proton" },
+  "packageFile": "package.nix", "versionFile": "sources.nix",
+  "variantAssets": { "sourceFile": "sources.nix", "assetPrefix": "", "assetSuffix": ".tar.gz" },
+  "hashes": [ "hashX64" ], "verify": { "check": "eval" } }
+JSON
+printf '{\n  version = "GE-Proton11-1";\n}\n' >"$d/sources.nix"
+STUB_CURL_FILE="$STD/tests/fixtures/ge-releases.json" run_update "$d"
+check "mutually exclusive exit 1" "1"            "$RC"
+check "error_type config-error"   "config-error" "$(get "$d" error_type)"
+
+echo "Test 14: variantAssets defaultVariant captures the untagged asset"
+d="$WORK/t14"; mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "ge",
+  "upstream": { "type": "github-release", "owner": "o", "repo": "r", "tagFilter": "^GE-Proton" },
+  "packageFile": "package.nix", "versionFile": "sources.nix",
+  "variantAssets": { "sourceFile": "sources.nix", "assetPrefix": "",
+                     "assetSuffix": ".tar.gz", "defaultVariant": "x86_64" },
+  "hashes": [], "verify": { "check": "eval" } }
+JSON
+cat >"$d/sources.nix" <<'NIX'
+{
+  version = "GE-Proton11-1";
+  # std:variants-begin
+  variants = {
+    x86_64 = "sha256-OLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDA=";
+  };
+  # std:variants-end
+  pins = {
+    "GE-Proton10-34" = {
+      variants = {
+        x86_64 = "sha256-PINPINPINPINPINPINPINPINPINPINPINPINPINPINA=";
+      };
+    };
+  };
+}
+NIX
+: >"$d/package.nix"
+: >"$d/.nixflag"
+STUB_CURL_FILE="$STD/tests/fixtures/ge-releases.json" run_update "$d"
+check "run succeeds"                "0"              "$RC"
+check "version bumped"              "GE-Proton11-2"  "$(get "$d" new_version)"
+check "two variants regenerated"    "2"              "$(get "$d" variants)"
+check "untagged asset -> x86_64"    "1"              "$(grep -c '^    x86_64 = "sha256-[^O]' "$d/sources.nix")"
+check "tagged asset -> aarch64"     "1"              "$(grep -c '^    aarch64 = "sha256-' "$d/sources.nix")"
+check "checksum assets ignored"     "0"              "$(grep -c 'sha512sum' "$d/sources.nix")"
+check "pins left untouched"         "1"              "$(grep -c 'sha256-PINPIN' "$d/sources.nix")"
 
 echo
 echo "------------------------------------------"

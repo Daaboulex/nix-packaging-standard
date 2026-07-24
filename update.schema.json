@@ -181,13 +181,17 @@
         },
         "assetPrefix": {
           "type": "string",
-          "minLength": 1,
-          "description": "Literal text before the tag in the asset name, e.g. \"proton-\" for \"proton-<tag>-<variant>.tar.xz\"."
+          "description": "Literal text before the tag in the asset name, e.g. \"proton-\" for \"proton-<tag>-<variant>.tar.xz\"; \"\" when the tag starts the name."
         },
         "assetSuffix": {
           "type": "string",
           "default": ".tar.xz",
           "description": "Literal text after the variant in the asset name."
+        },
+        "defaultVariant": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_]+$",
+          "description": "Variant name for the asset that carries no `-<variant>` token, i.e. exactly `<assetPrefix><tag><assetSuffix>` — GE-Proton ships `<tag>.tar.gz` for x86_64 alongside `<tag>-aarch64.tar.gz`. Omit when every asset is variant-tagged."
         }
       }
     },

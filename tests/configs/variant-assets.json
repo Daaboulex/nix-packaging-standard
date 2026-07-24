@@ -1,0 +1,18 @@
+{
+  "package": "example-multi-variant",
+  "upstream": {
+    "type": "github-release",
+    "owner": "acme",
+    "repo": "example",
+    "tagFilter": "^Example"
+  },
+  "packageFile": "package.nix",
+  "versionFile": "sources.nix",
+  "variantAssets": {
+    "sourceFile": "sources.nix",
+    "assetPrefix": "",
+    "assetSuffix": ".tar.gz",
+    "defaultVariant": "x86_64"
+  },
+  "verify": { "check": "eval" }
+}

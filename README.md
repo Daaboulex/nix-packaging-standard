@@ -505,6 +505,21 @@ names each one), and it retires itself the moment nixpkgs actually heals.
   `hash = "..."` literals in one file collide and the updater clobbers both with
   one value. Bind the extra hash to a named literal (`cargoHash = "sha256-...";`
   then `hash = cargoHash;`) so it is uniquely targetable.
+  Exactly **one** of them may be a *source* hash. A failing source FOD reports no
+  field identity, so the updater can only route its mismatch to the single
+  declared non-vendor field; a second source hash absorbs nothing, stays dummied,
+  and the convergence loop can never finish. Declaring two fails closed with
+  `config-error` — use `variantAssets` instead.
+- **`variantAssets`** is the multi-variant prebuilt-release mode (mutually
+  exclusive with `hashes`). The updater enumerates the newest matching release's
+  assets, takes each `<variant>` from `<assetPrefix><tag>-<variant><assetSuffix>`,
+  prefetches it unpacked (the exact hash a `fetchzip` yields, root dir stripped),
+  and regenerates the `variants` attrset between the `# std:variants-begin` /
+  `# std:variants-end` markers in `sourceFile`. Attribution is by asset URL, so
+  any number of variants converge in one pass and a newly published one is picked
+  up with no config change. `defaultVariant` names the variant whose asset carries
+  no `-<variant>` token (GE-Proton ships `<tag>.tar.gz` for x86_64 next to
+  `<tag>-aarch64.tar.gz`). Pins outside the markers are never rewritten.
 - For commit-tracked packages prefer **`versionFile: "version.json"`**.
 - **`versionScheme`** controls the written version literal (commit-tracked types
   only). `literal` (default) writes the upstream string verbatim (a bare 7-char
@@ -573,6 +588,10 @@ v2.0.0 (2026-05) replaced file-copy + a curl-based `drift-check` with the
 flake-parts `flakeModule` + in-flake `std-conformance` model above.
 v2.13.0 (2026-07) added `pristineBinaryCheck` plus the prebuilt
 self-reading-binary and Steam compatibility-tool conventions.
+v2.14.0 (2026-07) added `variantAssets` for multi-variant prebuilt releases.
+v2.15.0 (2026-07) made a second *source* hash in `hashes` fail closed instead of
+silently misrouting every mismatch onto the first field, and taught
+`variantAssets` the `defaultVariant` asset naming.
 
 ## License
 
