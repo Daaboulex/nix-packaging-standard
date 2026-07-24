@@ -49,6 +49,23 @@ for a in "$@"; do
     ;;
   esac
 done
+# Paged list endpoints: serve $STUB_CURL_PAGE_DIR/page<N>.json, empty past the
+# end, so the pagination walk can be exercised without a network.
+if [ -n "${STUB_CURL_PAGE_DIR:-}" ]; then
+  page=1
+  for a in "$@"; do
+    case "$a" in
+    *page=*)
+      page="${a##*page=}"
+      page="${page%%&*}"
+      ;;
+    esac
+  done
+  [ -f "$STUB_CURL_PAGE_DIR/page$page.json" ] &&
+    { cat "$STUB_CURL_PAGE_DIR/page$page.json"; exit 0; }
+  echo '[]'
+  exit 0
+fi
 cat "$STUB_CURL_FILE"
 SH
 cat >"$BIN/git" <<'SH'
@@ -390,6 +407,40 @@ check "untagged asset -> x86_64"    "1"              "$(grep -c '^    x86_64 = "
 check "tagged asset -> aarch64"     "1"              "$(grep -c '^    aarch64 = "sha256-' "$d/sources.nix")"
 check "checksum assets ignored"     "0"              "$(grep -c 'sha512sum' "$d/sources.nix")"
 check "pins left untouched"         "1"              "$(grep -c 'sha256-PINPIN' "$d/sources.nix")"
+
+# ---- Test 15: tagFilter match beyond the first page -------------------------
+# A single-page fetch made a tracked namespace invisible when upstream pushes a
+# high-volume second namespace ahead of it: CachyOS/wine-cachyos carries ~370
+# rolling experimental-* tags before the newest *-wine build tag, so
+# github-tag + tagFilter found nothing and failed every scheduled run.
+echo "Test 15: github-tag finds a tagFilter match on a later page"
+d="$WORK/t15"; mkdir -p "$d/.github" "$d/pages"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "github-tag", "owner": "o", "repo": "r", "tagFilter": "-wine$" },
+  "packageFile": "package.nix", "versionAttr": "tag",
+  "hashes": [], "verify": { "check": "eval" } }
+JSON
+printf 'tag = "cachyos-10.0-20260425-wine";\n' >"$d/package.nix"
+jq -nc '[range(100) | {name: "experimental-\(.)"}]' >"$d/pages/page1.json"
+jq -nc '[range(100) | {name: "experimental-b\(.)"}]' >"$d/pages/page2.json"
+jq -nc '[{name: "experimental-c0"}, {name: "cachyos-10.0-20260425-wine"},
+         {name: "cachyos-10.0-20260407-wine"}]' >"$d/pages/page3.json"
+STUB_CURL_PAGE_DIR="$d/pages" run_update "$d"
+check "paged tag search exits 0"      "0"                          "$RC"
+check "newest -wine tag selected"     "cachyos-10.0-20260425-wine" "$(get "$d" new_version)"
+check "recognised up-to-date"         "false"                      "$(get "$d" updated)"
+
+# ---- Test 15b: an unmatchable filter still terminates -----------------------
+echo "Test 15b: no tagFilter match anywhere -> bounded, fails closed"
+d="$WORK/t15b"; mkdir -p "$d/.github" "$d/pages"
+cp "$WORK/t15/.github/update.json" "$d/.github/update.json"
+printf 'tag = "cachyos-10.0-20260425-wine";\n' >"$d/package.nix"
+jq -nc '[range(100) | {name: "experimental-\(.)"}]' >"$d/pages/page1.json"
+jq -nc '[{name: "experimental-tail"}]' >"$d/pages/page2.json"
+STUB_CURL_PAGE_DIR="$d/pages" run_update "$d"
+check "unmatchable filter exits 1"    "1"               "$RC"
+check "error_type no-matching-tag"    "no-matching-tag" "$(get "$d" error_type)"
 
 echo
 echo "------------------------------------------"

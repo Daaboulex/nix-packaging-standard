@@ -531,7 +531,11 @@ names each one), and it retires itself the moment nixpkgs actually heals.
   schemes.
 - **`tagFilter`** (an ERE under `upstream`, for `github-release`/`github-tag`)
   pins to one tag namespace when upstream publishes several (e.g. `^[0-9]` to
-  skip an `android/*` namespace); the newest matching tag wins.
+  skip an `android/*` namespace); the newest matching tag wins. The search
+  **pages** through the list (up to ten 100-item pages) until it matches, so a
+  tracked namespace stays reachable behind a high-volume one — CachyOS/wine-cachyos
+  carries ~370 rolling `experimental-*` tags ahead of its newest `*-wine` build
+  tag. A filter that matches nothing fails closed with `no-matching-tag`.
 - **`trackOnly: true`** is the hand-mirrored mode: the updater only DETECTS
   upstream movement (against `trackFile`/`trackKey`, default
   `upstream-version.json`/`commit`) and files a `remirror-needed` reminder issue
@@ -592,6 +596,10 @@ v2.14.0 (2026-07) added `variantAssets` for multi-variant prebuilt releases.
 v2.15.0 (2026-07) made a second *source* hash in `hashes` fail closed instead of
 silently misrouting every mismatch onto the first field, and taught
 `variantAssets` the `defaultVariant` asset naming.
+v2.16.0 (2026-07) made the `tagFilter` search page through the tag/release list
+instead of reading only the first 100 entries — an upstream that publishes a
+high-volume second tag namespace previously hid the tracked one from the updater
+entirely, failing every scheduled run.
 
 ## License
 
