@@ -15,7 +15,17 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22 (node24)
+
+      # The canonical repo holds itself to the formatting and workflow linting
+      # it hands the fleet; without this it was the one repo exempt from its
+      # own gate, and lib.nix had drifted unformatted.
+      - name: Nix formatting
+        run: git ls-files -z '*.nix' | xargs -0 nix fmt -- --check
+
+      - name: Workflow lint
+        run: nix run nixpkgs#actionlint -- ci.yml update.yml maintenance.yml .github/workflows/*.yml
 
       - name: Shell syntax (bash -n)
         run: |

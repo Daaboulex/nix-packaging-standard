@@ -313,11 +313,11 @@ It checks, per consumer (every dir with a `.github/update.json`):
   as "the off-CI CUDA/ROCm build works" -- its build is proven only off-CI
   against a project cache, and it must stay eval-gated. Does not fail the audit;
   it scopes what GREEN means;
-- **temporary overlays** -- every `overlays/<name>.nix` fix is shape-checked
-  (`meta.reason`, `meta.added`, `dropWhen`, `overlay`, plus an exported
-  `overlays.probe`) and NAMED with its reason and age, so a live nixpkgs
-  workaround is always visible fleet-wide; a malformed or orphaned one fails
-  the audit;
+- **temporary divergences** -- every `overlays/<name>.nix` fix is shape-checked
+  (`meta.reason`, `meta.added`, `overlay`, exactly one of
+  `dropWhen`/`dropWhenBuilds`, plus an exported `overlays.probe`) and NAMED with
+  its reason and age, so a live workaround, added dependency, or pin is always
+  visible fleet-wide; a malformed or orphaned one fails the audit;
 - **remote** (`gh`) -- a single `main` branch (no stale `update/*`), zero open
   issues, and a green latest run of CI / Maintenance / Update on `main`.
 
@@ -426,19 +426,34 @@ update verification builds run with `--keep-going`, so one red run enumerates
 every failing dependency instead of fix-one-discover-next; the maintenance
 issue carries a machine class (`transient-infra`,
 `upstream-rerelease-hash-mismatch`, `nixpkgs-package-drop`,
-`missing-python-dep`, `requirements-coverage`, or an honest `unclassified`)
+`missing-python-dep`, `requirements-coverage`,
+`python-metadata-version-mismatch`, or an honest `unclassified`)
 plus the complete failed-attribute and failed-derivation lists
-(`scripts/classify-build-failure.sh`); temporary overlays bridge nixpkgs
-regressions and remove themselves when upstream heals; and the weekly Fleet
-CI watch (standard repo only) keeps one open issue naming any consumer whose
-required workflow is red or missing, closing it when the fleet is clean.
+(`scripts/classify-build-failure.sh`); temporary divergences bridge nixpkgs
+regressions, missing dependencies, and pins, and remove themselves once they
+stop doing any work; and the weekly Fleet CI watch (standard repo only) keeps
+one open issue naming any consumer whose required workflow is red or missing,
+closing it when the fleet is clean.
 
-## Temporary nixpkgs overlays (self-healing)
+`transient-infra` covers a runner-side store/fetch race as well as a network
+one (`path '...' is not valid`): the same revision re-runs green, so it is never
+a repo defect to chase.
 
-When a nixpkgs regression blocks a repo (a package breaks on the new default
-python, a dependency stops building), the bridge is a TEMPORARY overlay, never
-an ad-hoc pin: one fix per file under `overlays/`, mirroring the main config's
-`parts/overlays/_fixes` convention:
+## Temporary divergences from nixpkgs (self-healing)
+
+**Every** temporary divergence from nixpkgs goes here — there is no other
+sanctioned place for one, and none of them may be permanent:
+
+- a **regression bridge** (a package breaks on the new default python, a
+  dependency stops building, an upstream test suite goes incompatible);
+- an **added dependency** the packaged upstream needs but nixpkgs' own package
+  does not carry yet — the normal case for a repo whose overridden `src` has
+  moved ahead of nixpkgs' release;
+- a **version pin**.
+
+One fix per file under `overlays/`, mirroring the main config's
+`parts/overlays/_fixes` convention. Each carries `meta`, an `overlay`, and
+**exactly one** heal predicate:
 
 ```nix
 {
@@ -454,14 +469,57 @@ an ad-hoc pin: one fix per file under `overlays/`, mirroring the main config's
 }
 ```
 
+**The predicate must test the real condition.** A version-string proxy
+(`dropWhen = pkgs: pkgs.foo.version != "1.2.3"`) is forbidden: it fires on an
+unrelated bump, so the fix is dropped while the breakage is still live and the
+repo re-breaks on a later run. Pick by what the condition actually is:
+
+| Predicate | Use when the condition is visible at | Fires on |
+| --- | --- | --- |
+| `dropWhen = pkgs: <bool>` | **eval** — an attribute exists again, a dependency is back in `propagatedBuildInputs`, an option is gone | the boolean going true |
+| `dropWhenBuilds = pkgs: <drv>` | **build** — a failing test suite, a `pkg-config` version reject, a patch that no longer applies | that derivation building cleanly without the fix |
+
+An added dependency is eval-visible, so it uses `dropWhen` and retires itself
+the moment nixpkgs' own package carries the dependency:
+
+```nix
+{
+  meta = {
+    reason = "unsloth git-main added a structlog runtime dep; nixpkgs' unsloth predates it";
+    added = "2026-07-30";
+  };
+  dropWhen =
+    pkgs:
+    builtins.any (d: (d.pname or "") == "structlog") (
+      pkgs.python3Packages.unsloth.propagatedBuildInputs or [ ]
+    );
+  overlay = final: prev: { ... };
+}
+```
+
 The repo composes `overlays.default` = its permanent glue + every fix, and
-exports `overlays.probe` = the glue alone. `scripts/heal-overlays.sh` (synced,
-run by Maintenance at the repo's cadence) evaluates every `dropWhen` against
-the probe pkgs; a fix that fires is deleted, the full check suite verifies the
-removal, and only a green tree is pushed -- a red verification restores the
-fix and files a `maintenance` issue instead. The lock keeps moving under
-automated maintenance, the workaround stays captured and visible (fleet-audit
-names each one), and it retires itself the moment nixpkgs actually heals.
+exports `overlays.probe` = the glue alone. `scripts/heal-overlays.sh` (synced)
+probes every fix against the probe pkgs -- evaluating a `dropWhen`, **building**
+a `dropWhenBuilds` -- and deletes the ones that fire.
+
+**Where it runs is load-bearing.** Maintenance runs the probe INSIDE the
+lock-update job, immediately after `nix flake update` and before the
+verification build, so every fix is judged against the inputs the repo is moving
+**to**. Probing the committed lock instead reads a fix that is needed only on
+the NEW nixpkgs as healed, drops it, and re-breaks on the next bump -- a churn
+loop, and the second half of what made a version proxy so damaging. Because the
+removals share the lock bump's single verification, the two land together or
+neither does: green pushes both in one commit, red restores the fixes, pushes
+nothing, and files a `maintenance` issue naming what was kept and what was
+restored. Nothing is ever dropped blind.
+
+Fail-closed by construction: a fix with no predicate, with both, with malformed
+`meta`, or with a `dropWhenBuilds` that cannot even evaluate is a hard error in
+both `heal-overlays.sh` and `fleet-audit` -- never silently read as "still
+needed", which would pin it forever. The lock keeps moving under automated
+maintenance, every live workaround stays captured and visible (fleet-audit names
+each one with its reason and age), and each retires itself the moment it stops
+doing any work.
 
 ## `.github/update.json` schema
 
@@ -600,6 +658,23 @@ v2.16.0 (2026-07) made the `tagFilter` search page through the tag/release list
 instead of reading only the first 100 entries — an upstream that publishes a
 high-volume second tag namespace previously hid the tracked one from the updater
 entirely, failing every scheduled run.
+v2.17.0 (2026-07) generalized `overlays/` from "nixpkgs regression bridge" to
+**every** temporary divergence — regression, added dependency, or pin — and gave
+it a predicate that cannot lie: `dropWhenBuilds` BUILDS the un-fixed target, so a
+breakage invisible to eval (a broken test suite, a `pkg-config` version reject)
+heals on real evidence instead of a version-string proxy. A proxy predicate had
+dropped openviking's `pandas-stubs` fix on an unrelated bump and the repo
+re-broke. Exactly one predicate is now required, and a `dropWhenBuilds` that
+cannot evaluate fails closed rather than pinning the fix forever. The heal probe
+also MOVED into the lock-update job, right after `nix flake update`: as a
+separate job it probed the committed lock, so a fix needed only on the new
+nixpkgs read as healed and was dropped, then the next bump re-broke it. Removals
+now share the lock bump's single verification and land atomically with it, and a
+red build restores them (from HEAD -- `git rm` had already cleared the index, so
+the old restore could not have worked). The failure classifier also learned the
+runner-side store race (`transient-infra`), the missing-runtime-dependency form
+nixpkgs' `pythonRuntimeDepsCheck` reports, and
+`python-metadata-version-mismatch`.
 
 ## License
 

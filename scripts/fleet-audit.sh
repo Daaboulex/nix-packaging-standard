@@ -315,12 +315,14 @@ if [ "$DO_LOCAL" -eq 1 ]; then
   fi
 
   # --- temporary overlays (captured + heal-wired) ----------------------------
-  # A nixpkgs regression is bridged by overlays/<name>.nix -- one
-  # { meta, dropWhen, overlay } fix per file (the standard's mirror of the main
-  # config's parts/overlays/_fixes). Each must be well-formed and the repo must
-  # export overlays.probe (the composition WITHOUT fixes) for the heal probe.
-  # Every live fix is NAMED here so a workaround can never hide; the heal job
-  # in maintenance.yml removes one automatically once its dropWhen fires.
+  # Every temporary divergence from nixpkgs -- a regression bridge, an added
+  # dependency, a version pin -- is one { meta, predicate, overlay } fix per
+  # file in overlays/ (the standard's mirror of the main config's
+  # parts/overlays/_fixes). Each must be well-formed, carry EXACTLY ONE heal
+  # predicate (dropWhen for eval-visible, dropWhenBuilds for build-time-only),
+  # and the repo must export overlays.probe (the composition WITHOUT fixes) for
+  # the heal probe. Every live fix is NAMED here so a workaround can never hide;
+  # the heal job in maintenance.yml removes one automatically once it fires.
   if [ "$NIX_MODE" != "skip" ]; then
     hdr "per-repo: temporary overlays (overlays/*.nix -- captured + heal-wired)"
     tmpov_any=0
@@ -338,13 +340,13 @@ if [ "$DO_LOCAL" -eq 1 ]; then
       for f in "${ovfiles[@]}"; do
         name="$(basename "$f" .nix)"
         m="$(nix eval --json --impure --expr \
-          "let v = import $f; in { r = v.meta.reason; a = v.meta.added; d = v ? dropWhen; o = v ? overlay; }" \
+          "let v = import $f; in { r = v.meta.reason; a = v.meta.added; d = v ? dropWhen; b = v ? dropWhenBuilds; o = v ? overlay; }" \
           2>/dev/null)" || {
-          red "$repo: overlays/$name.nix malformed (needs meta.reason, meta.added, dropWhen, overlay)"
+          red "$repo: overlays/$name.nix malformed (needs meta.reason, meta.added, overlay, and one of dropWhen/dropWhenBuilds)"
           continue
         }
-        if ! jq -e '.d and .o and (.r | type == "string" and length > 0) and (.a | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))' <<<"$m" >/dev/null; then
-          red "$repo: overlays/$name.nix malformed meta or missing dropWhen/overlay"
+        if ! jq -e '(.d != .b) and .o and (.r | type == "string" and length > 0) and (.a | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))' <<<"$m" >/dev/null; then
+          red "$repo: overlays/$name.nix malformed meta, missing overlay, or not exactly one of dropWhen/dropWhenBuilds"
           continue
         fi
         tmpov_any=1

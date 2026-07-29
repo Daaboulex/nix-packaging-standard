@@ -93,7 +93,8 @@
     # pass there -- the same per-package `declared == built` honesty flakeModules.base
     # applies to perSystem.packages, extended to the off-CI eval gate.
     if !(pkgs.lib.meta.availableOn pkgs.stdenv.hostPlatform drv) then
-      pkgs.runCommand name { } ''echo "skipped: ${name} not available on ${pkgs.stdenv.hostPlatform.system}" > "$out"''
+      pkgs.runCommand name { }
+        ''echo "skipped: ${name} not available on ${pkgs.stdenv.hostPlatform.system}" > "$out"''
     else
       pkgs.runCommand name {
         ok = builtins.seq drv.drvPath "evaluated";
