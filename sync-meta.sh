@@ -37,8 +37,23 @@ for repo in "${targets[@]}"; do
   want_topics=$(jq -r '.topics[]?' "$uj" | sort)
   [ -z "$desc" ] && [ -z "$want_topics" ] && continue
 
-  live_desc=$(gh repo view "$OWNER/$repo" --json description --jq '.description // ""' 2>/dev/null || echo "")
-  live_topics=$(gh repo view "$OWNER/$repo" --json repositoryTopics --jq '.repositoryTopics[].name' 2>/dev/null | sort)
+  # An unpushed WIP has no remote to carry metadata, and fleet-audit skips such
+  # a repo's remote half too -- reporting it as drift would be a red nothing can
+  # clear.
+  if ! git -C "$REPOS_DIR/$repo" remote get-url origin >/dev/null 2>&1; then
+    echo "skip   $repo (no git remote)"
+    continue
+  fi
+
+  # One query, and a FAILED query is an error, never silently-empty live state:
+  # swallowing a transient gh fault used to invent drift out of a remote blip.
+  if ! live=$(gh repo view "$OWNER/$repo" --json description,repositoryTopics 2>/tmp/sync-meta-gh.err); then
+    echo "ERROR  $repo: could not query GitHub metadata: $(tail -1 /tmp/sync-meta-gh.err)"
+    drift=1
+    continue
+  fi
+  live_desc=$(jq -r '.description // ""' <<<"$live")
+  live_topics=$(jq -r '.repositoryTopics[].name' <<<"$live" | sort)
 
   desc_drift=0; topic_drift=0
   [ -n "$desc" ] && [ "$desc" != "$live_desc" ] && desc_drift=1

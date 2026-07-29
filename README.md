@@ -370,6 +370,22 @@ package named after the project (`src/<name>/...`, entry points
 proves it stays that way. fleet-audit reds a first-party python repo (a
 `pyproject.toml` at the root) that does not wire the check.
 
+## Python subpackages: declare the version the artifact actually has
+
+A component inside a monorepo release versions itself independently, so passing
+the *release* version down to it makes the derivation contradict the wheel it
+builds. nixpkgs' `pythonMetadataCheckPhase` catches exactly that and fails with
+"has version 'X' but .dist-info/METADATA specifies version 'Y'" (openviking's
+`ragfs-python` shipped the 0.4.11 release version over a crate that declares
+0.1.0).
+
+Declare the component's own version. It then agrees with METADATA by
+construction, needs no patching, and that check becomes a permanent guard: an
+upstream bump of the component fails loudly instead of shipping a lie. Reach for
+`pyprojectVersionPatchHook` only when the release version genuinely must be
+stamped in -- and note it rewrites `pyproject.toml` in the source ROOT, so it
+does not reach a project under `buildAndTestSubdir`.
+
 ## Prebuilt self-reading binaries
 
 Some prebuilt binaries read their own file at runtime -- embedded resource
