@@ -475,7 +475,7 @@ if [ "$DO_REMOTE" -eq 1 ]; then
     fi
   done
 
-  hdr "remote: Issues enabled + zero open"
+  hdr "remote: Issues enabled + no unresolved automation report"
   for repo in "${CONSUMERS[@]}"; do
     has_remote "$repo" || continue
     # Issues must be ENABLED: update.yml/maintenance.yml report a failed update or
@@ -489,16 +489,24 @@ if [ "$DO_REMOTE" -eq 1 ]; then
       red "$repo: GitHub Issues are disabled (the update/maintenance workflows cannot report failures)"
       continue
     fi
-    if ! n="$(gh_try issue list -R "$OWNER/$repo" --state open --json number --jq 'length')"; then
-      red "$repo: could not query issues (gh error: $(gherr))"
+    # Only the AUTOMATION's own reports gate certification: an open `maintenance`
+    # or `update-failed` issue means the plumbing is broken and unattended. A
+    # human bug report is real work, not broken plumbing -- counting it made the
+    # fleet permanently un-certifiable, which only teaches you to ignore the
+    # oracle. Those are NAMED below so they can never hide either.
+    if ! n="$(gh_try issue list -R "$OWNER/$repo" --state open --label maintenance --label update-failed --json number --jq 'length')"; then
+      red "$repo: could not query automation issues (gh error: $(gherr))"
       continue
     fi
     if [ "${n:-x}" = "0" ]; then
-      ok "$repo: Issues enabled, none open"
+      ok "$repo: Issues enabled, no unresolved automation report"
     else
-      titles="$(gh_try issue list -R "$OWNER/$repo" --state open --json number,title --jq '[.[]|"#\(.number) \(.title)"]|join("; ")' || true)"
-      red "$repo: $n open issue(s): $titles"
+      titles="$(gh_try issue list -R "$OWNER/$repo" --state open --label maintenance --label update-failed --json number,title --jq '[.[]|"#\(.number) \(.title)"]|join("; ")' || true)"
+      red "$repo: $n unresolved automation report(s): $titles"
     fi
+    other="$(gh_try issue list -R "$OWNER/$repo" --state open --json number,title,labels \
+      --jq '[.[] | select((.labels // []) | map(.name) | (index("maintenance") // index("update-failed")) | not) | "#\(.number) \(.title)"] | join("; ")' || true)"
+    [ -n "$other" ] && info "$repo: open bug report(s), not a plumbing failure: $other"
   done
 
   hdr "remote: CI complete + green (latest run per required workflow on main)"
