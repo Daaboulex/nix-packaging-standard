@@ -74,6 +74,20 @@ for repo in "${targets[@]}"; do
       echo "synced $repo/${FILES[$src]}"
     fi
   done
+
+  gi="$dir/.gitignore"
+  [ -f "$gi" ] || : >"$gi"
+  while IFS= read -r line; do
+    case "$line" in "" | "#"*) continue ;; esac
+    grep -qxF "$line" "$gi" && continue
+    drift=1
+    if [ "$CHECK" -eq 1 ]; then
+      echo "DRIFT  $repo/.gitignore misses baseline: $line"
+    else
+      printf '%s\n' "$line" >>"$gi"
+      echo "healed $repo/.gitignore += $line"
+    fi
+  done <"$STD/.gitignore"
 done
 
 if [ "$CHECK" -eq 1 ]; then
