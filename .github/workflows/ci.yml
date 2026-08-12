@@ -34,9 +34,10 @@ jobs:
           bash -n update.sh
           bash -n sync.sh
           bash -n tests/run.sh
+          bash -n scripts/fleet-audit.sh
 
       - name: ShellCheck
-        run: shellcheck update.sh sync.sh tests/run.sh
+        run: shellcheck update.sh sync.sh tests/run.sh scripts/fleet-audit.sh
 
       - name: Schema is a valid JSON Schema
         run: pipx run check-jsonschema --check-metaschema update.schema.json

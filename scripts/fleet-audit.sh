@@ -314,6 +314,56 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     [ "$offci_any" -eq 0 ] && ok "no off-CI build targets (every declared build is covered by CI)"
   fi
 
+  # --- documentation truth (documented .#outputs exist) ----------------------
+  # A README that shows `nix build .#foo` / `.#foo` claims the flake produces an
+  # output `foo`; when it does not (openviking's `.#agfs`, yeetmouse's
+  # `.#yeetmouse-gui`) a copy-pasted command fails and the docs lie. Enumerate
+  # the flake's real output attrs and red every documented local `.#<attr>` not
+  # among them. Only local `.#` fragments are judged (unambiguously this flake);
+  # nixpkgs and other-flake fragments carry no `.#` and are ignored. A structural
+  # prefix token (a system, or an output-set name) is not a build target and is
+  # skipped. Needs `nix eval`; skipped under --skip-nix.
+  if [ "$NIX_MODE" != "skip" ]; then
+    hdr "per-repo: documentation truth (documented .#outputs exist)"
+    docsys="x86_64-linux"
+    for repo in "${CONSUMERS[@]}"; do
+      dir="$REPOS_DIR/$repo"
+      [ -f "$dir/README.md" ] || {
+        info "$repo: no README.md"
+        continue
+      }
+      [ -f "$dir/flake.nix" ] || {
+        red "$repo: no flake.nix (documentation truth)"
+        continue
+      }
+      valid="$(
+        for out in packages apps checks devShells; do
+          nix eval --json "$dir#$out.$docsys" --apply 'builtins.attrNames' 2>/dev/null |
+            jq -r '.[]?' 2>/dev/null
+        done
+      )"
+      docs_ok=1
+      while IFS= read -r attr; do
+        [ -z "$attr" ] && continue
+        case "$attr" in
+        packages | apps | checks | devShells | x86_64-linux | aarch64-linux) continue ;;
+        esac
+        leaf="${attr##*.}"
+        case "$leaf" in
+        packages | apps | checks | devShells | x86_64-linux | aarch64-linux) continue ;;
+        esac
+        if ! grep -qxF "$leaf" <<<"$valid"; then
+          red "$repo: README documents .#$attr but the flake has no such output"
+          docs_ok=0
+        fi
+      done < <(
+        grep -oE '\.#[a-zA-Z0-9_.-]+' "$dir/README.md" 2>/dev/null |
+          sed -E 's/^\.#//' | sort -u
+      )
+      [ "$docs_ok" -eq 1 ] && ok "$repo: documented .#outputs all resolve"
+    done
+  fi
+
   # --- temporary overlays (captured + heal-wired) ----------------------------
   # Every temporary divergence from nixpkgs -- a regression bridge, an added
   # dependency, a version pin -- is one { meta, predicate, overlay } fix per
