@@ -60,7 +60,37 @@
           enable = true;
           package = pkgs.nixfmt;
         };
-        typos.enable = true;
+        typos = {
+          enable = true;
+          settings.config = {
+            default = {
+              extend-words = {
+                hda = "hda";
+                zink = "zink";
+                rto = "rto";
+                uncorrect = "uncorrect";
+                ue = "ue";
+                hsa = "hsa";
+                daita = "daita";
+                certifi = "certifi";
+                scx = "scx";
+                lavd = "lavd";
+                bpfland = "bpfland";
+                rustland = "rustland";
+                flatcg = "flatcg";
+                rlfifo = "rlfifo";
+                aci = "aci";
+                mch = "mch";
+                ths = "ths";
+              };
+              extend-identifiers = {
+                UE = "UE";
+                BARs = "BARs";
+                Pn = "Pn";
+              };
+            };
+          };
+        };
         # rumdl config lives HERE, not in a per-repo .rumdl.toml: MD013
         # (line length) is impractical for prose, links, and tables.
         rumdl = {
