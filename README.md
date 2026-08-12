@@ -1,7 +1,6 @@
 # Nix Packaging Standard
 
-Canonical source of the shared tooling used by every `*-nix` packaging repo in
-the [Daaboulex](https://github.com/Daaboulex) NixOS package fleet.
+Canonical source of the shared tooling used by every `*-nix` packaging repo.
 
 **This repo is the single source of truth**, consumed two ways:
 
@@ -60,7 +59,7 @@ every repo identically except along that axis. Your own software is the `none`
 path with yourself named as the upstream (first-party); see the update-type
 paths below.
 
-Every fleet repo follows these. Metadata (description + topics) is declared in
+Every consumer repo follows these. Metadata (description + topics) is declared in
 `.github/update.json` and applied with `sync-meta.sh`, so it can't silently drift.
 
 - **Default branch**: `main`, and a single branch — the `maintenance.yml`
@@ -115,6 +114,24 @@ rules above, plus:
 - **Crates** come from `static.crates.io` (the `crates.io/api/v1` download
   endpoint rate-limits CI and 403s); `ci.yml` also retries transient fetch
   failures once.
+
+## Documentation
+
+A repo's README documents its OWN flake and nothing else; the rules are checkable
+against the tree:
+
+- **True to the code.** Every package attribute (`nix build .#x`), NixOS/Home
+  Manager option path, and command the README shows resolves against the repo's
+  flake. A documented output or option that does not exist is a defect.
+- **License agreement.** The License section, the `LICENSE` file, and the
+  derivation `meta.license` state the same license (packaging MIT, per Repo
+  conventions); a section disclaiming or contradicting the shipped LICENSE is wrong.
+- **No branding.** No maintainer attribution or personal-identity line; functional
+  links (upstream, clone URL) stay.
+- **Plain, not marketing.** Concrete terms for what the repo is and does — no hype
+  adjectives, no generic CI-boilerplate paragraph, no emoji. The `generated:*`
+  marker blocks carry the machine-fillable surface; everything outside them is
+  hand-written and must be accurate.
 
 ## `flakeModules`
 
@@ -322,8 +339,8 @@ It checks, per consumer (every dir with a `.github/update.json`):
   issues, and a green latest run of CI / Maintenance / Update on `main`.
 
 A repo with no git remote (an unpushed WIP) is audited locally and skipped
-remotely. The standard itself, the private `site` registry, and the `Daaboulex`
-profile carry no `update.json` and are out of scope by construction.
+remotely. The standard itself, the private `site` registry, and the owner's
+GitHub profile carry no `update.json` and are out of scope by construction.
 
 ## Self-contained dev state
 
@@ -631,12 +648,12 @@ non-API sources like OCCT). The canonical `update.sh` exits 0 early for them;
 their bespoke script must honour the same exit contract.
 
 **First-party** (owner-authored software: gpucycler, corecycler) is the `none`
-path with the fleet owner named as the upstream:
+path with the owner named as the upstream:
 `upstream: { "type": "none", "owner": "<you>", "repo": "<self>" }`. The repo IS
 the upstream, so version and releases are self-owned (a hand-cut tag plus a
 `CHANGELOG.md` entry) and nothing external is polled: `update.sh` no-ops on the
 `none` branch. A bare `none` with no `owner` is a third-party package with no
-tracked upstream (a pinned module/overlay); `none` with the fleet owner is
+tracked upstream (a pinned module/overlay); `none` with the owner is
 first-party. `fleet-audit` enforces the discipline (a self-owned version literal
 plus a `CHANGELOG.md`).
 

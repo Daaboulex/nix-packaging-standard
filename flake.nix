@@ -1,5 +1,5 @@
 {
-  description = "Nix Packaging Standard — shared flake-parts modules + canonical CI/update tooling for the Daaboulex *-nix fleet";
+  description = "Nix Packaging Standard — shared flake-parts modules + canonical CI/update tooling for the *-nix packaging repos";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
