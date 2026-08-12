@@ -13,7 +13,7 @@ result-*
 # git-hooks.nix generated config (a /nix/store symlink — never commit)
 .pre-commit-config.yaml
 
-# AI agent artifacts — never tracked (also enforced by the no-ai-files CI gate)
+# AI agent artifacts -- never tracked (the no-tracked-ignored-files CI check fails if any are committed)
 CLAUDE.md
 GEMINI.md
 AGENTS.md

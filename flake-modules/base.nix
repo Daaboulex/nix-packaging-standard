@@ -111,10 +111,14 @@
         # ignore entry would let that state (or result symlinks) get committed.
         std-devstate = pkgs.runCommand "std-devstate" { } ''
           gi=${src + "/.gitignore"}
+          canon=${../.gitignore}
           [ -f "$gi" ] || { echo "::error::no .gitignore (fleet baseline required)"; exit 1; }
-          grep -qxF "result" "$gi" || { echo "::error::.gitignore misses baseline entry: result"; exit 1; }
-          grep -qxF ".direnv/" "$gi" || { echo "::error::.gitignore misses baseline entry: .direnv/"; exit 1; }
-          grep -qxF ".devshell/" "$gi" || { echo "::error::.gitignore misses baseline entry: .devshell/"; exit 1; }
+          miss=0
+          while IFS= read -r entry; do
+            case "$entry" in ""|"#"*) continue ;; esac
+            grep -qxF "$entry" "$gi" || { echo "::error::.gitignore misses fleet-baseline entry: $entry"; miss=1; }
+          done < "$canon"
+          [ "$miss" = 0 ] || exit 1
           touch "$out"
         '';
 

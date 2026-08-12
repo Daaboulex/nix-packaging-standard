@@ -479,6 +479,14 @@ NIX_UPDATE="fake-nix-update-noop" run_update "$d"
 check "shim no-op exit 0"        "0"     "$RC"
 check "shim no-op updated false" "false" "$(get "$d" updated)"
 
+echo "Test 17: no-tracked-ignored-files check catches a tracked file inside an ignored dir"
+d="$WORK/t17"; mkdir -p "$d/.claude"
+( cd "$d" && git init -q && git config user.email t@t && git config user.name t \
+  && printf '.claude/\n' >.gitignore && echo x >.claude/settings.json \
+  && git add -f .gitignore .claude/settings.json && git commit -qm init )
+GOT="$(cd "$d" && git ls-files -i -c --exclude-per-directory=.gitignore)"
+check "check catches tracked+ignored file" ".claude/settings.json" "$GOT"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"
