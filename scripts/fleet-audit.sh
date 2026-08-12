@@ -345,14 +345,16 @@ if [ "$DO_LOCAL" -eq 1 ]; then
       docs_ok=1
       while IFS= read -r attr; do
         [ -z "$attr" ] && continue
-        case "$attr" in
-        packages | apps | checks | devShells | x86_64-linux | aarch64-linux) continue ;;
+        # strip a leading packages./apps./checks./devShells. (+ optional system)
+        # prefix; the OUTPUT is then the FIRST remaining segment. A trailing
+        # `.version` / `.drvPath` is attribute access on that output (e.g.
+        # `.#mesa-git.version`), not a separate target, so it must not be judged.
+        norm="$(sed -E 's/^(packages|apps|checks|devShells)\.[a-z0-9_]+-linux\.//; s/^(packages|apps|checks|devShells)\.//' <<<"$attr")"
+        head="${norm%%.*}"
+        case "$head" in
+        "" | packages | apps | checks | devShells | x86_64-linux | aarch64-linux) continue ;;
         esac
-        leaf="${attr##*.}"
-        case "$leaf" in
-        packages | apps | checks | devShells | x86_64-linux | aarch64-linux) continue ;;
-        esac
-        if ! grep -qxF "$leaf" <<<"$valid"; then
+        if ! grep -qxF "$head" <<<"$valid"; then
           red "$repo: README documents .#$attr but the flake has no such output"
           docs_ok=0
         fi
