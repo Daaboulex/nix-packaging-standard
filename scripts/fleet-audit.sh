@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fleet-audit - the green/red oracle for the Daaboulex *-nix fleet.
+# fleet-audit - the green/red oracle for the *-nix packaging repos.
 #
 # A repo is "standardized" when every check below passes. This script IS the
 # definition: run it, read the exit code. It composes the existing per-file
