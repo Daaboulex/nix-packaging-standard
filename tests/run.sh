@@ -442,6 +442,43 @@ STUB_CURL_PAGE_DIR="$d/pages" run_update "$d"
 check "unmatchable filter exits 1"    "1"               "$RC"
 check "error_type no-matching-tag"    "no-matching-tag" "$(get "$d" error_type)"
 
+# ---- Test 16: standard case delegates to the nix-update shim ---------------
+# A plain repo (declared hashes, literal scheme, no tagFilter / variantAssets /
+# pythonRequirements / trackOnly) skips the full detection+hash path and calls
+# nix-update, then the shared verification chain. NIX_UPDATE stubs the tool.
+echo "Test 16: standard case delegates to the nix-update shim"
+d="$WORK/t16"; mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "github-release", "owner": "o", "repo": "r" },
+  "packageFile": "package.nix", "hashes": [ "hash" ], "verify": { "check": "eval" } }
+JSON
+printf '{\n  version = "1.0.0";\n  hash = "sha256-old";\n}\n' >"$d/package.nix"
+cat >"$BIN/fake-nix-update" <<'SH'
+#!/usr/bin/env bash
+sed -i 's/version = "1.0.0"/version = "1.1.0"/' package.nix
+SH
+chmod +x "$BIN/fake-nix-update"
+: >"$d/.nixflag"
+NIX_UPDATE="fake-nix-update" run_update "$d"
+check "shim exit 0"        "0"     "$RC"
+check "shim updated true"  "true"  "$(get "$d" updated)"
+check "shim new_version"   "1.1.0" "$(get "$d" new_version)"
+
+echo "Test 16b: shim reports no update when nix-update leaves the version"
+d="$WORK/t16b"; mkdir -p "$d/.github"
+cp "$WORK/t16/.github/update.json" "$d/.github/update.json"
+printf '{\n  version = "1.0.0";\n  hash = "sha256-old";\n}\n' >"$d/package.nix"
+cat >"$BIN/fake-nix-update-noop" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "$BIN/fake-nix-update-noop"
+: >"$d/.nixflag"
+NIX_UPDATE="fake-nix-update-noop" run_update "$d"
+check "shim no-op exit 0"        "0"     "$RC"
+check "shim no-op updated false" "false" "$(get "$d" updated)"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"
