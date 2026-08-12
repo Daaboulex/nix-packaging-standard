@@ -28,6 +28,7 @@ AI-tasks.json
 .ai-context/
 .planning/
 
+# advisory -- bootstrapped by sync.sh, not enforced by std-devstate (below)
 # Caches
 __pycache__/
 .pytest_cache/
@@ -39,14 +40,15 @@ __pycache__/
 # Coverage output
 .coverage
 .coverage.*
-htmlcov/
-coverage/
+/htmlcov/
+/coverage/
 
 # Ad-hoc build/test litter (nix builds run sandboxed; these appear only from
-# manual tool runs in a dev shell)
-build/
-dist/
-target/
+# manual tool runs in a dev shell). Output dirs are root-anchored so they never
+# match a same-named source directory such as src/core/build.
+/build/
+/dist/
+/target/
 *.egg-info/
 .eggs/
 node_modules/

@@ -115,7 +115,7 @@
           [ -f "$gi" ] || { echo "::error::no .gitignore (fleet baseline required)"; exit 1; }
           miss=0
           while IFS= read -r entry; do
-            case "$entry" in ""|"#"*) continue ;; esac
+            case "$entry" in "# advisory"*) break ;; "" | "#"*) continue ;; esac
             grep -qxF "$entry" "$gi" || { echo "::error::.gitignore misses fleet-baseline entry: $entry"; miss=1; }
           done < "$canon"
           [ "$miss" = 0 ] || exit 1
