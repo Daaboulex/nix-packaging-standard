@@ -108,6 +108,11 @@
           files = "README\\.md$";
           language = "system";
         };
+        deadnix = {
+          enable = true;
+          settings.noLambdaPatternNames = true;
+        };
+        statix.enable = true;
       };
 
       formatter = pkgs.nixfmt;
