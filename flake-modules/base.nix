@@ -112,7 +112,10 @@
           enable = true;
           settings.noLambdaPatternNames = true;
         };
-        statix.enable = true;
+        statix = {
+          enable = true;
+          settings.config = "${../statix.toml}";
+        };
       };
 
       formatter = pkgs.nixfmt;
