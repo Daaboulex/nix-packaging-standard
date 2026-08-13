@@ -105,6 +105,19 @@ fi
 
 has_remote() { git -C "$REPOS_DIR/$1" remote get-url origin >/dev/null 2>&1; }
 
+gh_slug() {
+  local u
+  u=$(git -C "$REPOS_DIR/$1" remote get-url origin 2>/dev/null) || return 1
+  u=${u%.git}
+  u=${u#*://}
+  u=${u#*@}
+  u=${u#*[:/]}
+  case "$u" in
+  */*) printf '%s\n' "$u" ;;
+  *) return 1 ;;
+  esac
+}
+
 # ============================================================================
 # LOCAL / FLAKE-STATE CHECKS
 # ============================================================================
@@ -517,7 +530,7 @@ if [ "$DO_REMOTE" -eq 1 ]; then
       warn "$repo: no git remote - remote checks skipped (local-only repo)"
       continue
     }
-    if ! branches="$(gh_try api "repos/$OWNER/$repo/branches" --jq '.[].name')"; then
+    if ! branches="$(gh_try api "repos/$(gh_slug "$repo")/branches" --jq '.[].name')"; then
       red "$repo: could not list branches (gh error: $(gherr))"
       continue
     fi
@@ -539,7 +552,7 @@ if [ "$DO_REMOTE" -eq 1 ]; then
     # Issues must be ENABLED: update.yml/maintenance.yml report a failed update or
     # lock bump by FILING an issue. A repo with Issues disabled swallows every such
     # failure silently, so a disabled-Issues repo is a hard red, not a clean pass.
-    if ! en="$(gh_try repo view "$OWNER/$repo" --json hasIssuesEnabled --jq '.hasIssuesEnabled')"; then
+    if ! en="$(gh_try repo view "$(gh_slug "$repo")" --json hasIssuesEnabled --jq '.hasIssuesEnabled')"; then
       red "$repo: could not query Issues setting (gh error: $(gherr))"
       continue
     fi
@@ -552,17 +565,17 @@ if [ "$DO_REMOTE" -eq 1 ]; then
     # human bug report is real work, not broken plumbing -- counting it made the
     # fleet permanently un-certifiable, which only teaches you to ignore the
     # oracle. Those are NAMED below so they can never hide either.
-    if ! n="$(gh_try issue list -R "$OWNER/$repo" --state open --label maintenance --label update-failed --json number --jq 'length')"; then
+    if ! n="$(gh_try issue list -R "$(gh_slug "$repo")" --state open --label maintenance --label update-failed --json number --jq 'length')"; then
       red "$repo: could not query automation issues (gh error: $(gherr))"
       continue
     fi
     if [ "${n:-x}" = "0" ]; then
       ok "$repo: Issues enabled, no unresolved automation report"
     else
-      titles="$(gh_try issue list -R "$OWNER/$repo" --state open --label maintenance --label update-failed --json number,title --jq '[.[]|"#\(.number) \(.title)"]|join("; ")' || true)"
+      titles="$(gh_try issue list -R "$(gh_slug "$repo")" --state open --label maintenance --label update-failed --json number,title --jq '[.[]|"#\(.number) \(.title)"]|join("; ")' || true)"
       red "$repo: $n unresolved automation report(s): $titles"
     fi
-    other="$(gh_try issue list -R "$OWNER/$repo" --state open --json number,title,labels \
+    other="$(gh_try issue list -R "$(gh_slug "$repo")" --state open --json number,title,labels \
       --jq '[.[] | select((.labels // []) | map(.name) | (index("maintenance") // index("update-failed")) | not) | "#\(.number) \(.title)"] | join("; ")' || true)"
     [ -n "$other" ] && info "$repo: open bug report(s), not a plumbing failure: $other"
   done
@@ -570,7 +583,7 @@ if [ "$DO_REMOTE" -eq 1 ]; then
   hdr "remote: CI complete + green (latest run per required workflow on main)"
   for repo in "${CONSUMERS[@]}"; do
     has_remote "$repo" || continue
-    if ! runs="$(gh_try run list -R "$OWNER/$repo" --branch main -L 40 \
+    if ! runs="$(gh_try run list -R "$(gh_slug "$repo")" --branch main -L 40 \
       --json workflowName,conclusion,status)"; then
       red "$repo: could not list workflow runs (gh error: $(gherr))"
       continue

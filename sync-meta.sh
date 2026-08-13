@@ -16,6 +16,19 @@ set -uo pipefail
 REPOS_DIR="${PKG_REPOS_DIR:?set PKG_REPOS_DIR to the directory holding the packaging-repo clones}"
 OWNER="${GH_OWNER:-Daaboulex}"
 
+gh_slug() {
+  local u
+  u=$(git -C "$REPOS_DIR/$1" remote get-url origin 2>/dev/null) || return 1
+  u=${u%.git}
+  u=${u#*://}
+  u=${u#*@}
+  u=${u#*[:/]}
+  case "$u" in
+  */*) printf '%s\n' "$u" ;;
+  *) return 1 ;;
+  esac
+}
+
 CHECK=0
 declare -a targets=()
 for arg in "$@"; do
@@ -47,13 +60,13 @@ for repo in "${targets[@]}"; do
 
   # One query, and a FAILED query is an error, never silently-empty live state:
   # swallowing a transient gh fault used to invent drift out of a remote blip.
-  if ! live=$(gh repo view "$OWNER/$repo" --json description,repositoryTopics 2>/tmp/sync-meta-gh.err); then
+  if ! live=$(gh repo view "$(gh_slug "$repo")" --json description,repositoryTopics 2>/tmp/sync-meta-gh.err); then
     echo "ERROR  $repo: could not query GitHub metadata: $(tail -1 /tmp/sync-meta-gh.err)"
     drift=1
     continue
   fi
   live_desc=$(jq -r '.description // ""' <<<"$live")
-  live_topics=$(jq -r '.repositoryTopics[].name' <<<"$live" | sort)
+  live_topics=$(jq -r '(.repositoryTopics // [])[].name' <<<"$live" | sort)
 
   desc_drift=0
   topic_drift=0
@@ -69,12 +82,12 @@ for repo in "${targets[@]}"; do
   fi
 
   if [ "$desc_drift" -eq 1 ]; then
-    gh repo edit "$OWNER/$repo" --description "$desc" >/dev/null && echo "synced $repo description"
+    gh repo edit "$(gh_slug "$repo")" --description "$desc" >/dev/null && echo "synced $repo description"
   fi
   if [ "$topic_drift" -eq 1 ]; then
     args=()
     while IFS= read -r t; do [ -n "$t" ] && args+=(-f "names[]=$t"); done <<<"$want_topics"
-    gh api "repos/$OWNER/$repo/topics" -X PUT -H "Accept: application/vnd.github+json" "${args[@]}" >/dev/null &&
+    gh api "repos/$(gh_slug "$repo")/topics" -X PUT -H "Accept: application/vnd.github+json" "${args[@]}" >/dev/null &&
       echo "synced $repo topics"
   fi
 done
