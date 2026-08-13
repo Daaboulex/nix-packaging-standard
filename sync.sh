@@ -27,6 +27,7 @@ declare -A FILES=(
   ["maintenance.yml"]=".github/workflows/maintenance.yml"
   ["ci.yml"]=".github/workflows/ci.yml"
   [".envrc"]=".envrc"
+  [".editorconfig"]=".editorconfig"
 )
 
 CHECK=0

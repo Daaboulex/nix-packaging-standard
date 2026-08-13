@@ -55,7 +55,8 @@ for repo in "${targets[@]}"; do
   live_desc=$(jq -r '.description // ""' <<<"$live")
   live_topics=$(jq -r '.repositoryTopics[].name' <<<"$live" | sort)
 
-  desc_drift=0; topic_drift=0
+  desc_drift=0
+  topic_drift=0
   [ -n "$desc" ] && [ "$desc" != "$live_desc" ] && desc_drift=1
   [ -n "$want_topics" ] && [ "$want_topics" != "$live_topics" ] && topic_drift=1
 
@@ -73,8 +74,8 @@ for repo in "${targets[@]}"; do
   if [ "$topic_drift" -eq 1 ]; then
     args=()
     while IFS= read -r t; do [ -n "$t" ] && args+=(-f "names[]=$t"); done <<<"$want_topics"
-    gh api "repos/$OWNER/$repo/topics" -X PUT -H "Accept: application/vnd.github+json" "${args[@]}" >/dev/null \
-      && echo "synced $repo topics"
+    gh api "repos/$OWNER/$repo/topics" -X PUT -H "Accept: application/vnd.github+json" "${args[@]}" >/dev/null &&
+      echo "synced $repo topics"
   fi
 done
 

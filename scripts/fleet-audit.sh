@@ -60,9 +60,15 @@ done
 
 fails=0
 warns=0
-red() { printf 'FAIL  %s\n' "$1"; fails=$((fails + 1)); }
+red() {
+  printf 'FAIL  %s\n' "$1"
+  fails=$((fails + 1))
+}
 ok() { printf 'ok    %s\n' "$1"; }
-warn() { printf 'warn  %s\n' "$1"; warns=$((warns + 1)); }
+warn() {
+  printf 'warn  %s\n' "$1"
+  warns=$((warns + 1))
+}
 info() { printf 'info  %s\n' "$1"; }
 hdr() { printf '\n== %s ==\n' "$1"; }
 

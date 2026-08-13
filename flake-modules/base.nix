@@ -41,6 +41,7 @@
         "scripts/heal-overlays.sh" = ../heal-overlays.sh;
         "scripts/classify-build-failure.sh" = ../classify-build-failure.sh;
         ".envrc" = ../.envrc;
+        ".editorconfig" = ../.editorconfig;
       };
       synced = if isCustom then builtins.removeAttrs syncedAll [ "scripts/update.sh" ] else syncedAll;
 
@@ -116,6 +117,28 @@
           enable = true;
           settings.config = "${../statix.toml}";
         };
+        shfmt = {
+          enable = true;
+          settings = {
+            simplify = false;
+            language-dialect = null;
+            indent = null;
+          };
+        };
+        taplo.enable = true;
+        end-of-file-fixer = {
+          enable = true;
+          excludes = [ "^LICENSE$" ];
+        };
+        trim-trailing-whitespace = {
+          enable = true;
+          excludes = [
+            "^LICENSE$"
+            "\\.md$"
+          ];
+        };
+        mixed-line-endings.enable = true;
+        check-merge-conflicts.enable = true;
       };
 
       formatter = pkgs.nixfmt;
