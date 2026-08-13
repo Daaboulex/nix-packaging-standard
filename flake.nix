@@ -28,11 +28,28 @@
       # Added as repos need them, never speculatively.
       flake.lib = import ./lib.nix;
 
+      imports = [ inputs.git-hooks.flakeModule ];
+
       perSystem =
-        { pkgs, ... }:
         {
+          config,
+          lib,
+          pkgs,
+          ...
+        }:
+        {
+          pre-commit.settings.hooks =
+            (import ./flake-modules/hooks.nix {
+              inherit pkgs lib;
+              ruffConfigArg = " --config ${./ruff.toml}";
+            })
+            // {
+              check-readme-sections.enable = false;
+            };
+
           formatter = pkgs.nixfmt;
           devShells.default = pkgs.mkShell {
+            inputsFrom = [ config.pre-commit.devShell ];
             packages = with pkgs; [
               nil
               nixfmt

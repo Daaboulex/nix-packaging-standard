@@ -169,16 +169,16 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 
 | File | Bootstrapped to (per repo) | Purpose |
 | --- | --- | --- |
-| `flake.nix` | _(not synced)_ | Exposes `flakeModules.*` |
-| `flake-modules/base.nix` | _(imported, not synced)_ | The shared flakeModule |
+| `flake.nix` | *(not synced)* | Exposes `flakeModules.*` |
+| `flake-modules/base.nix` | *(imported, not synced)* | The shared flakeModule |
 | `update.sh` | `scripts/update.sh` | Detect + apply upstream updates |
 | `ci.yml` | `.github/workflows/ci.yml` | Archetype-blind CI (build every output) |
 | `maintenance.yml` | `.github/workflows/maintenance.yml` | Weekly `flake.lock` refresh |
 | `update.yml` | `.github/workflows/update.yml` | Scheduled Update workflow |
-| `update.schema.json` | _(reference, not synced)_ | JSON Schema for `update.json` |
-| `sync.sh` | _(run from here)_ | Bootstrap canonical files into repos |
-| `sync-meta.sh` | _(run from here)_ | Apply repo description + topics from `update.json` to GitHub |
-| `scripts/fleet-audit.sh` | _(run from here)_ | The fleet's green/red oracle: conformance + metadata + archetype + branches + issues + CI, local and remote |
+| `update.schema.json` | *(reference, not synced)* | JSON Schema for `update.json` |
+| `sync.sh` | *(run from here)* | Bootstrap canonical files into repos |
+| `sync-meta.sh` | *(run from here)* | Apply repo description + topics from `update.json` to GitHub |
+| `scripts/fleet-audit.sh` | *(run from here)* | The fleet's green/red oracle: conformance + metadata + archetype + branches + issues + CI, local and remote |
 
 The synced workflow files + `scripts/update.sh` are byte-identical fleet-wide
 and enforced by `std-conformance`. Keep them **stable** across minor standard
