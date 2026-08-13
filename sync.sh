@@ -28,6 +28,7 @@ declare -A FILES=(
   ["ci.yml"]=".github/workflows/ci.yml"
   [".envrc"]=".envrc"
   [".editorconfig"]=".editorconfig"
+  ["update-readme-options.sh"]="scripts/update-readme-options.sh"
 )
 
 CHECK=0
@@ -60,6 +61,9 @@ for repo in "${targets[@]}"; do
   for src in "${!FILES[@]}"; do
     if [ "$src" = "update.sh" ] && [ "$rtype" = "custom" ]; then
       echo "keep   $repo/scripts/update.sh (custom updater)"
+      continue
+    fi
+    if [ "$src" = "update-readme-options.sh" ] && [ ! -f "$dir/${FILES[$src]}" ]; then
       continue
     fi
     dst="$dir/${FILES[$src]}"

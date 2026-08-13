@@ -32,6 +32,11 @@
           { };
       isCustom = (updateJson.upstream.type or "") == "custom";
 
+      hasOwnRuffConfig =
+        builtins.pathExists (src + "/pyproject.toml")
+        && lib.hasInfix "[tool.ruff" (builtins.readFile (src + "/pyproject.toml"));
+      ruffConfigArg = lib.optionalString (!hasOwnRuffConfig) " --config ${../ruff.toml}";
+
       # consumer path -> canonical shipped in this standard
       syncedAll = {
         ".github/workflows/ci.yml" = ../ci.yml;
@@ -43,7 +48,12 @@
         ".envrc" = ../.envrc;
         ".editorconfig" = ../.editorconfig;
       };
-      synced = if isCustom then builtins.removeAttrs syncedAll [ "scripts/update.sh" ] else syncedAll;
+      hasReadmeOptions = builtins.pathExists (src + "/scripts/update-readme-options.sh");
+      synced =
+        (if isCustom then builtins.removeAttrs syncedAll [ "scripts/update.sh" ] else syncedAll)
+        // lib.optionalAttrs hasReadmeOptions {
+          "scripts/update-readme-options.sh" = ../update-readme-options.sh;
+        };
 
       # Only alias a package into `checks` on systems it actually supports (its
       # own meta.platforms / badPlatforms). Without this, an x86_64-only package
@@ -83,11 +93,11 @@
                 aci = "aci";
                 mch = "mch";
                 ths = "ths";
+                Pn = "Pn";
               };
               extend-identifiers = {
                 UE = "UE";
                 BARs = "BARs";
-                Pn = "Pn";
               };
             };
           };
@@ -139,6 +149,15 @@
         };
         mixed-line-endings.enable = true;
         check-merge-conflicts.enable = true;
+        ruff = {
+          enable = true;
+          entry = lib.mkForce "${pkgs.ruff}/bin/ruff check --fix${ruffConfigArg}";
+        };
+        ruff-format = {
+          enable = true;
+          entry = lib.mkForce "${pkgs.ruff}/bin/ruff format${ruffConfigArg}";
+        };
+        actionlint.enable = true;
       };
 
       formatter = pkgs.nixfmt;
