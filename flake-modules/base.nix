@@ -115,6 +115,32 @@
               touch "$out"
             '';
 
+        std-meta-maintainers =
+          let
+            malformed = lib.concatLists (
+              lib.mapAttrsToList (
+                pname: p:
+                lib.imap0 (
+                  i: m:
+                  if builtins.isAttrs m && m ? name then
+                    null
+                  else
+                    "${pname}: meta.maintainers[${toString i}] must be an attrset carrying a 'name' attribute (nixpkgs maintainer shape), got ${builtins.typeOf m}"
+                ) (p.meta.maintainers or [ ])
+              ) config.packages
+            );
+            errors = lib.filter (e: e != null) malformed;
+          in
+          pkgs.runCommand "std-meta-maintainers" { } (
+            if errors == [ ] then
+              ''touch "$out"''
+            else
+              lib.concatMapStringsSep "\n" (
+                e: "echo ${lib.escapeShellArg ("::error::" + e)}"
+              ) errors
+              + "\nexit 1\n"
+          );
+
         std-no-deprecated-system = pkgs.runCommand "std-no-deprecated-system" { } ''
           if grep -rnE '\b(final|prev|pkgs|stdenv)\.system\b|inherit[[:space:]]*\((final|prev|pkgs|stdenv)\)[[:space:]]*system\b' ${src} --include='*.nix'; then
             echo "::error::deprecated 'system' read above -- use stdenv.hostPlatform.system (nixpkgs aliases.nix warnAlias, 25.11+)"
