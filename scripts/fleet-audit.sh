@@ -568,7 +568,7 @@ if [ "$DO_REMOTE" -eq 1 ]; then
     # Repeating --label ANDs the labels, so querying `--label maintenance
     # --label update-failed` asks for issues carrying BOTH and never matches a
     # real report, which carries exactly one. One query, partitioned here.
-    if ! issues="$(gh_try issue list -R "$(gh_slug "$repo")" --state open --json number,title,labels)"; then
+    if ! issues="$(gh_try issue list -R "$(gh_slug "$repo")" --state open -L 200 --json number,title,labels)"; then
       red "$repo: could not query automation issues (gh error: $(gherr))"
       continue
     fi
