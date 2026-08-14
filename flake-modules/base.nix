@@ -135,9 +135,7 @@
             if errors == [ ] then
               ''touch "$out"''
             else
-              lib.concatMapStringsSep "\n" (
-                e: "echo ${lib.escapeShellArg ("::error::" + e)}"
-              ) errors
+              lib.concatMapStringsSep "\n" (e: "echo ${lib.escapeShellArg ("::error::" + e)}") errors
               + "\nexit 1\n"
           );
 

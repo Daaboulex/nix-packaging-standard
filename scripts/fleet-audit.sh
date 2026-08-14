@@ -565,18 +565,21 @@ if [ "$DO_REMOTE" -eq 1 ]; then
     # human bug report is real work, not broken plumbing -- counting it made the
     # fleet permanently un-certifiable, which only teaches you to ignore the
     # oracle. Those are NAMED below so they can never hide either.
-    if ! n="$(gh_try issue list -R "$(gh_slug "$repo")" --state open --label maintenance --label update-failed --json number --jq 'length')"; then
+    # Repeating --label ANDs the labels, so querying `--label maintenance
+    # --label update-failed` asks for issues carrying BOTH and never matches a
+    # real report, which carries exactly one. One query, partitioned here.
+    if ! issues="$(gh_try issue list -R "$(gh_slug "$repo")" --state open --json number,title,labels)"; then
       red "$repo: could not query automation issues (gh error: $(gherr))"
       continue
     fi
+    auto="$(printf '%s' "$issues" | jq -r '[.[] | select((.labels // []) | map(.name) | (index("maintenance") // index("update-failed"))) | "#\(.number) \(.title)"] | join("; ")')"
+    n="$(printf '%s' "$issues" | jq -r '[.[] | select((.labels // []) | map(.name) | (index("maintenance") // index("update-failed")))] | length')"
     if [ "${n:-x}" = "0" ]; then
       ok "$repo: Issues enabled, no unresolved automation report"
     else
-      titles="$(gh_try issue list -R "$(gh_slug "$repo")" --state open --label maintenance --label update-failed --json number,title --jq '[.[]|"#\(.number) \(.title)"]|join("; ")' || true)"
-      red "$repo: $n unresolved automation report(s): $titles"
+      red "$repo: $n unresolved automation report(s): $auto"
     fi
-    other="$(gh_try issue list -R "$(gh_slug "$repo")" --state open --json number,title,labels \
-      --jq '[.[] | select((.labels // []) | map(.name) | (index("maintenance") // index("update-failed")) | not) | "#\(.number) \(.title)"] | join("; ")' || true)"
+    other="$(printf '%s' "$issues" | jq -r '[.[] | select((.labels // []) | map(.name) | (index("maintenance") // index("update-failed")) | not) | "#\(.number) \(.title)"] | join("; ")')"
     [ -n "$other" ] && info "$repo: open bug report(s), not a plumbing failure: $other"
   done
 
