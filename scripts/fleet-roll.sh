@@ -96,6 +96,7 @@ git -C "$STD" rev-parse -q --verify "refs/tags/$TAG" >/dev/null || {
 
 rolled=0
 skipped=0
+retired=0
 failed=0
 declare -a FAILED_REPOS=()
 
@@ -136,7 +137,7 @@ for repo in "${TARGETS[@]}"; do
   if command -v gh >/dev/null 2>&1 &&
     [ "$(cd "$dir" && gh repo view --json isArchived --jq .isArchived 2>/dev/null)" = true ]; then
     printf 'skip  %s: archived upstream, retired from the fleet\n' "$repo"
-    skipped=$((skipped + 1))
+    retired=$((retired + 1))
     continue
   fi
 
@@ -272,7 +273,7 @@ for repo in "${TARGETS[@]}"; do
 done
 
 printf '\n== summary ==\n'
-printf 'rolled: %s   already at %s: %s   failed: %s\n' "$rolled" "$TAG" "$skipped" "$failed"
+printf 'rolled: %s   already at %s: %s   retired: %s   failed: %s\n' "$rolled" "$TAG" "$skipped" "$retired" "$failed"
 if [ "$failed" -gt 0 ]; then
   printf 'failed repos: %s\n' "${FAILED_REPOS[*]}"
   printf 'build logs kept in: %s\n' "$LOGDIR"
