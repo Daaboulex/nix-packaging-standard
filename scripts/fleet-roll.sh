@@ -133,6 +133,12 @@ for repo in "${TARGETS[@]}"; do
   dir="$REPOS_DIR/$repo"
   [ -e "$dir/.git" ] || continue
   [ -f "$dir/.github/update.json" ] || continue
+  if command -v gh >/dev/null 2>&1 &&
+    [ "$(cd "$dir" && gh repo view --json isArchived --jq .isArchived 2>/dev/null)" = true ]; then
+    printf 'skip  %s: archived upstream, retired from the fleet\n' "$repo"
+    skipped=$((skipped + 1))
+    continue
+  fi
 
   if [ -n "$(git -C "$dir" status --porcelain)" ]; then
     fail_repo "$repo" "working tree is not clean; refusing to roll over local work"
@@ -249,7 +255,8 @@ for repo in "${TARGETS[@]}"; do
     fi
     rm -f "$msg"
     if ! git -C "$dir" push --quiet origin main; then
-      fail_repo "$repo" "push failed; the commit is local, resolve before re-running"
+      git -C "$dir" reset --hard --quiet HEAD~1
+      fail_repo "$repo" "push refused (archived or no write access); commit undone, nothing left behind"
       continue
     fi
     note "pushed: $(git -C "$dir" log -1 --format=%h)"
