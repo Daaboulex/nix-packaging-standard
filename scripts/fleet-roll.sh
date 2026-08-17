@@ -99,6 +99,9 @@ skipped=0
 failed=0
 declare -a FAILED_REPOS=()
 
+TRANSIENT='crates\.io|error: cannot download|unable to download|http error 5[0-9][0-9]|status code: (403|429|5[0-9][0-9])|curl: \(|couldn.t resolve host|connection reset by peer|temporary failure in name resolution|operation timed out'
+LOGDIR=$(mktemp -d -t fleet-roll-XXXXXX)
+
 note() { printf '  %s\n' "$1"; }
 fail_repo() {
   printf 'FAIL  %s: %s\n' "$1" "$2"
@@ -203,9 +206,26 @@ for repo in "${TARGETS[@]}"; do
 
   if [ "$SKIP_BUILD" -eq 0 ]; then
     sys=$(nix eval --impure --raw --expr 'builtins.currentSystem' 2>/dev/null)
-    if ! (cd "$dir" && nix run --inputs-from . nixpkgs#nix-fast-build -- \
-      --skip-cached --no-nom --flake ".#checks.$sys" >/dev/null 2>&1); then
-      fail_repo "$repo" "canonical build failed on the new pin"
+    buildlog="$LOGDIR/$repo.log"
+    build_one() {
+      (cd "$dir" && nix run --inputs-from . nixpkgs#nix-fast-build -- \
+        --skip-cached --no-nom --flake ".#checks.$sys") >"$buildlog" 2>&1
+    }
+    build_one
+    brc=$?
+    if [ "$brc" -ne 0 ] && grep -qiE "$TRANSIENT" "$buildlog"; then
+      note "build: transient fetch failure, retrying once in 60s"
+      sleep 60
+      build_one
+      brc=$?
+    fi
+    if [ "$brc" -ne 0 ]; then
+      why=$(grep -oiE 'HTTP error [0-9]{3}|error: [0-9]{3}|Too Many Requests|cannot download|unable to download|hash mismatch|Failed attributes: [^ ]*|builder for .* failed' "$buildlog" | sort -u | head -2 | tr '\n' ';')
+      if grep -qiE "$TRANSIENT" "$buildlog"; then
+        fail_repo "$repo" "TRANSIENT fetch failure, still failing after one retry: ${why:-see log}  log: $buildlog"
+      else
+        fail_repo "$repo" "build failed: ${why:-see log}  log: $buildlog"
+      fi
       restore "$dir"
       continue
     fi
@@ -248,8 +268,10 @@ printf '\n== summary ==\n'
 printf 'rolled: %s   already at %s: %s   failed: %s\n' "$rolled" "$TAG" "$skipped" "$failed"
 if [ "$failed" -gt 0 ]; then
   printf 'failed repos: %s\n' "${FAILED_REPOS[*]}"
+  printf 'build logs kept in: %s\n' "$LOGDIR"
   exit 1
 fi
+rm -rf "$LOGDIR"
 if [ "$EXECUTE" -eq 0 ]; then
   printf 'DRY RUN -- nothing was committed or pushed. Re-run with --execute --notes <file>.\n'
 fi
