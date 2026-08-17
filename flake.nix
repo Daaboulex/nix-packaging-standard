@@ -47,6 +47,42 @@
               check-readme-sections.enable = false;
             };
 
+          checks.std-action-pins =
+            pkgs.runCommand "std-action-pins"
+              {
+                shipped = [
+                  ./ci.yml
+                  ./maintenance.yml
+                  ./update.yml
+                ];
+                own = ./.github/workflows;
+              }
+              ''
+                pins() { grep -ohE '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[a-f0-9]{40}' "$@" | sort -u; }
+                pins $shipped > shipped.txt
+                pins "$own"/*.yml > own.txt
+
+                if awk -F@ '
+                  NR == FNR { canon[$1] = $2; next }
+                  ($1 in canon) && canon[$1] != $2 {
+                    printf "  %s\n    shipped canonical: %s\n    this repo CI:      %s\n", $1, canon[$1], $2
+                    bad = 1
+                  }
+                  END { exit bad ? 1 : 0 }
+                ' shipped.txt own.txt; then
+                  echo "ok: every action pinned in both places agrees"
+                  touch "$out"
+                else
+                  echo ""
+                  echo "An action is pinned to different SHAs in the workflows this repo SHIPS"
+                  echo "(ci.yml, maintenance.yml, update.yml at the root) and the ones it RUNS"
+                  echo "(.github/workflows). Dependabot only scans .github/workflows, so it bumps"
+                  echo "the second and never the first: the fleet keeps the old pin until the"
+                  echo "canonical is bumped by hand. Bump the canonical to match, then re-run."
+                  exit 1
+                fi
+              '';
+
           formatter = pkgs.nixfmt;
           devShells.default = pkgs.mkShell {
             inputsFrom = [ config.pre-commit.devShell ];
