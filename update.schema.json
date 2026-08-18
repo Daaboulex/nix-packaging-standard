@@ -125,11 +125,11 @@
     "versionScheme": {
       "enum": ["literal", "unstable-date", "rev-only"],
       "default": "literal",
-      "description": "How the version literal is written. 'literal': the upstream string verbatim (a bare 7-char SHA for commit-tracked repos). 'unstable-date': '<versionBase>-unstable-<YYYY-MM-DD>' (nixpkgs VCS-snapshot convention) — commit-tracked types only; comparison is by rev. 'rev-only': bump rev (+ hash + date) and LEAVE the human-set version string untouched (git-snapshot packages like mesa-git whose version is upstream's self-reported MESA_VERSION); commit-tracked types only; comparison is by rev."
+      "description": "How the version literal is written. 'literal': the upstream string verbatim (a bare 7-char SHA for commit-tracked repos). 'unstable-date': '<base>-unstable-<YYYY-MM-DD>' (nixpkgs VCS-snapshot convention), where <base> is upstream's newest tagFilter-matching tag, refetched on every bump — commit-tracked types only; comparison is by rev. 'rev-only': bump rev (+ hash + date) and LEAVE the human-set version string untouched (git-snapshot packages like mesa-git whose version is upstream's self-reported MESA_VERSION); commit-tracked types only; comparison is by rev."
     },
     "versionBase": {
       "type": "string",
-      "description": "Base version prefix for versionScheme 'unstable-date' (e.g. last release '2.0.0'). If omitted, derived by stripping any '-unstable-*' suffix from the current version."
+      "description": "FALLBACK base version prefix for versionScheme 'unstable-date' (e.g. '2.0.0'). The base is normally upstream's newest tagFilter-matching tag, refetched on every bump, so an upstream release cannot leave it understating the snapshot; this value is read only when upstream publishes no tag, or for a commit-tracked type with no tag API (gitlab-commit, gitea-commit, git-ls-remote). With neither, the base is derived by stripping any '-unstable-*' suffix from the current version."
     },
     "trackOnly": {
       "type": "boolean",

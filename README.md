@@ -570,7 +570,8 @@ doing any work.
   "versionScheme": "unstable-date",   // optional; "literal" (default),
                                       //   "unstable-date", or "rev-only"
                                       //   (the latter two: commit-tracked)
-  "versionBase": "2.0.0",             // base for "unstable-date" (optional)
+  "versionBase": "2.0.0",             // "unstable-date" FALLBACK base, read
+                                      //   only when upstream has no tag
   "hashes": [                         // SRI hash fields, dependency order:
     "hash",                           //   bare name -> auto-located, or
     { "field": "vendorHash",          //   {field,file} to disambiguate when
@@ -615,12 +616,20 @@ doing any work.
 - **`versionScheme`** controls the written version literal (commit-tracked types
   only). `literal` (default) writes the upstream string verbatim (a bare 7-char
   SHA for commit-tracked repos); `unstable-date` writes
-  `<versionBase>-unstable-<YYYY-MM-DD>` (the nixpkgs VCS-snapshot convention);
+  `<base>-unstable-<YYYY-MM-DD>` (the nixpkgs VCS-snapshot convention), where
+  `<base>` is upstream's newest `tagFilter`-matching tag, refetched on every
+  bump so an upstream release can never leave the snapshot understating itself
+  (a `github-commit` package whose upstream tags 1.1.2 stops writing `1.1.1-...`
+  without anyone editing config). `versionBase` is the fallback, read only when
+  upstream publishes no tag or the type has no tag API (`gitlab-commit`,
+  `gitea-commit`, `git-ls-remote`); a tag fetch that errors fails closed with
+  exit 2 rather than falling back to a possibly stale base;
   `rev-only` bumps `rev` (+ hash + date) and LEAVES the human-set `version`
   string untouched (git-snapshot packages like mesa-git whose version is
   upstream's self-reported value). Comparison is by `rev` for both non-`literal`
   schemes.
-- **`tagFilter`** (an ERE under `upstream`, for `github-release`/`github-tag`)
+- **`tagFilter`** (an ERE under `upstream`, for `github-release`/`github-tag`,
+  and for the base-tag lookup of a `github-commit` package on `unstable-date`)
   pins to one tag namespace when upstream publishes several (e.g. `^[0-9]` to
   skip an `android/*` namespace); the newest matching tag wins. The search
   **pages** through the list (up to ten 100-item pages) until it matches, so a

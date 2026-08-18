@@ -53,6 +53,9 @@ for a in "$@"; do
   *raw.githubusercontent*)
     [ -n "${STUB_CURL_RAW_FILE:-}" ] && { cat "$STUB_CURL_RAW_FILE"; exit 0; }
     ;;
+  */tags*)
+    [ -n "${STUB_CURL_TAGS_FILE:-}" ] && { cat "$STUB_CURL_TAGS_FILE" || exit 1; exit 0; }
+    ;;
   esac
 done
 # Paged list endpoints: serve $STUB_CURL_PAGE_DIR/page<N>.json, empty past the
@@ -108,7 +111,10 @@ else
   echo "$p: ASCII text"
 fi
 SH
-chmod +x "$BIN/curl" "$BIN/git" "$BIN/nix" "$BIN/file"
+# `sleep` stub: the updater's fetch retry backs off 2s+4s+8s, which is real
+# behavior worth keeping and 14s of dead wall-clock to test against.
+printf '#!/usr/bin/env bash\nexit 0\n' >"$BIN/sleep"
+chmod +x "$BIN/curl" "$BIN/git" "$BIN/nix" "$BIN/file" "$BIN/sleep"
 
 run_update() { # run_update <repodir>  -> sets RC; outputs in <repodir>/out.env
   local dir="$1"
@@ -116,6 +122,7 @@ run_update() { # run_update <repodir>  -> sets RC; outputs in <repodir>/out.env
     cd "$dir" && GITHUB_OUTPUT="$dir/out.env" PATH="$BIN:$PATH" \
       STUB_CURL_FILE="${STUB_CURL_FILE:-}" STUB_GIT_REV="${STUB_GIT_REV:-}" \
       STUB_CURL_RAW_FILE="${STUB_CURL_RAW_FILE:-}" \
+      STUB_CURL_TAGS_FILE="${STUB_CURL_TAGS_FILE:-}" \
       STUB_NIX_MISMATCH="${STUB_NIX_MISMATCH:-}" STUB_NIX_FLAG="$dir/.nixflag" \
       bash "$UPDATE" >"$dir/log" 2>&1
   )
@@ -522,6 +529,49 @@ mkdir -p "$d/.claude"
   git add -f .gitignore .claude/settings.json && git commit -qm init)
 GOT="$(cd "$d" && git ls-files -i -c --exclude-per-directory=.gitignore)"
 check "check catches tracked+ignored file" ".claude/settings.json" "$GOT"
+
+# ---- Tests 18: unstable-date base tracks upstream's tags --------------------
+TODAY="$(date -u +%Y-%m-%d)"
+
+echo "Test 18: unstable-date derives its base from upstream's newest tag"
+d="$WORK/t18"
+mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "github-commit", "owner": "o", "repo": "r", "branch": "main" },
+  "versionScheme": "unstable-date", "versionBase": "1.1.1",
+  "packageFile": "package.nix", "hashes": [], "verify": { "check": "eval" } }
+JSON
+printf '{\n  version = "1.1.1-unstable-2026-08-01";\n  rev = "old1111111111111111111111111111111111111";\n}\n' >"$d/package.nix"
+printf '{ "sha": "new2222222222222222222222222222222222222c" }\n' >"$WORK/t18-commit.json"
+printf '[{"name":"v1.1.2"},{"name":"v1.1.1"},{"name":"v1.1.0"}]\n' >"$WORK/t18-tags.json"
+: >"$d/.nixflag"
+STUB_CURL_FILE="$WORK/t18-commit.json" STUB_CURL_TAGS_FILE="$WORK/t18-tags.json" run_update "$d"
+check "base is upstream's newest tag, not the declared versionBase" \
+  "1.1.2-unstable-$TODAY" "$(get "$d" new_version)"
+check "derived base is what lands in the package" \
+  "1.1.2-unstable-$TODAY" "$(grep -oP 'version = "\K[^"]+' "$d/package.nix")"
+
+echo "Test 18b: a tagless upstream falls back to versionBase"
+d="$WORK/t18b"
+mkdir -p "$d/.github"
+cp "$WORK/t18/.github/update.json" "$d/.github/update.json"
+printf '{\n  version = "1.1.1-unstable-2026-08-01";\n  rev = "old1111111111111111111111111111111111111";\n}\n' >"$d/package.nix"
+printf '[]\n' >"$WORK/t18b-tags.json"
+: >"$d/.nixflag"
+STUB_CURL_FILE="$WORK/t18-commit.json" STUB_CURL_TAGS_FILE="$WORK/t18b-tags.json" run_update "$d"
+check "tagless upstream keeps versionBase" "1.1.1-unstable-$TODAY" "$(get "$d" new_version)"
+
+echo "Test 18c: a tag fetch error never invents a base"
+d="$WORK/t18c"
+mkdir -p "$d/.github"
+cp "$WORK/t18/.github/update.json" "$d/.github/update.json"
+printf '{\n  version = "1.1.1-unstable-2026-08-01";\n  rev = "old1111111111111111111111111111111111111";\n}\n' >"$d/package.nix"
+before="$(cat "$d/package.nix")"
+: >"$d/.nixflag"
+STUB_CURL_FILE="$WORK/t18-commit.json" STUB_CURL_TAGS_FILE="/nonexistent-tags.json" run_update "$d"
+check "tag fetch error exits 2 (retry next run)" "2" "$RC"
+check "tag fetch error writes nothing" "$before" "$(cat "$d/package.nix")"
 
 echo
 echo "------------------------------------------"

@@ -440,9 +440,11 @@ fi
 # Commit-tracked repos default to a bare 7-char SHA as the version, which
 # is not orderable by builtins.compareVersions. "unstable-date" instead
 # writes "<base>-unstable-<YYYY-MM-DD>" (the nixpkgs VCS-snapshot
-# convention). The base comes from update.json `versionBase`; the rev (the
-# real SHA) still tracks every commit. Comparison switches to the rev,
-# since the date string would otherwise differ every day and loop forever.
+# convention). The base is upstream's newest tagFilter-matching tag, refetched
+# on every bump so a new upstream release cannot leave it understating the
+# snapshot; update.json `versionBase` is the fallback for a tagless upstream.
+# The rev (the real SHA) still tracks every commit. Comparison switches to the
+# rev, since the date string would otherwise differ every day and loop forever.
 if [ "$VERSION_SCHEME" = "unstable-date" ]; then
   if [ -z "$FULL_REV" ]; then
     err "versionScheme 'unstable-date' requires a commit-tracked upstream type"
@@ -457,10 +459,24 @@ if [ "$VERSION_SCHEME" = "unstable-date" ]; then
     output "updated" "false"
     exit 0
   fi
-  BASE=$(echo "$CONFIG" | jq -r '.versionBase // empty')
+  BASE=""
+  if [ "$UPSTREAM_TYPE" = "github-commit" ]; then
+    RC=0
+    # shellcheck disable=SC2016  # $f is a jq variable (--arg f), not a shell one
+    fetch_paged_match \
+      "https://api.github.com/repos/$OWNER/$REPO/tags?per_page=100" \
+      'map(.name | select(test($f)))[0] // empty' || RC=$?
+    if [ "$RC" -eq 2 ]; then
+      warn "Failed to fetch tags from $OWNER/$REPO"
+      output "updated" "false"
+      exit 2
+    fi
+    [ -n "$PAGED_MATCH" ] && BASE="${PAGED_MATCH#v}"
+  fi
+  [ -z "$BASE" ] && BASE=$(echo "$CONFIG" | jq -r '.versionBase // empty')
   [ -z "$BASE" ] && BASE="${CURRENT_VERSION%%-unstable-*}"
   if [ -z "$BASE" ]; then
-    err "versionScheme 'unstable-date': no versionBase in update.json and current version is empty"
+    err "versionScheme 'unstable-date': upstream published no tag, update.json has no versionBase, and the current version is empty"
     output "updated" "false"
     output "error_type" "config-error"
     exit 1
