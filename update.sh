@@ -26,6 +26,17 @@ err() { echo "::error::$*"; }
 # [A-Za-z0-9_'-]; escaping is defensive, not strictly required, but cheap.
 re_esc() { printf '%s' "$1" | sed 's/[^[:alnum:]_]/\\&/g'; }
 
+# read_current_rev — the package's own src rev, from either shape a repo may
+# carry it in: a `rev = "..."` Nix literal, or version.json's .rev key.
+read_current_rev() {
+  [ -f "$REV_FILE" ] || return 0
+  if [[ "$REV_FILE" == *.json ]]; then
+    jq -r '.rev // empty' "$REV_FILE" 2>/dev/null || true
+  else
+    grep -oP 'rev\s*=\s*"\K[^"]+' "$REV_FILE" 2>/dev/null | head -1 || true
+  fi
+}
+
 # verify_artifact — build .#default and assert the configured artifact exists.
 # Shared by the nix-update shim (standard case) and the full path, so both honor
 # verify.binary / verify.check = elf | wrapper | desktop | eval identically.
@@ -452,8 +463,7 @@ if [ "$VERSION_SCHEME" = "unstable-date" ]; then
     output "error_type" "config-error"
     exit 1
   fi
-  CURRENT_REV=""
-  [ -f "$REV_FILE" ] && CURRENT_REV=$(grep -oP 'rev\s*=\s*"\K[^"]+' "$REV_FILE" 2>/dev/null | head -1 || true)
+  CURRENT_REV=$(read_current_rev)
   if [ -n "$CURRENT_REV" ] && [ "$CURRENT_REV" = "$FULL_REV" ]; then
     log "Already up to date (rev $FULL_REV)"
     output "updated" "false"
@@ -499,12 +509,7 @@ if [ "$VERSION_SCHEME" = "rev-only" ]; then
     exit 1
   fi
   WRITE_VERSION=0
-  CURRENT_REV=""
-  if [[ "$REV_FILE" == *.json ]]; then
-    [ -f "$REV_FILE" ] && CURRENT_REV=$(jq -r '.rev // empty' "$REV_FILE" 2>/dev/null || true)
-  else
-    [ -f "$REV_FILE" ] && CURRENT_REV=$(grep -oP 'rev\s*=\s*"\K[^"]+' "$REV_FILE" 2>/dev/null | head -1 || true)
-  fi
+  CURRENT_REV=$(read_current_rev)
   if [ -n "$CURRENT_REV" ] && [ "$CURRENT_REV" = "$FULL_REV" ]; then
     log "Already up to date (rev $FULL_REV)"
     output "updated" "false"

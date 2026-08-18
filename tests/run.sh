@@ -573,6 +573,22 @@ STUB_CURL_FILE="$WORK/t18-commit.json" STUB_CURL_TAGS_FILE="/nonexistent-tags.js
 check "tag fetch error exits 2 (retry next run)" "2" "$RC"
 check "tag fetch error writes nothing" "$before" "$(cat "$d/package.nix")"
 
+echo "Test 18d: unstable-date reads its rev from version.json, not only from .nix"
+d="$WORK/t18d"
+mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "github-commit", "owner": "o", "repo": "r", "branch": "main" },
+  "versionScheme": "unstable-date", "versionBase": "1.1.1",
+  "versionFile": "version.json", "hashes": [], "verify": { "check": "eval" } }
+JSON
+printf '{ "version": "1.1.2-unstable-2026-08-01", "rev": "new2222222222222222222222222222222222222c", "hash": "sha256-x", "date": "2026-08-01" }\n' >"$d/version.json"
+before="$(cat "$d/version.json")"
+: >"$d/.nixflag"
+STUB_CURL_FILE="$WORK/t18-commit.json" STUB_CURL_TAGS_FILE="$WORK/t18-tags.json" run_update "$d"
+check "unchanged rev in version.json is a no-op" "false" "$(get "$d" updated)"
+check "no-op leaves version.json byte-identical" "$before" "$(cat "$d/version.json")"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"
