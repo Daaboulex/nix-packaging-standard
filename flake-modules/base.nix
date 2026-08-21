@@ -139,6 +139,27 @@
               + "\nexit 1\n"
           );
 
+        std-no-fail-open =
+          let
+            inherit (import ../lib.nix) failOpenPatterns;
+            scan = p: ''
+              hits=$(grep -rnE -- ${lib.escapeShellArg p.ere} ${src} \
+                --include='*.nix' --include='*.sh' | grep -v 'std:fail-open-ok') || true
+              if [ -n "$hits" ]; then
+                printf '%s\n' "$hits"
+                echo "::error::${p.name} -- ${p.fix}"
+                bad=1
+              fi
+            '';
+          in
+          pkgs.runCommand "std-no-fail-open" { } ''
+            bad=0
+            ${lib.concatMapStringsSep "\n" scan failOpenPatterns}
+            [ "$bad" = 0 ] || exit 1
+            echo "ok: no fail-open shell shapes"
+            touch "$out"
+          '';
+
         std-no-deprecated-system = pkgs.runCommand "std-no-deprecated-system" { } ''
           if grep -rnE '\b(final|prev|pkgs|stdenv)\.system\b|inherit[[:space:]]*\((final|prev|pkgs|stdenv)\)[[:space:]]*system\b' ${src} --include='*.nix'; then
             echo "::error::deprecated 'system' read above -- use stdenv.hostPlatform.system (nixpkgs aliases.nix warnAlias, 25.11+)"

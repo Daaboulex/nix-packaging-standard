@@ -87,6 +87,37 @@
                 touch "$out"
               '';
 
+          # Each pattern must match its own fail-open example and NOT the
+          # correct one. Built from the same list the gate uses, so a pattern
+          # that stops discriminating cannot go unnoticed.
+          checks.std-fail-open-patterns =
+            let
+              inherit (import ./lib.nix) failOpenPatterns;
+              case = p: ''
+                printf '%s\n' ${pkgs.lib.escapeShellArg p.bad} > bad.txt
+                printf '%s\n' ${pkgs.lib.escapeShellArg p.good} > good.txt
+                if grep -qE -- ${pkgs.lib.escapeShellArg p.ere} bad.txt; then
+                  echo "  ok   ${p.name}: catches the fail-open form"
+                else
+                  echo "  FAIL ${p.name}: does not match its own bad example"
+                  bad=1
+                fi
+                if grep -qE -- ${pkgs.lib.escapeShellArg p.ere} good.txt; then
+                  echo "  FAIL ${p.name}: also flags the correct form"
+                  bad=1
+                else
+                  echo "  ok   ${p.name}: leaves the correct form alone"
+                fi
+              '';
+            in
+            pkgs.runCommand "std-fail-open-patterns" { } ''
+              bad=0
+              ${pkgs.lib.concatMapStringsSep "\n" case failOpenPatterns}
+              [ "$bad" = 0 ] || { echo "a fail-open pattern no longer discriminates"; exit 1; }
+              echo "std-fail-open-patterns: ${toString (builtins.length failOpenPatterns)} patterns, each matching only the bad form"
+              touch "$out"
+            '';
+
           checks.std-action-pins =
             pkgs.runCommand "std-action-pins"
               {

@@ -214,6 +214,35 @@
       echo "ok: single top-level package '${package}'" > "$out"
     '';
 
+  # Shell shapes that report success while doing nothing. Consumed by
+  # flakeModules.base as the std-no-fail-open gate and tested against fixtures
+  # from the same list, so the gate cannot silently stop matching. A line
+  # carrying `std:fail-open-ok: <reason>` is exempt: a tolerance that is
+  # declared is not the same defect as one nobody noticed.
+  failOpenPatterns = [
+    {
+      name = "grep -c piped into || echo";
+      ere = "grep -c[A-Za-z]* .*\\|\\| *echo";
+      bad = "n=$(grep -c foo f || echo 0)";
+      good = "n=$(grep -c foo f) || n=0";
+      fix = "grep -c prints 0 AND exits 1 when nothing matches, so || echo appends a SECOND value and the variable becomes \"0\\\\n0\" -- every numeric test after it errors and falls through. Assign, then default on failure.";
+    }
+    {
+      name = "substituteInPlace --replace";
+      ere = "--replace([[:space:]]|$)";
+      bad = "substituteInPlace f --replace a b";
+      good = "substituteInPlace f --replace-fail a b";
+      fix = "bare --replace is deprecated and tolerant: a pattern upstream moved silently rewrites nothing. Use --replace-fail.";
+    }
+    {
+      name = "substituteInPlace --replace-warn";
+      ere = "--replace-warn";
+      bad = "substituteInPlace f --replace-warn a b";
+      good = "substituteInPlace f --replace-fail a b";
+      fix = "--replace-warn ships the package with the substitution missing and only a warning in a log nobody reads. Use --replace-fail, or mark the line std:fail-open-ok with the reason it must stay tolerant.";
+    }
+  ];
+
   # Assertions for a postPatch that rewrites upstream source. A bare `sed -i`,
   # `awk` or hand-rolled substitution reports nothing: when upstream renames
   # what it matched, the edit applies to nothing, the package builds green, and
