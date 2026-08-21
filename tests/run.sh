@@ -89,7 +89,10 @@ case "$*" in
     printf '{"hash":"sha256-%s="}\n' \
       "$(printf '%s' "${@: -1}" | sha256sum | cut -c1-43)"
     exit 0 ;;
-  *"flake check"*) exit 0 ;;
+  *"flake check --no-build"*) exit 0 ;;
+  *"flake check"*)
+    [ -n "${STUB_CHECKS_FAIL:-}" ] && { echo "stub: a check in the suite failed" >&2; exit 1; }
+    exit 0 ;;
   "eval "*) echo true; exit 0 ;;
   *build*)
     [ -f "$STUB_NIX_FLAG" ] && exit 0
@@ -124,6 +127,7 @@ run_update() { # run_update <repodir>  -> sets RC; outputs in <repodir>/out.env
       STUB_CURL_RAW_FILE="${STUB_CURL_RAW_FILE:-}" \
       STUB_CURL_TAGS_FILE="${STUB_CURL_TAGS_FILE:-}" \
       STUB_NIX_MISMATCH="${STUB_NIX_MISMATCH:-}" STUB_NIX_FLAG="$dir/.nixflag" \
+      STUB_CHECKS_FAIL="${STUB_CHECKS_FAIL:-}" \
       bash "$UPDATE" >"$dir/log" 2>&1
   )
   RC=$?
@@ -588,6 +592,21 @@ before="$(cat "$d/version.json")"
 STUB_CURL_FILE="$WORK/t18-commit.json" STUB_CURL_TAGS_FILE="$WORK/t18-tags.json" run_update "$d"
 check "unchanged rev in version.json is a no-op" "false" "$(get "$d" updated)"
 check "no-op leaves version.json byte-identical" "$before" "$(cat "$d/version.json")"
+
+# ---- Test 19: a red check suite stops the update before it is pushed -------
+echo "Test 19: a failing check aborts the update"
+d="$WORK/t19"
+mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "github-release", "owner": "o", "repo": "r", "tagFilter": "^[0-9]" },
+  "packageFile": "version.json", "hashes": [], "verify": { "check": "eval" } }
+JSON
+printf '{ "version": "2026.1", "rev": "x", "hash": "sha256-x", "date": "x" }\n' >"$d/version.json"
+: >"$d/.nixflag"
+STUB_CHECKS_FAIL=1 STUB_CURL_FILE="$STD/tests/fixtures/mullvad-releases.json" run_update "$d"
+check "update refuses to proceed" "1" "$RC"
+check "reported as a check failure" "eval-error" "$(get "$d" error_type)"
 
 echo
 echo "------------------------------------------"

@@ -237,9 +237,9 @@ if [ -z "$VARIANT_ASSETS" ] && [ "$TRACK_ONLY" != "true" ] &&
   fi
   log "Update found: $CURRENT_VERSION -> $NEW_VERSION (nix-update)"
   output "updated" "true"
-  log "Step 1/2: nix flake check --no-build"
-  if ! nix flake check --no-build 2>&1; then
-    err "Eval check failed"
+  log "Step 1/2: nix flake check"
+  if ! nix flake check 2>&1; then
+    err "Check suite failed"
     output "error_type" "eval-error"
     exit 1
   fi
@@ -821,9 +821,9 @@ if [ -n "$PYREQ_FILE" ]; then
 fi
 
 # --- Verification chain --------------------------------------------------
-log "Step 1/3: nix flake check --no-build"
-if ! nix flake check --no-build 2>&1; then
-  err "Eval check failed"
+log "Step 1/3: nix flake check"
+if ! nix flake check 2>&1; then
+  err "Check suite failed"
   output "error_type" "eval-error"
   exit 1
 fi
