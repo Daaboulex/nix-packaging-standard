@@ -1,7 +1,10 @@
 # CI for the canonical Nix Packaging Standard itself. The fleet's drift-check
 # guarantees each repo MATCHES this canonical; this guarantees the canonical is
 # CORRECT — shell soundness, a valid schema, the schema accepts every supported
-# config pattern, and update.sh's logic passes behavioral regression tests.
+# config pattern, update.sh's logic passes behavioral regression tests, and the
+# flake's own checks build. Without that last one the repo declared checks that
+# only ever ran on someone's laptop, which is the very defect std-no-fail-open
+# and std-patch-assertions exist to catch.
 name: CI
 on:
   push:
@@ -47,3 +50,6 @@ jobs:
 
       - name: update.sh behavioral regression tests
         run: bash tests/run.sh
+
+      - name: Flake checks (std-action-pins, patch assertions, fail-open patterns, hooks)
+        run: nix flake check --keep-going --print-build-logs
