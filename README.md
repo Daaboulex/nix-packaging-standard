@@ -752,6 +752,19 @@ the old restore could not have worked). The failure classifier also learned the
 runner-side store race (`transient-infra`), the missing-runtime-dependency form
 nixpkgs' `pythonRuntimeDepsCheck` reports, and
 `python-metadata-version-mismatch`.
+v2.31.0 (2026-08) closed the gap where a patch that rewrites upstream source
+reports nothing. `update.sh` gated its auto-push on `nix flake check
+--no-build`, so every build-time check in every repo was evaluated and never
+run -- the upstream-version bump, the one moment a source rewrite stops
+matching, was the one path that could not see it. `patchAssertions` gives that
+rewrite the postcondition `substituteInPlace --replace-fail` already has, and
+`std-no-fail-open` gates the three shell shapes that report success while doing
+nothing: `grep -c ... || echo N`, bare `--replace`, and `--replace-warn`. Found
+live: a kernel CPUID anchor that had gained an argument, a printk rewrite
+upstream had already made unnecessary, a getuid() guard that no longer existed,
+and two edits that were no-ops by construction -- every one of them reporting
+success. This repo's own CI also began running its declared flake checks, which
+it never had.
 
 ## License
 
