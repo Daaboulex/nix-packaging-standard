@@ -214,6 +214,57 @@
       echo "ok: single top-level package '${package}'" > "$out"
     '';
 
+  # Assertions for a postPatch that rewrites upstream source. A bare `sed -i`,
+  # `awk` or hand-rolled substitution reports nothing: when upstream renames
+  # what it matched, the edit applies to nothing, the package builds green, and
+  # the change it was meant to make is simply absent. Found live in three repos
+  # at once -- a kernel CPUID anchor that had gained an argument, a printk
+  # rewrite upstream had already made unnecessary, and a getuid() guard that no
+  # longer existed -- plus two more that were no-ops by construction. nixpkgs'
+  # substituteInPlace --replace-fail is the same idea; this is it for the edits
+  # substituteInPlace cannot express. Prepend to postPatch, assert after every
+  # edit, and see the README for a worked example.
+  #
+  # landed FILE FIXED LABEL       what the edit produces is now present
+  # gone FILE FIXED LABEL         what the edit replaced is now absent
+  # present FILE FIXED LABEL      precondition; pair it with `gone`, whose
+  #                               postcondition passes just as happily against
+  #                               a source that never held the text
+  # exactly_one FILE ERE LABEL    an insertion anchor matches once, so an edit
+  #                               cannot land twice (a duplicate C label, say)
+  # landed_soft FILE FIXED LABEL  a deliberately optional edit; warns, never fails
+  patchAssertions = ''
+    _patch_assert_die() {
+      echo "[FAIL] $1"
+      exit 1
+    }
+    present() {
+      grep -qF -- "$2" "$1" || _patch_assert_die "$3 -- the text this edit rewrites is absent from $1 (looked for: $2). The patch is obsolete: drop it or re-aim it."
+    }
+    landed() {
+      grep -qF -- "$2" "$1" || _patch_assert_die "$3 -- the edit did not apply to $1 (expected to find: $2). The upstream anchor moved; re-aim this edit."
+      echo "[OK] $3"
+    }
+    gone() {
+      if grep -qF -- "$2" "$1"; then
+        _patch_assert_die "$3 -- the edit did not replace it in $1 (still present: $2). The upstream anchor moved; re-aim this edit."
+      fi
+      echo "[OK] $3"
+    }
+    landed_soft() {
+      if grep -qF -- "$2" "$1"; then
+        echo "[OK] $3"
+      else
+        echo "[WARN] $3 -- optional edit did not apply to $1"
+      fi
+    }
+    exactly_one() {
+      local n
+      n=$(grep -cE -- "$2" "$1") || n=0
+      [ "$n" = 1 ] || _patch_assert_die "$3 -- expected exactly 1 match of /$2/ in $1, found $n. Re-aim this anchor before it edits the wrong place."
+    }
+  '';
+
   # Self-contained dev state (the fleet rule: a project dev shell never writes
   # $HOME, and per-project build/cache dirs stay out of the tree): export each
   # tool's cache/home/build dir into the project's gitignored .devshell/. base

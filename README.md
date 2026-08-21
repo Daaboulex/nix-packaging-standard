@@ -152,6 +152,7 @@ without building the closure — eval-only and cheap, even in CI.
 | `drvEvalCheck { pkgs, name?, drv }` | Packages whose closure is not on `cache.nixos.org` and cannot build on a free CI runner (CUDA/ROCm, very large builds). Forces `drv`'s full build-graph evaluation without realizing it; skips with a trivial pass on a system the drv's `meta.platforms` excludes. See the off-CI exception below. |
 | `pythonSitePackagesCheck { pkgs, drv, package, name? }` | First-party python application repos. Proves the BUILT output ships exactly one top-level import package (plus its dist-info) in `site-packages` -- a flat top-level module (`cli.py`, `utils.py`) collides with any other application in a merged environment. See "Python apps: one top-level package" below. |
 | `pristineBinaryCheck { pkgs, package, binaryPath, name? }` | Prebuilt self-reading binaries (embedded resources / appended payloads). Asserts the installed binary is byte-identical to `package.src`, so no fixup phase can silently corrupt it. See "Prebuilt self-reading binaries" below. |
+| `patchAssertions` (a shell string, not a function) | Any `postPatch` that rewrites upstream source with `sed`/`awk` rather than `substituteInPlace --replace-fail`. Prepend it, then assert after every edit with `landed` / `gone` / `present` / `exactly_one` / `landed_soft`. Without it a renamed upstream anchor makes the edit apply to nothing and the package still builds green. See "Patching upstream source" below. |
 
 Example:
 
@@ -402,6 +403,40 @@ upstream bump of the component fails loudly instead of shipping a lie. Reach for
 `pyprojectVersionPatchHook` only when the release version genuinely must be
 stamped in -- and note it rewrites `pyproject.toml` in the source ROOT, so it
 does not reach a project under `buildAndTestSubdir`.
+
+## Patching upstream source
+
+`substituteInPlace --replace-fail` fails closed and is always the first choice.
+For the edits it cannot express -- an insertion, a line-range rewrite, an `awk`
+pass -- a bare `sed -i` reports nothing: when upstream renames what it matched,
+the edit applies to nothing, the package builds green, and the change it was
+meant to make is simply absent.
+
+Prepend `inputs.std.lib.patchAssertions` and assert after every edit:
+
+```nix
+packages.default = pkgs.callPackage ./package.nix {
+  inherit (inputs.std.lib) patchAssertions;
+};
+```
+
+```nix
+postPatch = patchAssertions + ''
+  sed -i 's/if (getuid()) {/if (false) {/' gui/main.cpp
+  landed gui/main.cpp 'if (false) {' "main.cpp: privilege check disabled"
+'';
+```
+
+Assert the postcondition, not the precondition: a `grep -q` guard before the
+edit can pass while the edit itself matches nothing, which is how a guard ends
+up looser than the `sed` it protects. Where the postcondition is an *absence*,
+pair `gone` with `present` -- on its own `gone` passes just as happily against
+a source that never held the text.
+
+`exactly_one` is for an insertion anchor: it refuses to insert when the anchor
+matches twice, which would otherwise duplicate a C label or a table entry.
+`landed_soft` warns instead of failing, for an edit that is deliberately
+best-effort.
 
 ## Prebuilt self-reading binaries
 

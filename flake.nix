@@ -47,6 +47,46 @@
               check-readme-sections.enable = false;
             };
 
+          # patchAssertions is a shell string, so nothing type-checks it: this
+          # exercises every primitive both ways. A helper that cannot fail is
+          # exactly the defect it exists to prevent.
+          checks.std-patch-assertions =
+            pkgs.runCommand "std-patch-assertions"
+              {
+                prelude = (import ./lib.nix).patchAssertions;
+              }
+              ''
+                printf 'alpha\nbeta\nalpha\n' > f
+                probe() { # probe <want-exit> <label> <body>
+                  local rc=0
+                  set +e
+                  bash -c "set -e; cd $PWD; $prelude"$'\n'"$3" > out 2>&1
+                  rc=$?
+                  set -e
+                  if [ "$rc" = "$1" ]; then
+                    echo "  ok   $2"
+                  else
+                    echo "  FAIL $2 (exit $rc, want $1)"
+                    sed 's/^/         /' out
+                    bad=1
+                  fi
+                }
+                bad=0
+                probe 0 "landed finds what an edit produced"        "landed f beta l"
+                probe 1 "landed fails when the edit did not apply"  "landed f zulu l"
+                probe 0 "gone passes when the text is absent"       "gone f zulu l"
+                probe 1 "gone fails while the text remains"         "gone f beta l"
+                probe 0 "present passes on a live precondition"     "present f beta l"
+                probe 1 "present fails on an obsolete patch"        "present f zulu l"
+                probe 0 "exactly_one accepts a single match"        "exactly_one f '^beta$' l"
+                probe 1 "exactly_one rejects two matches"           "exactly_one f '^alpha$' l"
+                probe 1 "exactly_one rejects zero matches"          "exactly_one f '^zulu$' l"
+                probe 0 "landed_soft warns but never fails"         "landed_soft f zulu l"
+                [ "$bad" = 0 ] || { echo "std-patch-assertions: a primitive does not behave"; exit 1; }
+                echo "std-patch-assertions: 10 cases, all as specified"
+                touch "$out"
+              '';
+
           checks.std-action-pins =
             pkgs.runCommand "std-action-pins"
               {
