@@ -118,6 +118,37 @@
               touch "$out"
             '';
 
+          checks.std-update-retire-guard =
+            pkgs.runCommand "std-update-retire-guard" { canonical = ./update.yml; }
+              ''
+                guarded() {
+                  local step
+                  step=$(awk '
+                    /^      - name: Retire attempt branches/ { inStep = 1 }
+                    inStep && /^        uses:/ { exit }
+                    inStep { print }
+                  ' "$1")
+                  grep -q 'github\.event\.repository\.default_branch' <<< "$step"
+                }
+
+                if guarded "$canonical"; then
+                  echo "  ok   the retire step only runs on the default branch"
+                else
+                  echo "  FAIL update.yml retires attempt branches from any ref."
+                  echo "       Dispatched on an update/* branch, the job deletes the ref that same"
+                  echo "       run just pushed its successful update to."
+                  exit 1
+                fi
+
+                sed '/github\.event\.repository\.default_branch/d' "$canonical" > ungated.yml
+                if guarded ungated.yml; then
+                  echo "  FAIL this check passes a file with the gate removed, so it proves nothing"
+                  exit 1
+                fi
+                echo "  ok   the check rejects the ungated form"
+                touch "$out"
+              '';
+
           checks.std-action-pins =
             pkgs.runCommand "std-action-pins"
               {

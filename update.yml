@@ -194,8 +194,12 @@ jobs:
             });
 
       # Exit 2 is a transient network failure: it resolves no issue, so it retires no branch.
+      # Only the default branch retires: a run dispatched on an update/* branch is WORKING on
+      # that branch, and this job would delete the ref that same run just pushed to.
       - name: Retire attempt branches that no longer have an open issue
-        if: steps.update.outputs.exit_code == '0' || steps.update.outputs.exit_code == '1'
+        if: >-
+          github.ref_name == github.event.repository.default_branch
+          && (steps.update.outputs.exit_code == '0' || steps.update.outputs.exit_code == '1')
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9 (node24)
         env:
           PKG: ${{ steps.update.outputs.package_name }}
