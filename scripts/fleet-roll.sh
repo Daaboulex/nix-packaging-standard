@@ -119,9 +119,30 @@ restore() {
   done < <(git -C "$dir" ls-files --others --exclude-standard)
 }
 
+# A NAMED target that is not a consumer is an error, not a skip: the per-repo
+# loop below skips a non-consumer silently, which is right for the discovered
+# set (it sweeps every directory) and wrong for an explicit one -- asking for
+# two repos and rolling one must never report success.
+EXPLICIT_TARGETS=0
+[ "${#TARGETS[@]}" -gt 0 ] && EXPLICIT_TARGETS=1
+
 if [ "${#TARGETS[@]}" -eq 0 ]; then
   while IFS= read -r d; do TARGETS+=("$(basename "$d")"); done \
     < <(find "$REPOS_DIR" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+fi
+
+if [ "$EXPLICIT_TARGETS" -eq 1 ]; then
+  declare -a MISSING=()
+  for repo in "${TARGETS[@]}"; do
+    [ -e "$REPOS_DIR/$repo/.git" ] && [ -f "$REPOS_DIR/$repo/.github/update.json" ] ||
+      MISSING+=("$repo")
+  done
+  if [ "${#MISSING[@]}" -gt 0 ]; then
+    printf 'fleet-roll: named but not a consumer under %s: %s\n' \
+      "$REPOS_DIR" "${MISSING[*]}" >&2
+    echo "fleet-roll: refusing a partial roll; re-run with names that exist" >&2
+    exit 2
+  fi
 fi
 
 if [ "$EXECUTE" -eq 1 ]; then
