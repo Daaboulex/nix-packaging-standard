@@ -766,6 +766,22 @@ and two edits that were no-ops by construction -- every one of them reporting
 success. This repo's own CI also began running its declared flake checks, which
 it never had.
 
+v2.32.0 (2026-08) stopped `update.yml` destroying its own successful work.
+Dispatched on an `update/*` branch it ran the whole verification chain against
+the real upstream release, committed the bump, pushed it, and then its own
+branch-retirement job deleted the branch it had just pushed to: the retirement
+loop skips only the branch named by a FAILED update's issue, so on success it
+retires every `update/*` ref for the package, including the one the run is
+standing on. Found live, on a real lmstudio update. The fix is not the missing
+self-exclusion but the precondition: a run dispatched off the default branch is
+working on a branch and has no business garbage-collecting refs at all, so the
+whole step is now gated on the default branch, which removes the class and fails
+in the safe direction. `std-update-retire-guard` proves it both ways, requiring
+the shipped canonical to carry the gate and the same detector to reject a copy
+with the gate stripped. Dependabot's action bump also reached the workflows this
+repo ships, not only the ones it runs, which is the split `std-action-pins`
+exists to catch and had been failing on since the pull request opened.
+
 ## License
 
 MIT. See `LICENSE`.
