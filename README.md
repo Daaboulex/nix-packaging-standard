@@ -782,6 +782,16 @@ with the gate stripped. Dependabot's action bump also reached the workflows this
 repo ships, not only the ones it runs, which is the split `std-action-pins`
 exists to catch and had been failing on since the pull request opened.
 
+v2.32.1 (2026-08) closed a fail-open in `fleet-roll.sh` itself. A repo named on
+the command line that was not a consumer was skipped in silence: the per-repo
+loop `continue`s past anything without a `.github/update.json`, which is right
+for the discovered set because that sweeps every directory, and wrong for an
+explicit one. Found live, asking for two repos and getting a roll of one with
+`failed: 0` and exit 0 -- the exact shape this tool exists to prevent, in the
+tool. Named targets are now validated before any repo is touched and refused
+with exit 2. Consumers gain nothing from this tag: `fleet-roll.sh` is not a
+synced file, so v2.32.1 is byte-identical to v2.32.0 from a consumer's side.
+
 ## License
 
 MIT. See `LICENSE`.
