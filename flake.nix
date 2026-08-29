@@ -118,6 +118,27 @@
               touch "$out"
             '';
 
+          checks.std-fleet-roll-build-is-bounded =
+            pkgs.runCommand "std-fleet-roll-build-is-bounded" { roll = ./scripts/fleet-roll.sh; }
+              ''
+                invocation=$(awk '/nix-fast-build --/,/flake "\.#checks/' "$roll")
+
+                grep -q -- '-j "\$FAST_BUILD_JOBS"' <<< "$invocation" \
+                  || { echo "fleet-roll invokes nix-fast-build without an explicit -j. Its -j DEFAULTS to nix's max-jobs, so on a max-jobs=0 host it starts zero build workers and then waits forever on a queue nothing drains: a silent hang, not an error"; exit 1; }
+
+                jobs=$(sed -n 's/^FAST_BUILD_JOBS=\''${FAST_BUILD_JOBS:-\([0-9]*\)}.*/\1/p' "$roll")
+                [ -n "$jobs" ] && [ "$jobs" -gt 0 ] \
+                  || { echo "FAST_BUILD_JOBS must default to a positive number; 0 is the hang"; exit 1; }
+
+                grep -q 'timeout "\$BUILD_TIMEOUT"' <<< "$invocation" \
+                  || { echo "the per-repo build is not time-bounded, so a stall cannot be reported as a failure"; exit 1; }
+
+                grep -q 'brc" -eq 124' "$roll" \
+                  || { echo "a timeout exit is not classified, so it would be reported as an ordinary build failure"; exit 1; }
+
+                touch "$out"
+              '';
+
           checks.std-update-retire-guard =
             pkgs.runCommand "std-update-retire-guard" { canonical = ./update.yml; }
               ''

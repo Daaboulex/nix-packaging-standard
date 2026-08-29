@@ -100,6 +100,9 @@ retired=0
 failed=0
 declare -a FAILED_REPOS=()
 
+FAST_BUILD_JOBS=${FAST_BUILD_JOBS:-8}
+BUILD_TIMEOUT=${BUILD_TIMEOUT:-2700}
+
 TRANSIENT='crates\.io|error: cannot download|unable to download|http error 5[0-9][0-9]|status code: (403|429|5[0-9][0-9])|curl: \(|couldn.t resolve host|connection reset by peer|temporary failure in name resolution|operation timed out'
 LOGDIR=$(mktemp -d -t fleet-roll-XXXXXX)
 
@@ -235,12 +238,21 @@ for repo in "${TARGETS[@]}"; do
   if [ "$SKIP_BUILD" -eq 0 ]; then
     sys=$(nix eval --impure --raw --expr 'builtins.currentSystem' 2>/dev/null)
     buildlog="$LOGDIR/$repo.log"
+    # -j is nix-fast-build's own worker count, NOT nix's max-jobs, but it
+    # DEFAULTS to it: on a max-jobs=0 host it starts zero build workers and
+    # then waits on a queue nothing will ever drain. Never omit it, never 0.
+    # The timeout keeps any future stall a reported failure instead of silence.
     build_one() {
-      (cd "$dir" && nix run --inputs-from . nixpkgs#nix-fast-build -- \
-        --skip-cached --no-nom --flake ".#checks.$sys") >"$buildlog" 2>&1
+      (cd "$dir" && timeout "$BUILD_TIMEOUT" nix run --inputs-from . nixpkgs#nix-fast-build -- \
+        -j "$FAST_BUILD_JOBS" --skip-cached --no-nom --flake ".#checks.$sys") >"$buildlog" 2>&1
     }
     build_one
     brc=$?
+    if [ "$brc" -eq 124 ]; then
+      fail_repo "$repo" "build timed out after ${BUILD_TIMEOUT}s  log: $buildlog"
+      restore "$dir"
+      continue
+    fi
     if [ "$brc" -ne 0 ] && grep -qiE "$TRANSIENT" "$buildlog"; then
       note "build: transient fetch failure, retrying once in 60s"
       sleep 60
