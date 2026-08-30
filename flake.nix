@@ -152,6 +152,27 @@
                 touch "$out"
               '';
 
+          checks.std-fleet-roll-restores-on-abort =
+            pkgs.runCommand "std-fleet-roll-restores-on-abort" { roll = ./scripts/fleet-roll.sh; }
+              ''
+                if ! grep -qE '^trap on_abort .*INT.*TERM' "$roll"; then
+                  echo "fleet-roll does not trap interruption. A Ctrl-C, SIGTERM, usage limit or crash then leaves the repo it was mid-edit dirty, and the NEXT roll refuses that repo with 'working tree is not clean'. That stranding has cost two runs"
+                  exit 1
+                fi
+
+                if ! grep -q 'restore "\$IN_FLIGHT"' "$roll"; then
+                  echo "the abort trap does not restore the in-flight repo, so it reports the interruption while still stranding the tree"
+                  exit 1
+                fi
+
+                if ! grep -q '^  IN_FLIGHT="\$dir"' "$roll"; then
+                  echo "no repo is ever marked in-flight, so the abort trap has nothing to restore and silently does nothing"
+                  exit 1
+                fi
+
+                touch "$out"
+              '';
+
           checks.std-update-retire-guard =
             pkgs.runCommand "std-update-retire-guard" { canonical = ./update.yml; }
               ''

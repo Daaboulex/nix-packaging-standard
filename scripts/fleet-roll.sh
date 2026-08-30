@@ -123,6 +123,23 @@ restore() {
   done < <(git -C "$dir" ls-files --others --exclude-standard)
 }
 
+# An interrupted roll (Ctrl-C, SIGTERM, usage limit, crash) otherwise leaves the
+# repo it was mid-edit dirty, and the NEXT roll refuses that repo with "working
+# tree is not clean". That stranding has cost two runs, so it is trapped here.
+IN_FLIGHT=""
+on_abort() {
+  local rc=$?
+  if [ -n "$IN_FLIGHT" ] && [ -n "$(git -C "$IN_FLIGHT" status --porcelain 2>/dev/null)" ]; then
+    printf 'fleet-roll: interrupted while editing %s -- restoring it to a clean tree\n' "$IN_FLIGHT" >&2
+    restore "$IN_FLIGHT"
+    if [ -n "$(git -C "$IN_FLIGHT" status --porcelain 2>/dev/null)" ]; then
+      printf 'fleet-roll: FAILED to restore %s; it is still dirty, inspect before re-running\n' "$IN_FLIGHT" >&2
+    fi
+  fi
+  exit "$rc"
+}
+trap on_abort EXIT INT TERM HUP
+
 # A NAMED target that is not a consumer is an error, not a skip: the per-repo
 # loop below skips a non-consumer silently, which is right for the discovered
 # set (it sweeps every directory) and wrong for an explicit one -- asking for
@@ -159,6 +176,7 @@ for repo in "${TARGETS[@]}"; do
   dir="$REPOS_DIR/$repo"
   [ -e "$dir/.git" ] || continue
   [ -f "$dir/.github/update.json" ] || continue
+  IN_FLIGHT="$dir"
   if command -v gh >/dev/null 2>&1 &&
     [ "$(cd "$dir" && gh repo view --json isArchived --jq .isArchived 2>/dev/null)" = true ]; then
     printf 'skip  %s: archived upstream, retired from the fleet\n' "$repo"
@@ -323,6 +341,7 @@ for repo in "${TARGETS[@]}"; do
   fi
   rolled=$((rolled + 1))
 done
+IN_FLIGHT=""
 
 printf '\n== summary ==\n'
 printf 'rolled: %s   already at %s: %s   retired: %s   failed: %s\n' "$rolled" "$TAG" "$skipped" "$retired" "$failed"
