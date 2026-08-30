@@ -140,6 +140,25 @@ on_abort() {
 }
 trap on_abort EXIT INT TERM HUP
 
+# A pre-commit hook records an ABSOLUTE nix store path that nix-collect-garbage
+# can remove, and no consumer clone is gcrooted (none has .direnv), so every hook
+# is one GC away from breaking. A DANGLING hook fails the commit loudly. A MISSING
+# hook is worse: the commit succeeds and the repo's own gate never runs at all.
+hook_live() {
+  local hook="$1/.git/hooks/pre-commit" p
+  [ -f "$hook" ] || return 1
+  p=$(grep -oE '/nix/store/[a-z0-9]+-[^/]*/bin/pre-commit' "$hook" 2>/dev/null | head -1)
+  [ -n "$p" ] && [ -e "$p" ]
+}
+
+ensure_hook() {
+  local dir="$1"
+  hook_live "$dir" && return 0
+  printf '  pre-commit hook missing or dangling; reinstalling from the devshell\n'
+  (cd "$dir" && nix develop --command true) >/dev/null 2>&1 || true
+  hook_live "$dir"
+}
+
 # A NAMED target that is not a consumer is an error, not a skip: the per-repo
 # loop below skips a non-consumer silently, which is right for the discovered
 # set (it sweeps every directory) and wrong for an explicit one -- asking for
@@ -312,6 +331,11 @@ for repo in "${TARGETS[@]}"; do
   fi
 
   if [ "$EXECUTE" -eq 1 ]; then
+    if ! ensure_hook "$dir"; then
+      fail_repo "$repo" "pre-commit hook missing or dangling and could not be reinstalled; committing would bypass the repo's own gate"
+      restore "$dir"
+      continue
+    fi
     msg=$(mktemp)
     {
       printf 'chore(std): adopt nix-packaging-standard %s\n\n' "$TAG"

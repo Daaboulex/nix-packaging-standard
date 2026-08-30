@@ -152,6 +152,31 @@
                 touch "$out"
               '';
 
+          checks.std-fleet-roll-verifies-hooks =
+            pkgs.runCommand "std-fleet-roll-verifies-hooks"
+              {
+                roll = ./scripts/fleet-roll.sh;
+                audit = ./scripts/fleet-audit.sh;
+              }
+              ''
+                if ! grep -q 'ensure_hook "\$dir"' "$roll"; then
+                  echo "fleet-roll commits without checking the repo's pre-commit hook. A MISSING hook lets the commit succeed with the repo's own gate never running -- success reported for work nothing verified. A dangling one (its store path garbage-collected) fails the commit with an unreadable error"
+                  exit 1
+                fi
+
+                if ! grep -q 'e "\$p"' "$roll"; then
+                  echo "the hook check does not test that the recorded store path still EXISTS, so a hook garbage-collected out from under the clone still reads as present"
+                  exit 1
+                fi
+
+                if ! grep -q 'hook_absent' "$audit"; then
+                  echo "fleet-audit does not report a clone with NO pre-commit hook, so the silent half of this failure never announces itself"
+                  exit 1
+                fi
+
+                touch "$out"
+              '';
+
           checks.std-fleet-roll-restores-on-abort =
             pkgs.runCommand "std-fleet-roll-restores-on-abort" { roll = ./scripts/fleet-roll.sh; }
               ''

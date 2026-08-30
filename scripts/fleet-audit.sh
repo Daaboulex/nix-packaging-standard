@@ -130,6 +130,29 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     sed 's/^/      /' /tmp/fa-sync.log
   fi
 
+  hdr "local pre-commit hooks are live"
+  # The hook records an ABSOLUTE store path that nix-collect-garbage can remove,
+  # and no clone is gcrooted unless `direnv allow` has been run there. A dangling
+  # hook fails the commit loudly; a MISSING hook lets the commit succeed with the
+  # repo's gate never running, which is the silent half and the reason this exists.
+  declare -a hook_dead=() hook_absent=()
+  for repo in "${CONSUMERS[@]}"; do
+    hook="$REPOS_DIR/$repo/.git/hooks/pre-commit"
+    if [ ! -f "$hook" ]; then
+      hook_absent+=("$repo")
+      continue
+    fi
+    hp=$(grep -oE '/nix/store/[a-z0-9]+-[^/]*/bin/pre-commit' "$hook" 2>/dev/null | head -1)
+    if [ -z "$hp" ] || [ ! -e "$hp" ]; then hook_dead+=("$repo"); fi
+  done
+  if [ "${#hook_absent[@]}" -eq 0 ] && [ "${#hook_dead[@]}" -eq 0 ]; then
+    ok "every clone has a pre-commit hook whose store path still exists"
+  else
+    [ "${#hook_absent[@]}" -gt 0 ] && red "NO pre-commit hook (commits bypass the gate silently): ${hook_absent[*]}"
+    [ "${#hook_dead[@]}" -gt 0 ] && red "pre-commit hook points at a garbage-collected store path (commits will fail): ${hook_dead[*]}"
+    info "repair: run 'nix develop --command true' in the repo, or 'direnv allow' once to gcroot the devshell"
+  fi
+
   hdr "metadata drift (sync-meta.sh --check)"
   # sync-meta compares update.json to LIVE GitHub metadata, so it only applies
   # to repos that have a remote -- a local-only WIP (no origin) has nothing to
