@@ -130,8 +130,21 @@
                 [ -n "$jobs" ] && [ "$jobs" -gt 0 ] \
                   || { echo "FAST_BUILD_JOBS must default to a positive number; 0 is the hang"; exit 1; }
 
-                grep -q 'timeout "\$BUILD_TIMEOUT"' <<< "$invocation" \
-                  || { echo "the per-repo build is not time-bounded, so a stall cannot be reported as a failure"; exit 1; }
+                if ! grep -q 'stat -c %s "\$buildlog"' "$roll"; then
+                  echo "the per-repo build is not bounded on SILENCE. A wall-clock bound cannot separate a heavy build from a hang: both occupy the same duration, so raising it kills healthy work and lowering it still misses stalls. Bound on absence of output"
+                  exit 1
+                fi
+
+                if grep -q 'timeout "\$BUILD_TIMEOUT"' "$roll"; then
+                  echo "the build is bounded on elapsed time again. That killed three healthy builds, one of which had already succeeded and was copying its result back"
+                  exit 1
+                fi
+
+                stall=$(sed -n 's/^STALL_TIMEOUT=\''${STALL_TIMEOUT:-\([0-9]*\)}.*/\1/p' "$roll")
+                if [ -z "$stall" ] || [ "$stall" -le 0 ]; then
+                  echo "STALL_TIMEOUT must default to a positive number of seconds; absent or 0 means the stall is never reported"
+                  exit 1
+                fi
 
                 grep -q 'brc" -eq 124' "$roll" \
                   || { echo "a timeout exit is not classified, so it would be reported as an ordinary build failure"; exit 1; }

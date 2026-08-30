@@ -101,7 +101,8 @@ failed=0
 declare -a FAILED_REPOS=()
 
 FAST_BUILD_JOBS=${FAST_BUILD_JOBS:-8}
-BUILD_TIMEOUT=${BUILD_TIMEOUT:-2700}
+STALL_TIMEOUT=${STALL_TIMEOUT:-900}
+STALL_POLL=${STALL_POLL:-30}
 
 TRANSIENT='crates\.io|error: cannot download|unable to download|http error 5[0-9][0-9]|status code: (403|429|5[0-9][0-9])|curl: \(|couldn.t resolve host|connection reset by peer|temporary failure in name resolution|operation timed out'
 LOGDIR=$(mktemp -d -t fleet-roll-XXXXXX)
@@ -241,15 +242,33 @@ for repo in "${TARGETS[@]}"; do
     # -j is nix-fast-build's own worker count, NOT nix's max-jobs, but it
     # DEFAULTS to it: on a max-jobs=0 host it starts zero build workers and
     # then waits on a queue nothing will ever drain. Never omit it, never 0.
-    # The timeout keeps any future stall a reported failure instead of silence.
+    # Bound on SILENCE, not elapsed time: a heavy build and a hang are the same
+    # duration, so only absence of output distinguishes them.
     build_one() {
-      (cd "$dir" && timeout "$BUILD_TIMEOUT" nix run --inputs-from . nixpkgs#nix-fast-build -- \
-        -j "$FAST_BUILD_JOBS" --skip-cached --no-nom --flake ".#checks.$sys") >"$buildlog" 2>&1
+      (cd "$dir" && nix run --inputs-from . nixpkgs#nix-fast-build -- \
+        -j "$FAST_BUILD_JOBS" --skip-cached --no-nom --flake ".#checks.$sys") >"$buildlog" 2>&1 &
+      local bpid=$! last=-1 now quiet=0
+      while kill -0 "$bpid" 2>/dev/null; do
+        sleep "$STALL_POLL"
+        now=$(stat -c %s "$buildlog" 2>/dev/null || echo 0)
+        if [ "$now" != "$last" ]; then
+          last=$now
+          quiet=0
+        else
+          quiet=$((quiet + STALL_POLL))
+          if [ "$quiet" -ge "$STALL_TIMEOUT" ]; then
+            kill -TERM "$bpid" 2>/dev/null || true
+            wait "$bpid" 2>/dev/null || true
+            return 124
+          fi
+        fi
+      done
+      wait "$bpid"
     }
     build_one
     brc=$?
     if [ "$brc" -eq 124 ]; then
-      fail_repo "$repo" "build timed out after ${BUILD_TIMEOUT}s  log: $buildlog"
+      fail_repo "$repo" "build produced no output for ${STALL_TIMEOUT}s (stalled)  log: $buildlog"
       restore "$dir"
       continue
     fi
