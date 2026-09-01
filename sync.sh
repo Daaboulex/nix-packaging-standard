@@ -47,6 +47,10 @@ fi
 drift=0
 for repo in "${targets[@]}"; do
   dir="$REPOS_DIR/$repo"
+  if [ "$dir" -ef "$STD" ]; then
+    echo "skip   $repo (the standard itself: it is the source, never a target)"
+    continue
+  fi
   [ -e "$dir/.git" ] || {
     echo "skip   $repo (not a git clone)"
     continue
