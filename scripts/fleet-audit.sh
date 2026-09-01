@@ -470,7 +470,8 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     lic=""
     grep -q 'Permission is hereby granted, free of charge' "$dir/LICENSE" && lic="MIT"
     if grep -q 'GNU GENERAL PUBLIC LICENSE' "$dir/LICENSE"; then
-      if head -5 "$dir/LICENSE" | grep -q 'Version 2'; then lic="GPL-2.0"; else lic="GPL-3.0"; fi
+      lic_head=$(head -5 "$dir/LICENSE" 2>/dev/null || true)
+      if grep -q 'Version 2' <<<"$lic_head"; then lic="GPL-2.0"; else lic="GPL-3.0"; fi
     fi
     grep -q 'GNU AFFERO GENERAL PUBLIC LICENSE' "$dir/LICENSE" && lic="AGPL-3.0"
     grep -q 'Altered source versions must be plainly marked' "$dir/LICENSE" && lic="Zlib"
@@ -486,12 +487,12 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     fi
     lic_ok=0
     case "$lic" in
-    MIT) echo "$badge" | grep -qiE '^MIT' && lic_ok=1 ;;
-    GPL-2.0) echo "$badge" | grep -qiE 'gpl.*2' && lic_ok=1 ;;
-    GPL-3.0) echo "$badge" | grep -qiE 'gpl.*3' && lic_ok=1 ;;
-    AGPL-3.0) echo "$badge" | grep -qi 'agpl' && lic_ok=1 ;;
-    Zlib) echo "$badge" | grep -qi 'zlib' && lic_ok=1 ;;
-    Unlicense) echo "$badge" | grep -qi 'unlicense' && lic_ok=1 ;;
+    MIT) grep -qiE '^MIT' <<<"$badge" && lic_ok=1 ;;
+    GPL-2.0) grep -qiE 'gpl.*2' <<<"$badge" && lic_ok=1 ;;
+    GPL-3.0) grep -qiE 'gpl.*3' <<<"$badge" && lic_ok=1 ;;
+    AGPL-3.0) grep -qi 'agpl' <<<"$badge" && lic_ok=1 ;;
+    Zlib) grep -qi 'zlib' <<<"$badge" && lic_ok=1 ;;
+    Unlicense) grep -qi 'unlicense' <<<"$badge" && lic_ok=1 ;;
     esac
     if [ "$lic_ok" -eq 1 ]; then
       ok "$repo: license badge matches LICENSE ($lic)"

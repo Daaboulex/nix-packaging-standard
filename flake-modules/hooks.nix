@@ -51,6 +51,14 @@
   };
   # The README-section linter is the standard's own script (no per-repo
   # scripts/check-readme-sections.sh to copy and let drift).
+  check-shell-pipelines = {
+    enable = true;
+    name = "check-shell-pipelines";
+    entry = "bash ${../scripts/check-shell-pipelines.sh}";
+    language = "system";
+    pass_filenames = false;
+  };
+
   check-readme-sections = {
     enable = true;
     name = "check-readme-sections";

@@ -487,6 +487,28 @@ derivations mirroring nixpkgs `proton-ge-bin`: a stub `out` plus
   attr) so `update.sh`'s hash convergence reaches every hash through
   `.#default`.
 
+## Short-circuiting pipelines under `pipefail`
+
+`grep -q` exits on its first match. That closes the pipe, the producer takes
+SIGPIPE, and under `set -o pipefail` the pipeline reports failure. A successful
+match therefore reads as a failed test and the wrong branch is taken. The same
+holds for `head -n`, which stops reading just as early.
+
+`writeShellApplication` always sets `pipefail`, so every shell string inside a
+Nix file is in scope, not just `*.sh`.
+
+Capture first, then match a here-string, so the producer's exit status is not
+decided by the consumer closing the pipe:
+
+```bash
+out=$(producer 2>/dev/null || true)
+if grep -q PATTERN <<<"$out"; then
+```
+
+`check-shell-pipelines` enforces this over every tracked `*.sh` and `*.nix`.
+A line already ending in `|| true` is accepted, since its status is discarded
+either way. Mark a deliberate exception on the same line with `pipefail-safe`.
+
 ## Rolling-CI failure handling
 
 Rolling inputs break in classes, and every class is either fenced or NAMED:
