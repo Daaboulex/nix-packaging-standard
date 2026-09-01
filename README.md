@@ -186,6 +186,36 @@ and enforced by `std-conformance`. Keep them **stable** across minor standard
 releases — evolve via additive flakeModules. A change to a synced file is a
 major bump that re-syncs every repo in one coordinated batch.
 
+## Overlays compose against the consumer, not against our own lock
+
+An overlay exists so a consumer can get the package built against *their*
+nixpkgs, with their overlays and their fixes applied. Write it as:
+
+```nix
+flake.overlays.default = final: _prev: {
+  thing = final.callPackage ./package.nix { };
+};
+```
+
+Not as:
+
+```nix
+flake.overlays.default = _final: prev: {
+  thing = self.packages.${prev.stdenv.hostPlatform.system}.thing;   # wrong
+};
+```
+
+The second hands back a package this repo already built against the nixpkgs in
+its own `flake.lock`. The consumer's nixpkgs version, their overlays and any
+fix they carry are all ignored, and their system ends up with a second nixpkgs
+closure for one package. It still evaluates, which is why it survives review:
+the defect is invisible until someone asks why a consumer overlay had no
+effect.
+
+A package that genuinely cannot be built by the consumer (a prebuilt artifact
+that must be fetched with this repo's own hashes, say) is the exception, and
+the overlay should say so in a comment naming the reason.
+
 ## Per-repo extensions
 
 The standard is designed for dendritic extension — each repo adds what it needs
