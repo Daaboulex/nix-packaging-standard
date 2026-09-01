@@ -711,7 +711,7 @@ if [ "${#HF_FIELD[@]}" -gt 0 ]; then
   BUILD_OUTPUT=""
   for ((iter = 1; iter <= HASH_MAX; iter++)); do
     BUILD_OUTPUT=$(nix build .#default --no-link 2>&1 || true)
-    grep -q 'hash mismatch in fixed-output' <<<\"$BUILD_OUTPUT\" || break
+    grep -q 'hash mismatch in fixed-output' <<<"$BUILD_OUTPUT" || break
     BLOCK=$(echo "$BUILD_OUTPUT" | grep -A3 'hash mismatch in fixed-output derivation' | head -4)
     DRV=$(echo "$BLOCK" | grep -oP "derivation '\K[^']+" | head -1)
     GOT=$(echo "$BLOCK" | grep -oP 'got:\s+sha256-\K\S+' | head -1 || true)
@@ -767,7 +767,7 @@ if [ "${#HF_FIELD[@]}" -gt 0 ]; then
     log "Hash '${HF_FIELD[$IDX]}' (drv ${DRV##*/}): sha256-$GOT"
     set_hash "${HF_FIELD[$IDX]}" "${HF_FILE[$IDX]}" "sha256-$GOT"
   done
-  if grep -q 'hash mismatch in fixed-output' <<<\"$BUILD_OUTPUT\"; then
+  if grep -q 'hash mismatch in fixed-output' <<<"$BUILD_OUTPUT"; then
     err "Hash extraction did not converge after $HASH_MAX iterations"
     output "error_type" "hash-extraction"
     exit 1

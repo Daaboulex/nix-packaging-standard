@@ -40,7 +40,7 @@ jobs:
           bash -n scripts/fleet-audit.sh
 
       - name: ShellCheck
-        run: shellcheck update.sh sync.sh tests/run.sh scripts/fleet-audit.sh
+        run: shellcheck update.sh sync.sh tests/run.sh scripts/fleet-audit.sh scripts/check-shell-pipelines.sh
 
       - name: Schema is a valid JSON Schema
         run: pipx run check-jsonschema --check-metaschema update.schema.json

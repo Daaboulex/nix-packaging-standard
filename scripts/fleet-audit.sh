@@ -461,6 +461,7 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     dir="$REPOS_DIR/$repo"
     [ -f "$dir/flake.nix" ] || continue
     body=$(awk '/overlays\.[a-zA-Z]+ = /{f=1} f{print} f&&/^ *};$/{exit}' "$dir/flake.nix" 2>/dev/null || true)
+    # shellcheck disable=SC2016  # the pattern is literal on purpose: it must not expand
     if grep -q 'self\.packages\.\${' <<<"$body"; then
       red "$repo: overlay returns self.packages.\${system}, so a consumer gets this repo's build against its own nixpkgs instead of theirs; call the package with the consumer's set (final.callPackage)"
     fi
