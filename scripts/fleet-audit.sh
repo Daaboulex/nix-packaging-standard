@@ -450,6 +450,22 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     [ "$tmpov_any" -eq 0 ] && ok "no temporary overlays in the fleet"
   fi
 
+  # --- overlays compose against the consumer ---------------------------------
+  # An overlay written as `self.packages.${system}.thing` hands back a package
+  # this repo already built against the nixpkgs in its own flake.lock. The
+  # consumer's nixpkgs, their overlays and any fix they carry are ignored, and
+  # their system gains a second closure for one package. It evaluates cleanly,
+  # so nothing else catches it.
+  hdr "per-repo: overlays compose against the consumer's nixpkgs"
+  for repo in "${CONSUMERS[@]}"; do
+    dir="$REPOS_DIR/$repo"
+    [ -f "$dir/flake.nix" ] || continue
+    body=$(awk '/overlays\.[a-zA-Z]+ = /{f=1} f{print} f&&/^ *};$/{exit}' "$dir/flake.nix" 2>/dev/null || true)
+    if grep -q 'self\.packages\.\${' <<<"$body"; then
+      red "$repo: overlay returns self.packages.\${system}, so a consumer gets this repo's build against its own nixpkgs instead of theirs; call the package with the consumer's set (final.callPackage)"
+    fi
+  done
+
   # --- license consistency (README badge <-> LICENSE file) -------------------
   # The README license badge is static text; nothing else ties it to the
   # LICENSE actually shipped, so a relicense or copy-paste badge could drift
