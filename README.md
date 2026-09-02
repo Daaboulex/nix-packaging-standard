@@ -599,6 +599,16 @@ repo re-breaks on a later run. Pick by what the condition actually is:
 | `dropWhen = pkgs: <bool>` | **eval** — an attribute exists again, a dependency is back in `propagatedBuildInputs`, an option is gone | the boolean going true |
 | `dropWhenBuilds = pkgs: <drv>` | **build** — a failing test suite, a `pkg-config` version reject, a patch that no longer applies | that derivation building cleanly without the fix |
 
+`dropWhenBuilds` never names a fixed-output derivation (a `fetchurl`,
+`fetchzip`, `fetchFromGitHub` source). Nix reports such a build as done whenever
+its output already sits in the store, so a fix that rewrites a source URL would
+read as healed on any machine that ever fetched the file, and be dropped while
+the URL is still broken. A source-URL fix tests the eval-visible condition it
+rewrites instead (`dropWhen = pkgs: !builtins.any (pkgs.lib.hasPrefix
+"https://broken.host/") pkgs.foo.src.urls`), and both `heal-overlays.sh` and
+`fleet-audit` refuse a `dropWhenBuilds` whose derivation carries an
+`outputHash`.
+
 An added dependency is eval-visible, so it uses `dropWhen` and retires itself
 the moment nixpkgs' own package carries the dependency:
 
@@ -634,9 +644,10 @@ nothing, and files a `maintenance` issue naming what was kept and what was
 restored. Nothing is ever dropped blind.
 
 Fail-closed by construction: a fix with no predicate, with both, with malformed
-`meta`, or with a `dropWhenBuilds` that cannot even evaluate is a hard error in
-both `heal-overlays.sh` and `fleet-audit` -- never silently read as "still
-needed", which would pin it forever. The lock keeps moving under automated
+`meta`, with a `dropWhenBuilds` that cannot even evaluate, or with a
+`dropWhenBuilds` on a fixed-output derivation is a hard error in both
+`heal-overlays.sh` and `fleet-audit` -- never silently read as "still needed",
+which would pin it forever, nor as "healed", which would drop it blind. The lock keeps moving under automated
 maintenance, every live workaround stays captured and visible (fleet-audit names
 each one with its reason and age), and each retires itself the moment it stops
 doing any work.
@@ -758,7 +769,14 @@ plus a `CHANGELOG.md`).
 - **exit 0** — no update needed, or update applied + verified.
 - **exit 1** — a real failure (config, version read/write, hash extraction,
   build, verification) → workflow opens an `update-failed` issue.
-- **exit 2** — network / API error → no issue, retried next run.
+- **exit 2** — a transient condition only (unreachable host, DNS, 5xx, 403/429,
+  a timeout) → no issue, retried next run. A 404, a moved file, a changed
+  upstream layout or schema will not resolve by waiting: that is exit 1 with an
+  `error_type`, so the failure is filed the day it starts. The workflow counts
+  consecutive exit-2 runs and escalates a week-long streak to an `update-failed`
+  issue (`error_type: stalled`), so a permanent failure cannot hide behind the
+  transient exit indefinitely (eden-nix#13: a 404 reported as exit 2 kept the
+  Update run green for two months while the pin stood still).
 - Outputs (to `$GITHUB_OUTPUT`): `updated`, `old_version`, `new_version`,
   `package_name`, `upstream_url`, `error_type`.
 
@@ -767,6 +785,10 @@ plus a `CHANGELOG.md`).
 - Update success → silent commit + push to the default branch.
 - Update failure (`exit 1`) → `update-failed` issue with the build log + a
   recovery branch; previous failure issues auto-close on the next success.
+- Update transient (`exit 2`) → no issue, but the run carries a streak counter
+  in the Actions cache; the seventh consecutive exit-2 run files the same
+  `update-failed` issue with `error_type: stalled`, and the next exit-0 run
+  closes it and resets the streak.
 - `EXIT_CODE=${PIPESTATUS[0]}` captures the real exit — **not** `tee`'s.
 - Maintenance: weekly `nix flake update`, rebuild, push only if green, else open
   a labeled issue; plus stale-branch cleanup (>30 days).
@@ -843,6 +865,21 @@ explicit one. Found live, asking for two repos and getting a roll of one with
 tool. Named targets are now validated before any repo is touched and refused
 with exit 2. Consumers gain nothing from this tag: `fleet-roll.sh` is not a
 synced file, so v2.32.1 is byte-identical to v2.32.0 from a consumer's side.
+
+v2.33.0 (2026-09) closed three fail-opens found on one maintenance day. A
+custom `update.sh` reported a 404 as exit 2 for two months while its Update run
+stayed green (eden-nix#13: upstream had moved its dependency manifest), so
+`update.yml` now carries a streak of consecutive exit-2 runs in the Actions
+cache and files the seventh as `update-failed` / `stalled`, and the contract
+names what exit 2 is for. A `dropWhenBuilds` on a fixed-output fetch read as
+healed the moment the fixed file sat in the store (linux-corecycler#16, a
+source mirror that had turned into a Google Drive interstitial), so
+`heal-overlays.sh` and `fleet-audit` refuse a `dropWhenBuilds` whose derivation
+carries an `outputHash`, and a source-URL fix tests the eval-visible condition
+with `dropWhen`. And `nix fmt` in every consumer failed with "unexpected end of
+input": Nix 2.34 no longer passes `.` to the formatter and bare `nixfmt` reads
+stdin, so `formatter` is `nixfmt-tree`, which formats the tree without
+arguments. Pre-commit was never affected; it passes filenames.
 
 ## License
 

@@ -443,6 +443,15 @@ if [ "$DO_LOCAL" -eq 1 ]; then
           red "$repo: overlays/$name.nix malformed meta, missing overlay, or not exactly one of dropWhen/dropWhenBuilds"
           continue
         fi
+        if jq -e '.b' <<<"$m" >/dev/null; then
+          fixedOutput="$(nix eval --json --impure --expr \
+            "let flake = builtins.getFlake \"$dir\"; pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; config.allowUnfree = true; overlays = [ flake.overlays.probe ]; }; in ((import $f).dropWhenBuilds pkgs) ? outputHash" \
+            2>/dev/null)" || fixedOutput="unevaluable"
+          if [ "$fixedOutput" != "false" ]; then
+            red "$repo: overlays/$name.nix dropWhenBuilds must name a derivation that is not fixed-output: a fetch reads as built once its output is in the store (got: $fixedOutput)"
+            continue
+          fi
+        fi
         tmpov_any=1
         info "$repo: temporary overlay '$name' (added $(jq -r .a <<<"$m")): $(jq -r .r <<<"$m")"
       done

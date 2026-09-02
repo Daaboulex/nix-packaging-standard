@@ -66,7 +66,7 @@
     {
       pre-commit.settings.hooks = import ./hooks.nix { inherit pkgs lib ruffConfigArg; };
 
-      formatter = pkgs.nixfmt;
+      formatter = pkgs.nixfmt-tree;
 
       devShells.default = pkgs.mkShell {
         inputsFrom = [ config.pre-commit.devShell ];

@@ -265,7 +265,7 @@
                 fi
               '';
 
-          formatter = pkgs.nixfmt;
+          formatter = pkgs.nixfmt-tree;
           devShells.default = pkgs.mkShell {
             inputsFrom = [ config.pre-commit.devShell ];
             packages = with pkgs; [
