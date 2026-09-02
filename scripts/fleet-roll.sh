@@ -212,8 +212,9 @@ for repo in "${TARGETS[@]}"; do
     fail_repo "$repo" "on branch '$branch', expected main"
     continue
   fi
-  if ! git -C "$dir" fetch --quiet origin 2>/dev/null; then
-    fail_repo "$repo" "cannot reach origin"
+  steplog="$LOGDIR/$repo.steps.log"
+  if ! git -C "$dir" fetch --quiet origin >"$steplog" 2>&1; then
+    fail_repo "$repo" "cannot reach origin: $(tail -1 "$steplog")  log: $steplog"
     continue
   fi
   counts=$(git -C "$dir" rev-list --left-right --count "origin/main...HEAD" 2>/dev/null) || counts=""
@@ -259,14 +260,14 @@ for repo in "${TARGETS[@]}"; do
     continue
   fi
 
-  if ! (cd "$dir" && nix flake update std >/dev/null 2>&1); then
-    fail_repo "$repo" "nix flake update std failed"
+  if ! (cd "$dir" && nix flake update std >>"$steplog" 2>&1); then
+    fail_repo "$repo" "nix flake update std failed: $(tail -1 "$steplog")  log: $steplog"
     restore "$dir"
     continue
   fi
 
-  if ! PKG_REPOS_DIR="$REPOS_DIR" bash "$STD/sync.sh" "$repo" >/dev/null 2>&1; then
-    fail_repo "$repo" "sync.sh failed"
+  if ! PKG_REPOS_DIR="$REPOS_DIR" bash "$STD/sync.sh" "$repo" >>"$steplog" 2>&1; then
+    fail_repo "$repo" "sync.sh failed: $(tail -1 "$steplog")  log: $steplog"
     restore "$dir"
     continue
   fi
