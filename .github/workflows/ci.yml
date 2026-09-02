@@ -27,7 +27,9 @@ jobs:
       # it hands the fleet; without this it was the one repo exempt from its
       # own gate, and lib.nix had drifted unformatted.
       - name: Nix formatting
-        run: git ls-files -z '*.nix' | xargs -0 nix fmt -- --check
+        run: |
+          nix fmt
+          git diff --exit-code --stat
 
       - name: Workflow lint
         run: nix run --inputs-from . nixpkgs#actionlint -- ci.yml update.yml maintenance.yml .github/workflows/*.yml

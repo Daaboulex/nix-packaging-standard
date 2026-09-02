@@ -881,6 +881,13 @@ input": Nix 2.34 no longer passes `.` to the formatter and bare `nixfmt` reads
 stdin, so `formatter` is `nixfmt-tree`, which formats the tree without
 arguments. Pre-commit was never affected; it passes filenames.
 
+v2.33.1 (2026-09) repaired this repo's own CI, which v2.33.0 had turned red:
+its formatting step passed nixfmt's `--check` through `nix fmt`, and treefmt
+has no such flag. The step now runs the formatter and fails on a resulting
+diff, which holds for any formatter. Consumers gain nothing from this tag: the
+shipped `ci.yml` never invokes the formatter, so v2.33.1 is byte-identical to
+v2.33.0 from a consumer's side.
+
 ## License
 
 MIT. See `LICENSE`.
