@@ -367,9 +367,16 @@ if [ "$DO_LOCAL" -eq 1 ]; then
   # skipped. Needs `nix eval`; skipped under --skip-nix.
   if [ "$NIX_MODE" != "skip" ]; then
     hdr "per-repo: documentation truth (documented .#outputs exist)"
-    docsys="x86_64-linux"
     for repo in "${CONSUMERS[@]}"; do
       dir="$REPOS_DIR/$repo"
+      # Enumerate on the repo's own system: a repo that builds one arch has no
+      # outputs under the other, and reading the missing one would call every
+      # documented attribute a lie.
+      docsys="$(
+        nix eval --json "$dir#packages" --apply 'builtins.attrNames' 2>/dev/null |
+          jq -r '.[0] // empty' 2>/dev/null
+      )"
+      [ -n "$docsys" ] || docsys="x86_64-linux"
       [ -f "$dir/README.md" ] || {
         info "$repo: no README.md"
         continue
