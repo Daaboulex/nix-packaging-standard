@@ -31,6 +31,11 @@
           "type": "string",
           "minLength": 1,
           "description": "One-line reason this repo does not build aarch64-linux (e.g. 'amd64-only upstream .deb', 'x86-only asm in upstream Rust', 'no pkgsi686Linux on aarch64'). 'untested' is not a reason — declare it in `systems` and let the arm runner verify instead."
+        },
+        "x86_64-linux": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One-line reason this repo does not build x86_64-linux (e.g. an upstream that ships aarch64 binaries only). The same rule applies as for aarch64: state the reason, never leave the drop silent."
         }
       }
     },
