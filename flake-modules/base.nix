@@ -108,6 +108,17 @@
           touch "$out"
         '';
 
+        std-homestate = pkgs.runCommand "std-homestate" { nativeBuildInputs = [ pkgs.gnugrep ]; } ''
+          hits=$(grep -rn 'home\.file\."\.' ${src} --include='*.nix' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::a module declares a file in the home root; an app's state belongs in its XDG place"
+            echo "$hits"
+            echo "use xdg.configFile/xdg.dataFile, or the variable the app documents."
+            echo "an upstream that hardcodes a home-root path is named in the README with the file and line that proves it."
+            exit 1
+          fi
+          touch "$out"
+        '';
         std-update-json =
           pkgs.runCommand "std-update-json" { nativeBuildInputs = [ pkgs.check-jsonschema ]; }
             ''

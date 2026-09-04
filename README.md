@@ -388,6 +388,28 @@ develop`, `nix run`, `nix shell`, and raw tool calls. Build outputs (`result*`),
 `node_modules/`, venvs) stay untracked via the baseline `.gitignore`; the
 `std-devstate` check fails a repo whose core entries went missing.
 
+## Packaged apps keep their state out of the home root
+
+A packaged app's state belongs in the XDG directories, never loose in the home
+root, and the way to put it there is the app's own mechanism -- never a file
+moved by hand and never a store link over a path the app writes itself. Try in
+this order and stop at the first that holds: the app already follows XDG, so do
+nothing; it documents a variable or a flag, so the wrapper or the module sets it
+to an absolute path; it owns a pointer or home file of its own, so activation
+seeds that file when it is absent and leaves it alone otherwise; it hardcodes the
+path with no knob at all, so the README names the upstream file and line that
+proves it, which is what makes the exception reviewable instead of a shrug.
+
+Three paths are never relocated. `~/.ssh` has no mechanism at all. `GNUPGHOME`
+exists but derives a socket directory that systemd's own units do not agree
+with, so moving it breaks gpg-agent. `~/.var` belongs to Flatpak.
+
+A home-manager module therefore declares `xdg.configFile` or `xdg.dataFile`, or
+sets the documented variable; `home.file.".<name>"` is refused by `std-homestate`.
+Prove where an app looks by reading its source or its own documentation, and cite
+that in the commit: a version that reads `$XDG_CONFIG_HOME` today is a fact with
+a date on it, not a permanent property.
+
 ## Python env+source apps: requirements coverage
 
 An app packaged as a `python.withPackages` env plus upstream source (no wheel

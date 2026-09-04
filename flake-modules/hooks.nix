@@ -43,8 +43,20 @@
   };
   # rumdl config lives HERE, not in a per-repo .rumdl.toml: MD013
   # (line length) is impractical for prose, links, and tables.
+  # Its jemalloc aborts on a 16K-page host unless built for that page size, so
+  # aarch64 builds it for 16K; drop the branch when nixpkgs' own rumdl runs
+  # there unpatched.
   rumdl = {
     enable = true;
+    package =
+      if pkgs.stdenv.hostPlatform.system == "aarch64-linux" then
+        pkgs.rumdl.overrideAttrs (o: {
+          env = (o.env or { }) // {
+            JEMALLOC_SYS_WITH_LG_PAGE = "14";
+          };
+        })
+      else
+        pkgs.rumdl;
     settings.configuration = {
       MD013.enabled = false;
     };
