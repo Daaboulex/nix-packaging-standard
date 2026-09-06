@@ -69,7 +69,11 @@
       formatter = pkgs.nixfmt-tree;
 
       devShells.default = pkgs.mkShell {
-        packages = [ pkgs.nil ] ++ config.pre-commit.settings.enabledPackages;
+        packages = [
+          pkgs.nil
+          config.pre-commit.settings.package
+        ]
+        ++ config.pre-commit.settings.enabledPackages;
         # Self-contained dev state: shell-provided tools keep caches/homes in
         # the project's gitignored .devshell/, never $HOME. The pins run
         # BEFORE the hook install: inputsFrom would run git-hooks first and

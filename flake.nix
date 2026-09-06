@@ -267,14 +267,18 @@
 
           formatter = pkgs.nixfmt-tree;
           devShells.default = pkgs.mkShell {
-            inputsFrom = [ config.pre-commit.devShell ];
-            packages = with pkgs; [
-              nil
-              nixfmt
-              jq
-              shellcheck
-              check-jsonschema
-            ];
+            packages =
+              with pkgs;
+              [
+                nil
+                nixfmt
+                jq
+                shellcheck
+                check-jsonschema
+                config.pre-commit.settings.package
+              ]
+              ++ config.pre-commit.settings.enabledPackages;
+            shellHook = (import ./lib.nix).devStateHook + config.pre-commit.installationScript;
           };
         };
     };
