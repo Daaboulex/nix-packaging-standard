@@ -66,7 +66,9 @@
     {
       pre-commit.settings.hooks = import ./hooks.nix { inherit pkgs lib ruffConfigArg; };
 
-      formatter = pkgs.nixfmt-tree;
+      formatter = pkgs.writeShellScriptBin "treefmt" ''
+        exec ${pkgs.nixfmt-tree}/bin/treefmt --no-cache "$@"
+      '';
 
       devShells.default = pkgs.mkShell {
         packages = [

@@ -265,7 +265,9 @@
                 fi
               '';
 
-          formatter = pkgs.nixfmt-tree;
+          formatter = pkgs.writeShellScriptBin "treefmt" ''
+            exec ${pkgs.nixfmt-tree}/bin/treefmt --no-cache "$@"
+          '';
           packages.std-home-proof = import ./flake-modules/home-proof.nix { inherit pkgs; };
           devShells.default = pkgs.mkShell {
             packages =

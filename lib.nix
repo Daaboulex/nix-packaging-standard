@@ -304,8 +304,10 @@
   # and HF_HOME (shared registry/model caches belong to the machine config,
   # an explicit owner choice). Extend per tool from the same seam.
   devStateHook = ''
-    export DEVSHELL_STATE="$PWD/.devshell"
+    export DEVSHELL_STATE="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.devshell"
     mkdir -p "$DEVSHELL_STATE"
+    export NIX_CACHE_HOME="''${NIX_CACHE_HOME:-''${XDG_CACHE_HOME:-$HOME/.cache}/nix}"
+    export XDG_CACHE_HOME="$DEVSHELL_STATE/cache"
     export PRE_COMMIT_HOME="$DEVSHELL_STATE/pre-commit"
     export RUFF_CACHE_DIR="$DEVSHELL_STATE/ruff"
     export MYPY_CACHE_DIR="$DEVSHELL_STATE/mypy"
@@ -313,5 +315,7 @@
     export PIP_CACHE_DIR="$DEVSHELL_STATE/pip"
     export CARGO_TARGET_DIR="$DEVSHELL_STATE/cargo-target"
     export npm_config_cache="$DEVSHELL_STATE/npm-cache"
+    export CCACHE_DIR="$DEVSHELL_STATE/ccache"
+    export CCACHE_TEMPDIR="$DEVSHELL_STATE/ccache/tmp"
   '';
 }
