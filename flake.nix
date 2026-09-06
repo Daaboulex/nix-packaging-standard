@@ -266,6 +266,7 @@
               '';
 
           formatter = pkgs.nixfmt-tree;
+          packages.std-home-proof = import ./flake-modules/home-proof.nix { inherit pkgs; };
           devShells.default = pkgs.mkShell {
             packages =
               with pkgs;
