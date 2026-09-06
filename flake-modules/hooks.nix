@@ -3,6 +3,35 @@
   lib,
   ruffConfigArg,
 }:
+let
+  homeProof = pkgs.writeShellApplication {
+    name = "std-home-proof";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.findutils
+      pkgs.git
+    ];
+    text = ''
+      root=$(git rev-parse --show-toplevel)
+      mkdir -p "$root/.devshell"
+      probe=$(mktemp -d "$root/.devshell/home-proof.XXXXXX")
+      trap 'rm -rf "$probe"' EXIT
+      env -i HOME="$probe" USER="''${USER:-user}" LOGNAME="''${USER:-user}" PATH="$PATH" TERM=dumb \
+        NIX_SSL_CERT_FILE="''${NIX_SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}" \
+        SSL_CERT_FILE="''${SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}" \
+        nix develop "$root" -c true
+      written=$(cd "$probe" && find . -mindepth 1 \
+        -not -path './.cache/nix*' -not -path './.local/state/nix*' -not -path './.local/share/nix*' -not -path './.config/nix*' \
+        -not -path './.cache' -not -path './.local' -not -path './.local/state' -not -path './.local/share' -not -path './.config' | sort)
+      if [ -n "$written" ]; then
+        echo "std-home-proof: the dev shell wrote into an empty HOME; pin each tool into .devshell (lib.devStateHook is the seam):"
+        echo "$written"
+        exit 1
+      fi
+      echo "std-home-proof: the dev shell wrote nothing into an empty HOME"
+    '';
+  };
+in
 {
   # Use pkgs.nixfmt directly: pkgs.nixfmt-rfc-style is now an alias of it
   # and emits a deprecation warning on every eval. Same formatter, no noise.
@@ -117,4 +146,17 @@
     entry = lib.mkForce "${pkgs.ruff}/bin/ruff format${ruffConfigArg}";
   };
   actionlint.enable = true;
+  # The proof behind the dev-state rule, run once per push: enter this
+  # flake's dev shell with an EMPTY home and fail on anything a tool
+  # wrote there. A pin that is missing or runs too late shows up as the
+  # path it left, so the fix is named by the failure.
+  std-home-proof = {
+    enable = true;
+    name = "std-home-proof";
+    entry = "${homeProof}/bin/std-home-proof";
+    language = "system";
+    pass_filenames = false;
+    always_run = true;
+    stages = [ "pre-push" ];
+  };
 }

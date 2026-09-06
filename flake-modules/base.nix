@@ -69,12 +69,13 @@
       formatter = pkgs.nixfmt-tree;
 
       devShells.default = pkgs.mkShell {
-        inputsFrom = [ config.pre-commit.devShell ];
-        packages = [ pkgs.nil ];
+        packages = [ pkgs.nil ] ++ config.pre-commit.settings.enabledPackages;
         # Self-contained dev state: shell-provided tools keep caches/homes in
-        # the project's gitignored .devshell/, never $HOME. Custom shells
-        # append the same hook (inputs.std.lib.devStateHook).
-        shellHook = (import ../lib.nix).devStateHook;
+        # the project's gitignored .devshell/, never $HOME. The pins run
+        # BEFORE the hook install: inputsFrom would run git-hooks first and
+        # pre-commit install would write ~/.cache/pre-commit. Custom shells
+        # do the same: devStateHook, then the installation script.
+        shellHook = (import ../lib.nix).devStateHook + config.pre-commit.installationScript;
       };
 
       checks = (lib.mapAttrs' (n: v: lib.nameValuePair "package-${n}" v) buildable) // {
