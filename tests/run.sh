@@ -608,6 +608,20 @@ STUB_CHECKS_FAIL=1 STUB_CURL_FILE="$STD/tests/fixtures/mullvad-releases.json" ru
 check "update refuses to proceed" "1" "$RC"
 check "reported as a check failure" "eval-error" "$(get "$d" error_type)"
 
+echo "Test 20: classifier names a substitution whose pattern upstream moved"
+d="$WORK/t20"
+mkdir -p "$d"
+: >"$d/out.env"
+cat >"$d/build.log" <<'LOG'
+error: Cannot build '/nix/store/dddd-unsloth-2026.4.5.drv'.
+       Reason: builder failed with exit code 1.
+       > substituteStream() in derivation python3.14-unsloth: ERROR: pattern requires\ =\ \[\"setuptools==80.9.0\"\] doesn't match anything in file 'pyproject.toml'
+LOG
+run_classify "$d" "$d/build.log"
+check "classifier exits 0" "0" "$RC"
+check "class substitution-pattern-drift" "substitution-pattern-drift" "$(get "$d" class)"
+check "the failing drv is still listed" "1" "$(get "$d" failed_drvs | tr ' ' '\n' | grep -c drv)"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"
