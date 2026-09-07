@@ -341,7 +341,7 @@ for repo in "${TARGETS[@]}"; do
     {
       printf 'chore(std): adopt nix-packaging-standard %s\n\n' "$TAG"
       cat "$NOTES"
-      printf '\nEval: local-fast-build=green\n'
+      printf '\nTest: the canonical build, run locally before this push\n'
     } >"$msg"
     if ! git -C "$dir" commit --quiet -a -F "$msg"; then
       rm -f "$msg"
@@ -350,11 +350,20 @@ for repo in "${TARGETS[@]}"; do
       continue
     fi
     rm -f "$msg"
-    if ! git -C "$dir" push --quiet origin main; then
+    perr=$(mktemp)
+    git -C "$dir" push origin main 2>&1 | tee "$perr"
+    prc=${PIPESTATUS[0]}
+    if [ "$prc" -ne 0 ]; then
       git -C "$dir" reset --hard --quiet HEAD~1
-      fail_repo "$repo" "push refused (archived or no write access); commit undone, nothing left behind"
+      why=$(grep -m1 -E "^(remote: )?(error|fatal|! \[)" "$perr" | sed 's/^[[:space:]]*//')
+      if grep -qE "pre-push|hook declined|std-home-proof" "$perr"; then
+        why="this repo's own pre-push hook refused it: ${why:-see the output above}"
+      fi
+      rm -f "$perr"
+      fail_repo "$repo" "push failed: ${why:-no error text captured}; commit undone, nothing left behind"
       continue
     fi
+    rm -f "$perr"
     note "pushed: $(git -C "$dir" log -1 --format=%h)"
   else
     restore "$dir"

@@ -8,7 +8,7 @@
 # instantiated drvPath via `builtins.seq` (so options + assertions evaluate and
 # throw on failure) but stores only a context-free string — it never depends on
 # or realizes the closure, so the check is eval-only and cheap, even in CI.
-{
+rec {
   nixosModuleCheck =
     {
       nixpkgs,
@@ -298,7 +298,10 @@
   # $HOME, and per-project build/cache dirs stay out of the tree): export each
   # tool's cache/home/build dir into the project's gitignored .devshell/. base
   # wires this into the default dev shell; a repo with custom shells sets
-  # `shellHook = inputs.std.lib.devStateHook;` (or appends it). nix-direnv
+  # inputs.std.lib.mkDevShell, which composes it in the one correct order.
+  # Setting shellHook alone is NOT enough beside inputsFrom = [
+  # config.pre-commit.devShell ]: that shell's hook installs pre-commit first
+  # and writes ~/.cache/pre-commit before PRE_COMMIT_HOME exists. nix-direnv
   # (.envrc `use flake`) captures the exports for every in-project entry
   # point, not just `nix develop`. Deliberately NOT pinned here: CARGO_HOME
   # and HF_HOME (shared registry/model caches belong to the machine config,
@@ -323,4 +326,27 @@
     export CCACHE_DIR="$DEVSHELL_STATE/ccache"
     export CCACHE_TEMPDIR="$DEVSHELL_STATE/ccache/tmp"
   '';
+
+  # mkDevShell — a custom dev shell that cannot get the order wrong. The hook
+  # tools arrive as packages instead of through
+  # inputsFrom = [ config.pre-commit.devShell ], whose own shellHook runs first
+  # and installs pre-commit before the pins exist, writing ~/.cache/pre-commit.
+  # Here devStateHook runs, then the installation script, then the caller's own
+  # hook.
+  mkDevShell =
+    { pkgs, config }:
+    args:
+    pkgs.mkShell (
+      builtins.removeAttrs args [
+        "packages"
+        "shellHook"
+      ]
+      // {
+        packages =
+          (args.packages or [ ])
+          ++ [ config.pre-commit.settings.package ]
+          ++ config.pre-commit.settings.enabledPackages;
+        shellHook = devStateHook + config.pre-commit.installationScript + (args.shellHook or "");
+      }
+    );
 }

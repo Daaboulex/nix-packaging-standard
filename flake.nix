@@ -229,6 +229,59 @@
                 touch "$out"
               '';
 
+          # The one composition rule custom shells got wrong: the pins must run
+          # BEFORE the hook install, or pre-commit writes ~/.cache/pre-commit
+          # before PRE_COMMIT_HOME exists and std-home-proof refuses the push.
+          checks.std-devshell-pins-before-hooks =
+            pkgs.runCommand "std-devshell-pins-before-hooks"
+              {
+                hook = ((import ./lib.nix).mkDevShell { inherit pkgs config; } { }).shellHook;
+              }
+              ''
+                printf '%s' "$hook" >hook.sh
+                pins=$(grep -n 'PRE_COMMIT_HOME=' hook.sh | head -1 | cut -d: -f1)
+                install=$(grep -n 'pre-commit install' hook.sh | head -1 | cut -d: -f1)
+                if [ -z "$pins" ]; then
+                  echo "mkDevShell composed a hook that never pins PRE_COMMIT_HOME, so every tool it starts writes the real home"
+                  exit 1
+                fi
+                if [ -z "$install" ]; then
+                  echo "mkDevShell composed a hook that never installs the git hooks, so the repo's own gate would never run"
+                  exit 1
+                fi
+                if [ "$pins" -ge "$install" ]; then
+                  echo "mkDevShell puts the hook install at line $install ahead of the pins at line $pins, so pre-commit writes ~/.cache/pre-commit before PRE_COMMIT_HOME exists"
+                  exit 1
+                fi
+
+                touch "$out"
+              '';
+
+          # The roll reported every failed push as a permissions problem, so a
+          # pre-push hook refusing it (std-home-proof finding real home
+          # pollution) read as a GitHub problem and sent the reader to the
+          # wrong place entirely.
+          checks.std-fleet-roll-names-the-push-failure =
+            pkgs.runCommand "std-fleet-roll-names-the-push-failure" { roll = ./scripts/fleet-roll.sh; }
+              ''
+                if grep -q 'archived or no write access' "$roll"; then
+                  echo "the roll still guesses at a failed push instead of reading the error git gave it"
+                  exit 1
+                fi
+
+                if ! grep -q 'pre-push' "$roll"; then
+                  echo "the roll cannot tell a local hook refusal from a remote one, so the two read alike"
+                  exit 1
+                fi
+
+                if grep -q 'Eval: local-fast-build' "$roll"; then
+                  echo "the adoption commit still writes the retired Eval: trailer instead of a plain Test: line"
+                  exit 1
+                fi
+
+                touch "$out"
+              '';
+
           checks.std-action-pins =
             pkgs.runCommand "std-action-pins"
               {
