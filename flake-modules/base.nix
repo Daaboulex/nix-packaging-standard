@@ -102,6 +102,39 @@
         # outputs and shell state out of the tree -- the dev shell writes tool
         # caches into .devshell/ by contract (lib.devStateHook), and a missing
         # ignore entry would let that state (or result symlinks) get committed.
+        # Every dev shell this repo defines must pin PRE_COMMIT_HOME before it
+        # installs the git hooks, or pre-commit writes ~/.cache/pre-commit
+        # first. std-home-proof catches that only when the write actually
+        # happens; this reads the composed hook, so a wrong order is caught
+        # before it bites and without entering the shell at all.
+        std-devshell-order =
+          let
+            hooks = pkgs.linkFarm "devshell-hooks" (
+              lib.mapAttrsToList (n: s: {
+                name = n;
+                path = pkgs.writeText "hook-${n}" (s.shellHook or "");
+              }) config.devShells
+            );
+          in
+          pkgs.runCommand "std-devshell-order" { inherit hooks; } ''
+            fail=0
+            for f in "$hooks"/*; do
+              n=$(basename "$f")
+              inst=$(grep -n 'pre-commit install' "$f" | head -1 | cut -d: -f1)
+              [ -n "$inst" ] || continue
+              pins=$(grep -n 'PRE_COMMIT_HOME=' "$f" | head -1 | cut -d: -f1)
+              if [ -z "$pins" ]; then
+                echo "::error::devShell $n installs the git hooks but never pins PRE_COMMIT_HOME, so pre-commit writes the real home"
+                fail=1
+              elif [ "$pins" -gt "$inst" ]; then
+                echo "::error::devShell $n installs the git hooks at line $inst but pins PRE_COMMIT_HOME only at line $pins, so pre-commit writes ~/.cache/pre-commit first; compose it with inputs.std.lib.mkDevShell"
+                fail=1
+              fi
+            done
+            [ "$fail" = 0 ] || exit 1
+            touch "$out"
+          '';
+
         std-devstate = pkgs.runCommand "std-devstate" { } ''
           gi=${src + "/.gitignore"}
           canon=${../.gitignore}
