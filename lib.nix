@@ -315,6 +315,11 @@
     export PIP_CACHE_DIR="$DEVSHELL_STATE/pip"
     export CARGO_TARGET_DIR="$DEVSHELL_STATE/cargo-target"
     export npm_config_cache="$DEVSHELL_STATE/npm-cache"
+    export npm_config_devdir="$DEVSHELL_STATE/node-gyp"
+    export COREPACK_HOME="$DEVSHELL_STATE/corepack"
+    export YARN_CACHE_FOLDER="$DEVSHELL_STATE/yarn-cache"
+    export NODE_REPL_HISTORY="$DEVSHELL_STATE/node-repl-history"
+    export NO_UPDATE_NOTIFIER=1
     export CCACHE_DIR="$DEVSHELL_STATE/ccache"
     export CCACHE_TEMPDIR="$DEVSHELL_STATE/ccache/tmp"
   '';
