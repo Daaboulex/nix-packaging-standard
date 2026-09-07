@@ -264,6 +264,12 @@ their check set under emulation. Gate locally scoped to the native system
 (`nix-fast-build --flake .#checks.<system>`) and let each arch's native CI
 runner validate its own leg.
 
+CI builds, it does not run. A runner has no GPU, no display and no KVM, so
+nothing that appears only once the program executes is ever exercised, and a
+package can stay green for months while being broken from its first launch.
+Close that gap by turning each runtime failure you find into a static check in
+the same change. A green run means the outputs build, never that they work.
+
 ## Architecture and platforms
 
 The fleet's canonical target set is **`x86_64-linux` + `aarch64-linux`**, and
@@ -409,6 +415,35 @@ sets the documented variable; `home.file.".<name>"` is refused by `std-homestate
 Prove where an app looks by reading its source or its own documentation, and cite
 that in the commit: a version that reads `$XDG_CONFIG_HOME` today is a fact with
 a date on it, not a permanent property.
+
+## Packages pin what they need, not the host's profile
+
+A derivation names its dependencies and reaches them by store path. A path under
+the host's profile is not a dependency, it is a guess about the machine the
+package lands on: `/run/current-system/sw/bin`, `/etc/profiles/per-user`,
+`/nix/var/nix/profiles` and `~/.nix-profile` all change under the package
+without it noticing, and none of them is guaranteed to hold the program at all.
+
+The failure is quiet. A wrapper that puts a profile directory on `PATH` still
+builds and still starts, and only the feature that needed the absent binary goes
+missing, with nothing in the log to read. `std-no-host-profile` refuses these
+paths in every tracked `*.nix` and `*.sh`.
+
+Runtime interfaces NixOS itself defines stay allowed: `/run/opengl-driver` is
+the graphics contract, and a daemon's socket under `/run` is that daemon's
+address, not a profile lookup.
+
+## Replacing an environment makes you own it
+
+Extending `PATH` or `LD_LIBRARY_PATH` for a wrapped program leaves its own
+lookups intact. Replacing one takes them over, and from that point every binary
+the program runs has to be on the list you wrote, including the helpers it
+executes internally and never documents.
+
+A missing helper is often read as a feature being unavailable rather than as an
+error, so the call returns success and the work simply does not happen. Pin the
+helpers the wrapped program executes, and assert the load-bearing ones in a
+check, because nothing reports their absence at runtime.
 
 ## Python env+source apps: requirements coverage
 

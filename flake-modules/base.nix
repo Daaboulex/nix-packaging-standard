@@ -185,6 +185,20 @@
           fi
           touch "$out"
         '';
+
+        std-no-host-profile =
+          pkgs.runCommand "std-no-host-profile" { nativeBuildInputs = [ pkgs.gnugrep ]; }
+            ''
+              hits=$(grep -rnE '/run/current-system|/etc/profiles/per-user|/nix/var/nix/profiles|\.nix-profile' ${src} --include='*.nix' --include='*.sh' || true)
+              if [ -n "$hits" ]; then
+                echo "::error::a package reads the host's profile instead of pinning what it needs"
+                echo "$hits"
+                echo "name the dependency in the derivation and refer to it by store path."
+                echo "a profile holds whatever that machine has installed: the program can be a different version, or absent, and nothing reports it at runtime."
+                exit 1
+              fi
+              touch "$out"
+            '';
       };
     };
 }
