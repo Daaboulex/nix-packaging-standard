@@ -79,7 +79,13 @@ cat "$STUB_CURL_FILE"
 SH
 cat >"$BIN/git" <<'SH'
 #!/usr/bin/env bash
-[ "${1:-}" = "ls-remote" ] && { printf '%s\trefs/heads/main\n' "$STUB_GIT_REV"; exit 0; }
+if [ "${1:-}" = "ls-remote" ]; then
+  case "$*" in
+    *--tags*) printf '%s' "${STUB_GIT_TAGS:-}"; exit 0 ;;
+  esac
+  printf '%s\trefs/heads/main\n' "$STUB_GIT_REV"
+  exit 0
+fi
 exit 0
 SH
 cat >"$BIN/nix" <<'SH'
@@ -128,6 +134,7 @@ run_update() { # run_update <repodir>  -> sets RC; outputs in <repodir>/out.env
       STUB_CURL_TAGS_FILE="${STUB_CURL_TAGS_FILE:-}" \
       STUB_NIX_MISMATCH="${STUB_NIX_MISMATCH:-}" STUB_NIX_FLAG="$dir/.nixflag" \
       STUB_CHECKS_FAIL="${STUB_CHECKS_FAIL:-}" \
+      STUB_GIT_TAGS="${STUB_GIT_TAGS:-}" \
       bash "$UPDATE" >"$dir/log" 2>&1
   )
   RC=$?
@@ -621,6 +628,23 @@ run_classify "$d" "$d/build.log"
 check "classifier exits 0" "0" "$RC"
 check "class substitution-pattern-drift" "substitution-pattern-drift" "$(get "$d" class)"
 check "the failing drv is still listed" "1" "$(get "$d" failed_drvs | tr ' ' '\n' | grep -c drv)"
+
+echo "Test 21: a git-ls-remote base comes from upstream's newest release tag"
+d="$WORK/t21"
+mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x", "versionScheme": "unstable-date", "versionBase": "0.0.1",
+  "upstream": { "type": "git-ls-remote", "url": "u", "branch": "main" },
+  "packageFile": "package.nix", "hashes": ["hash"], "verify": { "check": "eval" } }
+JSON
+cat >"$d/package.nix" <<'NIX'
+{ }: { rev = "1111111111111111111111111111111111111111"; version = "0.0.1-unstable-2020-01-01"; hash = "sha256-AAAA"; }
+NIX
+: >"$d/.nixflag"
+STUB_GIT_REV=2222222222222222222222222222222222222222 \
+  STUB_GIT_TAGS="$(printf 'aaa\trefs/tags/v0.2.0\nbbb\trefs/tags/test-tag2\nccc\trefs/tags/v0.2.1\nddd\trefs/tags/0.0.3.git\neee\trefs/tags/v0.3.0-rc1\n')" \
+  run_update "$d"
+check "the newest release tag wins, junk and rc excluded" "0.2.1-unstable-$(date -u +%Y-%m-%d)" "$(get "$d" new_version)"
 
 echo
 echo "------------------------------------------"
