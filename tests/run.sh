@@ -646,6 +646,23 @@ STUB_GIT_REV=2222222222222222222222222222222222222222 \
   run_update "$d"
 check "the newest release tag wins, junk and rc excluded" "0.2.1-unstable-$(date -u +%Y-%m-%d)" "$(get "$d" new_version)"
 
+# ---- Test 22: check-shell-pipelines covers workflow files ------------------
+# GitHub runs every step under `bash -eo pipefail`, so a piped grep in a
+# workflow is the same fail-open as one in a script. The shipped ci.yml and
+# maintenance.yml carried three such pipelines the .sh/.nix-only scan never saw.
+echo "Test 22: check-shell-pipelines flags a workflow pipeline and accepts the here-string form"
+CHECKER="$STD/scripts/check-shell-pipelines.sh"
+d="$WORK/t22"
+mkdir -p "$d/.github/workflows"
+(cd "$d" && git init -q && git config user.email t@t && git config user.name t)
+printf 'run: |\n  if ! nix eval .#x | grep -qx true; then exit 0; fi\n' >"$d/.github/workflows/ci.yml" # pipefail-safe: the fixture the checker must refuse
+(cd "$d" && git add -A && git commit -qm bad && bash "$CHECKER" >"$d/log" 2>&1)
+check "a piped grep -q in a workflow is refused" "1" "$?"
+check "the finding names the workflow file" "1" "$(grep -c 'workflows/ci.yml' "$d/log")"
+printf 'run: |\n  declared=$(nix eval .#x || true)\n  if [ "$declared" != true ]; then exit 0; fi\n' >"$d/.github/workflows/ci.yml"
+(cd "$d" && git add -A && git commit -qm good && bash "$CHECKER" >"$d/log" 2>&1)
+check "the captured form passes" "0" "$?"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

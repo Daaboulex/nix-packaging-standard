@@ -7,7 +7,8 @@
 # SIGPIPE, and under `set -o pipefail` the whole pipeline reports failure. A
 # successful match therefore reads as a failed test, so the branch taken is the
 # wrong one. writeShellApplication always sets pipefail, so every shell string
-# in a Nix file is in scope too.
+# in a Nix file is in scope too, and GitHub runs every workflow step under
+# `bash -eo pipefail`, so workflow files are in scope as well.
 #
 # The fix is to capture first and match against a here-string:
 #     out=$(producer 2>/dev/null || true)
@@ -33,7 +34,7 @@ scan() {
   done < <(grep -nE '\|[[:space:]]*grep[[:space:]]+-[a-zA-Z]*q' "$f" 2>/dev/null || true)
 }
 
-files=$(git ls-files '*.sh' '*.nix' 2>/dev/null || true)
+files=$(git ls-files '*.sh' '*.nix' '*.yml' '*.yaml' 2>/dev/null || true)
 for f in $files; do
   [ -f "$f" ] || continue
   case "$f" in

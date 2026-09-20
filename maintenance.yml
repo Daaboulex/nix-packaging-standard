@@ -74,7 +74,8 @@ jobs:
           # checks). Bare `nix build` assumes .#default, which module-only repos
           # (a NixOS/HM module, no package) do not have — that mismatch filed
           # spurious "broke build" maintenance issues on every run.
-          if ! nix eval ".#checks.$SYS" --apply 'x: builtins.attrNames x != [ ]' 2>/dev/null | grep -qx true; then
+          declared=$(nix eval ".#checks.$SYS" --apply 'x: builtins.attrNames x != [ ]' 2>/dev/null || true)
+          if [ "$declared" != true ]; then
             echo "Flake declares no checks for $SYS — lock bump verified by eval only."
             echo "exit_code=0" >> "$GITHUB_OUTPUT"
             exit 0
