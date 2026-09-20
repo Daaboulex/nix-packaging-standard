@@ -36,13 +36,10 @@ jobs:
 
       - name: Shell syntax (bash -n)
         run: |
-          bash -n update.sh
-          bash -n sync.sh
-          bash -n tests/run.sh
-          bash -n scripts/fleet-audit.sh
+          git ls-files '*.sh' | while IFS= read -r f; do bash -n "$f"; done
 
       - name: ShellCheck
-        run: shellcheck update.sh sync.sh tests/run.sh scripts/fleet-audit.sh scripts/check-shell-pipelines.sh
+        run: git ls-files -z '*.sh' | xargs -0 shellcheck
 
       - name: Schema is a valid JSON Schema
         run: pipx run check-jsonschema --check-metaschema update.schema.json
