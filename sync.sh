@@ -16,20 +16,17 @@ set -euo pipefail
 STD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPOS_DIR="${PKG_REPOS_DIR:?set PKG_REPOS_DIR to the directory holding the packaging-repo clones}"
 
-# canonical file in the standard repo  ->  destination path inside each repo.
-# sync.sh BOOTSTRAPS these into a repo; the std-conformance flake check
-# (flakeModules.base) then enforces byte-identity — no curl-based drift-check.
-declare -A FILES=(
-  ["update.sh"]="scripts/update.sh"
-  ["heal-overlays.sh"]="scripts/heal-overlays.sh"
-  ["classify-build-failure.sh"]="scripts/classify-build-failure.sh"
-  ["update.yml"]=".github/workflows/update.yml"
-  ["maintenance.yml"]=".github/workflows/maintenance.yml"
-  ["ci.yml"]=".github/workflows/ci.yml"
-  [".envrc"]=".envrc"
-  [".editorconfig"]=".editorconfig"
-  ["update-readme-options.sh"]="scripts/update-readme-options.sh"
-)
+# canonical file in the standard repo -> destination path inside each repo,
+# read from synced-files.json, the same map flakeModules.base enforces with
+# std-conformance, so the bootstrap and the gate can never disagree.
+declare -A FILES=()
+while IFS=$'\t' read -r dst src; do
+  FILES["$src"]="$dst"
+done < <(jq -r 'to_entries[] | [.key, .value] | @tsv' "$STD/synced-files.json")
+[ "${#FILES[@]}" -gt 0 ] || {
+  echo "sync.sh: synced-files.json is empty or unreadable" >&2
+  exit 2
+}
 
 CHECK=0
 declare -a targets=()

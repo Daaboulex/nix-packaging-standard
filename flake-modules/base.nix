@@ -37,23 +37,14 @@
         && lib.hasInfix "[tool.ruff" (builtins.readFile (src + "/pyproject.toml"));
       ruffConfigArg = lib.optionalString (!hasOwnRuffConfig) " --config ${../ruff.toml}";
 
-      # consumer path -> canonical shipped in this standard
-      syncedAll = {
-        ".github/workflows/ci.yml" = ../ci.yml;
-        ".github/workflows/maintenance.yml" = ../maintenance.yml;
-        ".github/workflows/update.yml" = ../update.yml;
-        "scripts/update.sh" = ../update.sh;
-        "scripts/heal-overlays.sh" = ../heal-overlays.sh;
-        "scripts/classify-build-failure.sh" = ../classify-build-failure.sh;
-        ".envrc" = ../.envrc;
-        ".editorconfig" = ../.editorconfig;
-      };
+      # consumer path -> canonical shipped in this standard, from the one map
+      # sync.sh reads too (synced-files.json), so the two can never disagree.
+      syncedAll = lib.mapAttrs (_: canon: ../. + "/${canon}") (lib.importJSON ../synced-files.json);
       hasReadmeOptions = builtins.pathExists (src + "/scripts/update-readme-options.sh");
-      synced =
-        (if isCustom then builtins.removeAttrs syncedAll [ "scripts/update.sh" ] else syncedAll)
-        // lib.optionalAttrs hasReadmeOptions {
-          "scripts/update-readme-options.sh" = ../update-readme-options.sh;
-        };
+      synced = builtins.removeAttrs syncedAll (
+        lib.optional isCustom "scripts/update.sh"
+        ++ lib.optional (!hasReadmeOptions) "scripts/update-readme-options.sh"
+      );
 
       # Only alias a package into `checks` on systems it actually supports (its
       # own meta.platforms / badPlatforms). Without this, an x86_64-only package
