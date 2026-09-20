@@ -11,10 +11,10 @@ set -uo pipefail
 #   sync-meta.sh --check    # report drift, change nothing, exit 1 if any
 #
 # Source of truth: the `description` and `topics` keys in each repo's
-# .github/update.json (schema-validated). Owner defaults to Daaboulex.
+# .github/update.json (schema-validated). The GitHub repository is read from
+# each clone's origin.
 
 REPOS_DIR="${PKG_REPOS_DIR:?set PKG_REPOS_DIR to the directory holding the packaging-repo clones}"
-OWNER="${GH_OWNER:-Daaboulex}"
 
 gh_slug() {
   local u

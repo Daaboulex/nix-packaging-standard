@@ -659,6 +659,7 @@ printf 'run: |\n  if ! nix eval .#x | grep -qx true; then exit 0; fi\n' >"$d/.gi
 (cd "$d" && git add -A && git commit -qm bad && bash "$CHECKER" >"$d/log" 2>&1)
 check "a piped grep -q in a workflow is refused" "1" "$?"
 check "the finding names the workflow file" "1" "$(grep -c 'workflows/ci.yml' "$d/log")"
+# shellcheck disable=SC2016
 printf 'run: |\n  declared=$(nix eval .#x || true)\n  if [ "$declared" != true ]; then exit 0; fi\n' >"$d/.github/workflows/ci.yml"
 (cd "$d" && git add -A && git commit -qm good && bash "$CHECKER" >"$d/log" 2>&1)
 check "the captured form passes" "0" "$?"
