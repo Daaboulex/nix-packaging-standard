@@ -394,8 +394,10 @@ It checks, per consumer (every dir with a `.github/update.json`):
   its reason and age, so a live workaround, added dependency, or pin is always
   visible fleet-wide; a malformed or orphaned one fails the audit;
 - **custom updaters** -- a `custom` repo's own `scripts/update.sh` gates a bump
-  on the full check suite, never `nix flake check --no-build`; one that does is
-  RED, because that flag evaluates every build-time check and runs none;
+  on the full check suite; one whose only flake check is `nix flake check
+  --no-build` is RED, because that flag evaluates every build-time check and
+  runs none (an eval-only pass beside the full suite, say over every
+  architecture, is fine);
 - **remote** (`gh`) -- every repo on GitHub carrying `.github/update.json` has a
   clone under `PKG_REPOS_DIR` (a full sweep only: the fleet is what GitHub holds,
   not what happens to be cloned, and a consumer nobody cloned is reached by no

@@ -210,9 +210,15 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     # A custom updater keeps its own scripts/update.sh, so the canonical's
     # full check suite (v2.31.0) never reached it: four of them still gated a
     # bump on `--no-build`, which evaluates every build-time check and runs none.
-    if [ "$utype" = "custom" ] && [ -f "$dir/scripts/update.sh" ] &&
-      grep -qE 'flake check[^|&;]*--no-build' "$dir/scripts/update.sh"; then
-      red "$repo: custom scripts/update.sh gates a bump on 'nix flake check --no-build' (evaluates the build-time checks, runs none); run the full suite like the canonical's check_suite"
+    # An eval-only pass beside the full suite (lmstudio evaluates both
+    # architectures first) is fine; what is refused is a script whose only
+    # flake check is `--no-build`.
+    if [ "$utype" = "custom" ] && [ -f "$dir/scripts/update.sh" ]; then
+      checks=$(grep -E 'nix flake check' "$dir/scripts/update.sh" || true)
+      full=$(grep -vE -- '--no-build' <<<"$checks" || true)
+      if [ -n "$checks" ] && [ -z "$full" ]; then
+        red "$repo: custom scripts/update.sh gates a bump on 'nix flake check --no-build' alone (evaluates the build-time checks, runs none); run the full suite like the canonical's check_suite"
+      fi
     fi
     # meta.license accuracy is NOT mechanically gateable here: module-only repos
     # carry no derivation, and overlay repos inherit meta (incl. license) from
