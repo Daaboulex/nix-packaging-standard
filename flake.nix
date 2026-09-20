@@ -318,6 +318,83 @@
                 fi
               '';
 
+          # This repo RUNS what it SHIPS: its own maintenance workflow must be
+          # the canonical (GitHub reads no symlinked workflow, so it is a copy),
+          # and the two scripts that workflow calls are symlinks to the
+          # canonicals. The workflow copy drifted for seven weeks unnoticed: it
+          # still probed fixes in a separate job, the churn loop v2.17.0 removed.
+          checks.std-own-copies-match-shipped =
+            pkgs.runCommand "std-own-copies-match-shipped" { src = ./.; }
+              ''
+                cd "$src"
+                bad=0
+                if cmp -s maintenance.yml .github/workflows/maintenance.yml; then
+                  echo "  ok   .github/workflows/maintenance.yml is the shipped canonical"
+                else
+                  echo "  FAIL .github/workflows/maintenance.yml differs from the maintenance.yml this repo ships; copy the canonical over it"
+                  diff -u maintenance.yml .github/workflows/maintenance.yml | head -40
+                  bad=1
+                fi
+                for s in heal-overlays.sh classify-build-failure.sh; do
+                  if [ "$(readlink "scripts/$s")" = "../$s" ]; then
+                    echo "  ok   scripts/$s is a link to the canonical"
+                  else
+                    echo "  FAIL scripts/$s is not a symlink to ../$s; a copy would drift the way the workflow did"
+                    bad=1
+                  fi
+                done
+                [ "$bad" = 0 ] || exit 1
+                touch "$out"
+              '';
+
+          # The README is the contract a consumer reads. Every check base
+          # provides, every lib helper and every synced file must be named in
+          # it, and the pin in the consumption example must be the newest
+          # version the History section records, or the page reads as current
+          # while it is not.
+          checks.std-readme-names-every-surface =
+            pkgs.runCommand "std-readme-names-every-surface"
+              {
+                readme = ./README.md;
+                base = ./flake-modules/base.nix;
+                hooks = ./flake-modules/hooks.nix;
+                libNames = builtins.attrNames (import ./lib.nix);
+                syncedPaths = builtins.attrNames (lib.importJSON ./synced-files.json);
+              }
+              ''
+                bad=0
+                want() {
+                  if grep -qE -- "\`(inputs\.)?(std\.lib\.)?$1(\`| |\{)" "$readme"; then
+                    echo "  ok   README names $1"
+                  else
+                    echo "  FAIL README does not name $1 ($2)"
+                    bad=1
+                  fi
+                }
+                for n in $(grep -ohE '(^|[[:space:]])std-[a-z0-9-]+ =' "$base" "$hooks" | tr -d ' =' | sort -u); do
+                  want "$n" "a check or hook this standard provides"
+                done
+                for n in $libNames; do
+                  want "$n" "a std.lib helper"
+                done
+                for p in $syncedPaths; do
+                  want "$p" "a synced file"
+                done
+                newest=$(grep -oE '^v[0-9]+\.[0-9]+\.[0-9]+ \(' "$readme" | tail -1 | tr -d ' (')
+                pin=$(grep -oE 'nix-packaging-standard\?ref=v[0-9]+\.[0-9]+\.[0-9]+' "$readme" | head -1 | cut -d= -f2)
+                if [ -z "$newest" ] || [ -z "$pin" ]; then
+                  echo "  FAIL could not read the newest History version ('$newest') or the example pin ('$pin')"
+                  bad=1
+                elif [ "$newest" != "$pin" ]; then
+                  echo "  FAIL the consumption example pins $pin while History's newest entry is $newest"
+                  bad=1
+                else
+                  echo "  ok   the example pins the newest version, $pin"
+                fi
+                [ "$bad" = 0 ] || exit 1
+                touch "$out"
+              '';
+
           formatter = pkgs.writeShellScriptBin "treefmt" ''
             exec ${pkgs.nixfmt-tree}/bin/treefmt --no-cache "$@"
           '';

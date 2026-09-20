@@ -2,8 +2,10 @@
 # Source of truth: github:Daaboulex/nix-packaging-standard. Synced into each
 # packaging repo by sync.sh; byte-identity enforced by the `std-conformance`
 # flake check. flake.lock refresh: rebuild, push only if green, else open a
-# labeled issue; plus stale-branch cleanup. Cadence is per-repo via the
-# MAINTENANCE_CADENCE repo variable (daily | biweekly | weekly); unset = weekly.
+# labeled issue that closes itself on the next clean run; plus stale-branch
+# cleanup. Temporary fixes are probed and healed in that same job, between the
+# update and the build. Cadence is per-repo via the MAINTENANCE_CADENCE repo
+# variable (daily | biweekly | weekly); unset = weekly.
 name: Maintenance
 on:
   schedule:
@@ -53,6 +55,15 @@ jobs:
       - name: Update flake.lock
         run: nix flake update
 
+      # Probe the temporary fixes against the UPDATED inputs, before the
+      # verification build. Probing the committed lock instead would read a fix
+      # needed only on the NEW nixpkgs as healed, drop it, and re-break on the
+      # next bump. Removals ride the SAME verification as the lock bump, so the
+      # two land together or neither does.
+      - name: Probe and heal temporary fixes
+        id: heal
+        run: bash scripts/heal-overlays.sh
+
       - name: Verify build
         id: build
         run: |
@@ -63,7 +74,8 @@ jobs:
           # checks). Bare `nix build` assumes .#default, which module-only repos
           # (a NixOS/HM module, no package) do not have — that mismatch filed
           # spurious "broke build" maintenance issues on every run.
-          if ! nix eval ".#checks.$SYS" --apply 'x: builtins.attrNames x != [ ]' 2>/dev/null | grep -qx true; then
+          declared=$(nix eval ".#checks.$SYS" --apply 'x: builtins.attrNames x != [ ]' 2>/dev/null || true)
+          if [ "$declared" != true ]; then
             echo "Flake declares no checks for $SYS — lock bump verified by eval only."
             echo "exit_code=0" >> "$GITHUB_OUTPUT"
             exit 0
@@ -74,29 +86,72 @@ jobs:
           }
           build
           code=$?
-          # Retry once on a transient external-fetch failure (crates.io rate-limit,
-          # registry/CDN blip) so maintenance doesn't open a spurious "broke build"
-          # issue for an infra hiccup that has nothing to do with the lock bump.
-          if [ "$code" -ne 0 ] && grep -qiE 'crates\.io|error: cannot download|status code: (403|429)|curl: \(|couldn.t resolve host|connection reset by peer|temporary failure in name resolution|operation timed out' /tmp/lock-build.log; then
-            echo "::warning::Transient external-fetch failure during maintenance build; retrying once in 60s."
-            sleep 60
+          # Escalating retry on a transient external-fetch failure (crates.io
+          # rate-limit, registry/CDN blip) so maintenance doesn't open a spurious
+          # "broke build" issue for an infra hiccup, and so an outage lasting
+          # minutes heals inside this run rather than waiting for tomorrow's.
+          transient='crates\.io|error: cannot download|unable to download|http error 5[0-9][0-9]|status code: (403|429|5[0-9][0-9])|curl: \(|couldn.t resolve host|connection reset by peer|temporary failure in name resolution|operation timed out'
+          for backoff in 60 300 900; do
+            [ "$code" -eq 0 ] && break
+            grep -qiE "$transient" /tmp/lock-build.log || break
+            echo "::warning::Transient external-fetch failure during maintenance build; retrying in ${backoff}s."
+            sleep "$backoff"
             build
             code=$?
-          fi
+          done
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
 
       - name: Push if build passes
         if: steps.build.outputs.exit_code == '0'
+        env:
+          HEALED: ${{ steps.heal.outputs.healed }}
         run: |
-          if git diff --quiet flake.lock; then
-            echo "No changes to flake.lock"
+          git add flake.lock
+          if git diff --cached --quiet; then
+            echo "Nothing to push: lock unchanged and no fix healed"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add flake.lock
-          git commit -m "chore: update flake.lock"
+          if [ -n "$HEALED" ]; then
+            git commit -m "chore: update flake.lock; drop healed fix(es): ${HEALED}"
+          else
+            git commit -m "chore: update flake.lock"
+          fi
           git push
+
+      # Nothing else ever closed these, so a maintenance failure that got fixed
+      # stayed open forever and kept fleet-audit red (update.yml has always
+      # closed its own on success; this is the same contract).
+      - name: Close prior failure reports on success
+        if: steps.build.outputs.exit_code == '0'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9 (node24)
+        with:
+          script: |
+            const titleBase = 'Maintenance: flake.lock update broke build';
+            const open = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              labels: 'maintenance', state: 'open'
+            });
+            for (const issue of open.data) {
+              if (!issue.title.startsWith(titleBase)) continue;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Resolved: the scheduled lock refresh built clean in [run ${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}).`
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number, state: 'closed', state_reason: 'completed'
+              });
+            }
+
+      # A red verification must leave the tree exactly as main has it, so the
+      # fixes come back before anything is reported. `git rm` cleared them from
+      # the index too, so this restores from HEAD, not from the index.
+      - name: Restore healed fixes on a red verification
+        if: steps.build.outputs.exit_code != '0' && steps.heal.outputs.healed != ''
+        run: git checkout HEAD -- overlays/
 
       - name: Classify failure
         if: steps.build.outputs.exit_code != '0'
@@ -110,6 +165,8 @@ jobs:
           FAIL_CLASS: ${{ steps.classify.outputs.class }}
           FAIL_ATTRS: ${{ steps.classify.outputs.failed_attrs }}
           FAIL_DRVS: ${{ steps.classify.outputs.failed_drvs }}
+          HEALED: ${{ steps.heal.outputs.healed }}
+          KEPT: ${{ steps.heal.outputs.kept }}
         with:
           script: |
             const fs = require('fs');
@@ -148,6 +205,13 @@ jobs:
                 `**Class**: \`${process.env.FAIL_CLASS}\``,
                 `**Failed attributes**: ${process.env.FAIL_ATTRS || '(none reported)'}`,
                 `**Failed derivations**: ${process.env.FAIL_DRVS || '(none parsed)'}`,
+                `**Temporary fixes kept**: ${process.env.KEPT || '(none)'}`,
+                ...(process.env.HEALED ? [
+                  `**Healed fixes RESTORED**: \`${process.env.HEALED}\` — they probed as no`,
+                  'longer needed against the new inputs, but the build was red, so the',
+                  'removal was reverted. If the removal is what broke it, correct that',
+                  "fix's predicate; otherwise the failure is the lock bump itself.",
+                ] : []),
                 '',
                 'Builds run with --keep-going, so the list above is the COMPLETE',
                 'failure set for this lock -- fix them together, not one per round.',
@@ -209,85 +273,3 @@ jobs:
                 console.log(`Skip ${ref.ref}: ${e.message}`);
               }
             }
-
-  # Temporary-overlay heal: overlays/<name>.nix fixes (see scripts/
-  # heal-overlays.sh) are probed against un-fixed nixpkgs; a healed fix is
-  # removed, the full check suite verifies the removal, and only a green tree
-  # is pushed. A removal that fails verification is restored and reported.
-  # Runs after update-lock so the two jobs never race a push.
-  heal-overlays:
-    needs: [gate, update-lock]
-    if: needs.gate.outputs.run == 'yes'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@021c8a1bd3570eb21f5c20a054812b0c4d9ca614 # v3.22.3
-        with:
-          extra-conf: lazy-trees = false
-
-      - name: Probe and heal
-        id: heal
-        run: bash scripts/heal-overlays.sh
-
-      - name: Push healed removal
-        if: steps.heal.outputs.healed != '' && steps.heal.outputs.verify_exit == '0'
-        # Names pass via env, never interpolated into the run-block shell.
-        env:
-          HEALED: ${{ steps.heal.outputs.healed }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: drop healed overlay fix(es): ${HEALED} (nixpkgs works again)"
-          git push
-
-      - name: Issue if heal verification failed
-        if: steps.heal.outputs.healed != '' && steps.heal.outputs.verify_exit != '0'
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9 (node24)
-        env:
-          HEALED: ${{ steps.heal.outputs.healed }}
-        with:
-          script: |
-            const fs = require('fs');
-            let log = '';
-            try { log = fs.readFileSync('/tmp/heal-verify.log', 'utf8'); } catch (e) {}
-            const lastLines = log.split('\n').slice(-80).join('\n');
-            const title = 'Maintenance: healed overlay removal failed verification';
-
-            // Close any prior open report before filing fresh (dedup, same
-            // pattern as the lock-update issue above).
-            const existing = await github.rest.issues.listForRepo({
-              owner: context.repo.owner, repo: context.repo.repo,
-              labels: 'maintenance', state: 'open'
-            });
-            for (const issue of existing.data) {
-              if (issue.title !== title) continue;
-              await github.rest.issues.update({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: issue.number, state: 'closed',
-                state_reason: 'not_planned'
-              });
-            }
-
-            await github.rest.issues.create({
-              owner: context.repo.owner, repo: context.repo.repo,
-              title,
-              labels: ['maintenance'],
-              body: [
-                '## Healed overlay removal failed verification',
-                '',
-                `The dropWhen probe fired for: \`${process.env.HEALED}\` — nixpkgs provides`,
-                'the fixed behavior again — but the full check suite failed WITHOUT the',
-                'fix, so the removal was restored and NOT pushed. Re-verify upstream,',
-                'then delete the fix by hand or correct its dropWhen predicate.',
-                '',
-                '<details><summary>Verification log (last 80 lines)</summary>',
-                '',
-                '```',
-                lastLines,
-                '```',
-                '</details>',
-                '',
-                '---',
-                '*Created by [maintenance workflow](.github/workflows/maintenance.yml)*'
-              ].join('\n')
-            });

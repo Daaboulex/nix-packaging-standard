@@ -24,7 +24,7 @@ Canonical source of the shared tooling used by every `*-nix` packaging repo.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.12.0"; # pin a tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.39.0"; # pin the newest tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -137,7 +137,7 @@ against the tree:
 
 | Module | Provides |
 | --- | --- |
-| `base` | git-hooks gate (`nixfmt-rfc-style`, `typos`, `rumdl`, `check-readme-sections`), `formatter`, `devShells.default`, every declared package aliased into `checks` on the systems its `meta.platforms` supports (so `nix flake check` BUILDS it), `std-conformance` (synced files byte-match the canonical), `std-update-json` (validates `.github/update.json` against the schema) |
+| `base` | git-hooks gate (`nixfmt-rfc-style`, `typos`, `rumdl`, `check-readme-sections`, `check-shell-pipelines`, and `std-home-proof` at push time), `formatter`, `devShells.default`, every declared package aliased into `checks` on the systems its `meta.platforms` supports (so `nix flake check` BUILDS it), and these checks: `std-conformance` (synced files byte-match the canonical), `std-update-json` (`.github/update.json` satisfies the schema), `std-devstate` (the baseline `.gitignore` entries are present), `std-devshell-order` (every dev shell pins `PRE_COMMIT_HOME` before it installs the hooks), `std-homestate` (no `home.file` in the home root), `std-meta-maintainers` (maintainers carry the nixpkgs shape), `std-no-fail-open` (no shell shape that reports success while doing nothing), `std-no-deprecated-system` (no `pkgs.system` read), `std-no-host-profile` (no path under the host's profile) |
 
 ## `lib`
 
@@ -153,6 +153,9 @@ without building the closure — eval-only and cheap, even in CI.
 | `pythonSitePackagesCheck { pkgs, drv, package, name? }` | First-party python application repos. Proves the BUILT output ships exactly one top-level import package (plus its dist-info) in `site-packages` -- a flat top-level module (`cli.py`, `utils.py`) collides with any other application in a merged environment. See "Python apps: one top-level package" below. |
 | `pristineBinaryCheck { pkgs, package, binaryPath, name? }` | Prebuilt self-reading binaries (embedded resources / appended payloads). Asserts the installed binary is byte-identical to `package.src`, so no fixup phase can silently corrupt it. See "Prebuilt self-reading binaries" below. |
 | `patchAssertions` (a shell string, not a function) | Any `postPatch` that rewrites upstream source with `sed`/`awk` rather than `substituteInPlace --replace-fail`. Prepend it, then assert after every edit with `landed` / `gone` / `present` / `exactly_one` / `landed_soft`. Without it a renamed upstream anchor makes the edit apply to nothing and the package still builds green. See "Patching upstream source" below. |
+| `devStateHook` (a shell string) | The exports that keep every tool's cache and home under the project's `.devshell/`; `base` wires it into the default shell. See "Self-contained dev state" below. |
+| `mkDevShell { pkgs, config } args` | A custom dev shell that cannot get the pin order wrong: the pins, then the hook install, then the caller's own hook. |
+| `failOpenPatterns` (a list) | The shell shapes `std-no-fail-open` refuses, each with its bad and good example; the standard's own check proves each pattern matches only the bad form. |
 
 Example:
 
@@ -172,14 +175,22 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | --- | --- | --- |
 | `flake.nix` | *(not synced)* | Exposes `flakeModules.*` |
 | `flake-modules/base.nix` | *(imported, not synced)* | The shared flakeModule |
-| `update.sh` | `scripts/update.sh` | Detect + apply upstream updates |
+| `synced-files.json` | *(the map itself)* | Consumer path to canonical file: the one map `sync.sh` bootstraps from and `std-conformance` enforces |
+| `update.sh` | `scripts/update.sh` | Detect + apply upstream updates (a `custom` repo keeps its own) |
+| `heal-overlays.sh` | `scripts/heal-overlays.sh` | Probe every temporary divergence against the updated inputs and drop the healed ones |
+| `classify-build-failure.sh` | `scripts/classify-build-failure.sh` | Name a red run's failure class and enumerate its failed targets |
+| `update-readme-options.sh` | `scripts/update-readme-options.sh` | Only where a repo already carries it: splice an options reference into the README |
 | `ci.yml` | `.github/workflows/ci.yml` | Archetype-blind CI (build every output) |
-| `maintenance.yml` | `.github/workflows/maintenance.yml` | Weekly `flake.lock` refresh |
+| `maintenance.yml` | `.github/workflows/maintenance.yml` | `flake.lock` refresh on the repo's cadence, with the heal probe and the verification build |
 | `update.yml` | `.github/workflows/update.yml` | Scheduled Update workflow |
+| `.envrc` | `.envrc` | `use flake`, so nix-direnv carries the dev-state pins into every entry point |
+| `.editorconfig` | `.editorconfig` | The fleet's editor defaults |
 | `update.schema.json` | *(reference, not synced)* | JSON Schema for `update.json` |
 | `sync.sh` | *(run from here)* | Bootstrap canonical files into repos |
 | `sync-meta.sh` | *(run from here)* | Apply repo description + topics from `update.json` to GitHub |
 | `scripts/fleet-audit.sh` | *(run from here)* | The fleet's green/red oracle: conformance + metadata + archetype + branches + issues + CI, local and remote |
+| `scripts/fleet-roll.sh` | *(run from here)* | Adopt a new tag across every consumer: pin, sync, build, commit, push, each repo restored on any failure |
+| `scripts/check-shell-pipelines.sh`, `scripts/check-readme-sections.sh` | *(hooks, not synced)* | The pre-commit hooks `base` wires into every consumer |
 
 The synced workflow files + `scripts/update.sh` are byte-identical fleet-wide
 and enforced by `std-conformance`. Keep them **stable** across minor standard
@@ -269,6 +280,16 @@ nothing that appears only once the program executes is ever exercised, and a
 package can stay green for months while being broken from its first launch.
 Close that gap by turning each runtime failure you find into a static check in
 the same change. A green run means the outputs build, never that they work.
+
+The one place a built binary does run on a runner is the Update verification
+(`verify.binary`, and a custom updater's smoke test). A runner is not a dev
+host: it has no GPU, no display, no KVM, and Ubuntu's AppArmor refuses the
+unprivileged user namespace a `buildFHSEnv` wrapper's `bwrap` needs, so
+`update.yml` opens that knob before the update runs and proves it with
+`unshare`. A verification you add to an update path is proven on a runner
+(dispatch the Update workflow once) before the change is called done; passing
+on the M1 and ryzen said nothing about the runner, and lmstudio's smoke test
+sat green for two weeks until upstream moved.
 
 ## Architecture and platforms
 
@@ -372,8 +393,15 @@ It checks, per consumer (every dir with a `.github/update.json`):
   `dropWhen`/`dropWhenBuilds`, plus an exported `overlays.probe`) and NAMED with
   its reason and age, so a live workaround, added dependency, or pin is always
   visible fleet-wide; a malformed or orphaned one fails the audit;
-- **remote** (`gh`) -- a single `main` branch (no stale `update/*`), zero open
-  issues, and a green latest run of CI / Maintenance / Update on `main`.
+- **custom updaters** -- a `custom` repo's own `scripts/update.sh` gates a bump
+  on the full check suite, never `nix flake check --no-build`; one that does is
+  RED, because that flag evaluates every build-time check and runs none;
+- **remote** (`gh`) -- every repo on GitHub carrying `.github/update.json` has a
+  clone under `PKG_REPOS_DIR` (a full sweep only: the fleet is what GitHub holds,
+  not what happens to be cloned, and a consumer nobody cloned is reached by no
+  sync, no roll and no audit), a single `main` branch (no stale `update/*`),
+  zero open automation issues, and a green latest run of CI / Maintenance /
+  Update on `main`.
 
 A repo with no git remote (an unpushed WIP) is audited locally and skipped
 remotely. The standard itself, the private `site` registry, and the owner's
@@ -592,7 +620,8 @@ out=$(producer 2>/dev/null || true)
 if grep -q PATTERN <<<"$out"; then
 ```
 
-`check-shell-pipelines` enforces this over every tracked `*.sh` and `*.nix`.
+`check-shell-pipelines` enforces this over every tracked `*.sh`, `*.nix` and
+workflow file (GitHub runs every step under `bash -eo pipefail`).
 A line already ending in `|| true` is accepted, since its status is discarded
 either way. Mark a deliberate exception on the same line with `pipefail-safe`.
 
@@ -809,7 +838,10 @@ doing any work.
 `none` — module/multi-component repos with nothing to track.
 `custom` — the repo ships its own `scripts/update.sh` (multi-channel apps, or
 non-API sources like OCCT). The canonical `update.sh` exits 0 early for them;
-their bespoke script must honour the same exit contract.
+their bespoke script must honour the same exit contract and gate the bump the
+way the canonical's `check_suite` does: the full `nix flake check
+--no-eval-cache`, never `--no-build`, which evaluates every build-time check
+and runs none (`fleet-audit` reds it).
 
 **First-party** (owner-authored software: gpucycler, corecycler) is the `none`
 path with the owner named as the upstream:
@@ -944,6 +976,42 @@ has no such flag. The step now runs the formatter and fails on a resulting
 diff, which holds for any formatter. Consumers gain nothing from this tag: the
 shipped `ci.yml` never invokes the formatter, so v2.33.1 is byte-identical to
 v2.33.0 from a consumer's side.
+
+v2.34.0 (2026-09) let a repo be aarch64-only and say why (a `platforms` reason
+for the dropped x86_64 leg, and `fleet-audit` reads a repo's documented outputs
+on the arch it builds), built the markdown linter for a 16K-page host, and made
+`fleet-roll` keep every step's own error text.
+
+v2.35.0 (2026-09) made the dev state self-contained and proven: every pin runs
+before the hook install, every XDG cache moves under `.devshell/` anchored on
+the repo root, `std-home-proof` enters a fresh clone with an empty home at push
+time and is exported as a package, `std-no-host-profile` refuses paths under the
+host's profile, the classifier names a substitution whose pattern upstream
+moved, and the update path names the real failure. v2.36.0 and v2.37.0 added
+`mkDevShell` and `std-devshell-order`, so a custom shell cannot get the pin
+order wrong and every shell proves it at eval time; v2.37.1 let a shell with no
+hook install pass that check. v2.38.0 refetched the version base for a
+non-GitHub upstream too; v2.38.1 restored an executable bit.
+
+v2.39.0 (2026-09) closed what one maintenance day found. `update.yml` opens
+the unprivileged user namespace a `buildFHSEnv` wrapper needs on Ubuntu's
+runners and proves it, after lmstudio's smoke test, added two weeks earlier and
+proven only on dev hosts, failed on its first live run. The standard's own
+maintenance workflow had been an older copy of the shipped one for seven weeks
+(the separate heal job v2.17.0 removed), so `std-own-copies-match-shipped` now
+refuses an own copy that differs from a canonical. The README omitted seven
+checks, three helpers and five releases, so `std-readme-names-every-surface`
+refuses a README that does not name every check, helper and synced file, or
+whose example pin is not the newest release. `sync.sh` and `base.nix` read one
+`synced-files.json` instead of restating the map. durdraw-nix, a live consumer,
+sat five tags behind because the fleet was defined as the clones on one
+machine: `fleet-audit` now reds a GitHub consumer with no clone. Four custom
+updaters still gated a bump on `--no-build`, the fail-open v2.31.0 closed for
+the canonical; the audit reds it and the shipped recovery text stops
+recommending it. The two `| grep -q` pipelines in the shipped workflows were
+rewritten and `check-shell-pipelines` scans workflow files. The three actions
+now run on whatever `ubuntu-latest` is, with the knobs guarded on existence, so
+the move to 26.04 needs no edit.
 
 ## License
 

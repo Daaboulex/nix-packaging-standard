@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-This repository tracks upstream releases. The latest commit on the default branch is the only supported version.
+This repository is the standard the `*-nix` packaging repos consume. The newest tag is the only supported version.
 
 ## Reporting a Vulnerability
 
@@ -22,8 +22,8 @@ Please do **not** open public issues for security problems.
 
 ## Scope
 
-This repository is a Nix packaging wrapper. Security issues within the upstream software itself should be reported to the upstream project. This repo's security scope covers:
+This repository ships the CI, update and maintenance workflows and the updater every consumer runs. Its security scope covers:
 
-- Build-time supply-chain issues (unpinned inputs, missing hash verification)
-- Misconfigured CI secrets or tokens
-- Malicious overlay or flake output surface
+- The shipped workflows (`ci.yml`, `update.yml`, `maintenance.yml`) and `update.sh`: injection through upstream-controlled values, unpinned actions, token scope
+- The flake module and library every consumer evaluates
+- The fleet scripts run with the owner's GitHub credentials
