@@ -207,6 +207,13 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     if [ -f "$dir/.github/dependabot.yml" ]; then
       red "$repo: has .github/dependabot.yml (consumers carry none; actions are managed centrally in the standard)"
     fi
+    # A custom updater keeps its own scripts/update.sh, so the canonical's
+    # full check suite (v2.31.0) never reached it: four of them still gated a
+    # bump on `--no-build`, which evaluates every build-time check and runs none.
+    if [ "$utype" = "custom" ] && [ -f "$dir/scripts/update.sh" ] &&
+      grep -qE 'flake check[^|&;]*--no-build' "$dir/scripts/update.sh"; then
+      red "$repo: custom scripts/update.sh gates a bump on 'nix flake check --no-build' (evaluates the build-time checks, runs none); run the full suite like the canonical's check_suite"
+    fi
     # meta.license accuracy is NOT mechanically gateable here: module-only repos
     # carry no derivation, and overlay repos inherit meta (incl. license) from
     # the nixpkgs base they override, so a grep for `license =` false-fails both.
@@ -580,6 +587,40 @@ if [ "$DO_REMOTE" -eq 1 ]; then
     printf '%s' "$out"
   }
   gherr() { tr '\n' ' ' </tmp/fa-gh.log | head -c 160; }
+
+  # The fleet is every repo on GitHub carrying .github/update.json, not the
+  # set that happens to be cloned here: sync, roll and this audit all walk the
+  # clones, so a consumer nobody cloned (durdraw-nix, five tags behind) was
+  # invisible to every one of them. A full sweep must see the whole fleet; a
+  # named-target run is scoped by the caller and skips this.
+  if [ "${#TARGETS[@]}" -eq 0 ]; then
+    hdr "remote: every GitHub consumer is cloned here (fleet discovery)"
+    if ! remote_repos="$(gh_try repo list "$OWNER" --limit 200 --json name,isArchived --jq '.[] | select(.isArchived | not) | .name')"; then
+      red "could not list the owner's repositories (gh error: $(gherr))"
+    elif [ -z "$remote_repos" ]; then
+      red "the owner's repository list came back empty (unexpected)"
+    else
+      missing=""
+      while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        if ! gh_try api "repos/$OWNER/$name/contents/.github/update.json" --jq '.name' >/dev/null; then
+          case "$(cat /tmp/fa-gh.log)" in
+          *"Not Found"*) continue ;;
+          *)
+            red "$name: could not read .github/update.json on GitHub (gh error: $(gherr))"
+            continue
+            ;;
+          esac
+        fi
+        [ -f "$REPOS_DIR/$name/.github/update.json" ] || missing="$missing $name"
+      done <<<"$remote_repos"
+      if [ -z "$missing" ]; then
+        ok "every GitHub consumer has a clone under $REPOS_DIR"
+      else
+        red "GitHub consumer(s) with no clone under $REPOS_DIR, so no sync, roll or audit ever reaches them:$missing"
+      fi
+    fi
+  fi
 
   hdr "remote: branches normalized (single main, no stale update/*)"
   for repo in "${CONSUMERS[@]}"; do
