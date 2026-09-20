@@ -26,4 +26,4 @@ This repository ships the CI, update and maintenance workflows and the updater e
 
 - The shipped workflows (`ci.yml`, `update.yml`, `maintenance.yml`) and `update.sh`: injection through upstream-controlled values, unpinned actions, token scope
 - The flake module and library every consumer evaluates
-- The fleet scripts run with the owner's GitHub credentials
+- The fleet scripts, which run with the maintainer's GitHub credentials

@@ -208,10 +208,10 @@ if [ "$DO_LOCAL" -eq 1 ]; then
       red "$repo: has .github/dependabot.yml (consumers carry none; actions are managed centrally in the standard)"
     fi
     # A custom updater keeps its own scripts/update.sh, so the canonical's
-    # full check suite (v2.31.0) never reached it: four of them still gated a
-    # bump on `--no-build`, which evaluates every build-time check and runs none.
-    # An eval-only pass beside the full suite (lmstudio evaluates both
-    # architectures first) is fine; what is refused is a script whose only
+    # full check suite (v2.31.0) never reached it; `--no-build` evaluates every
+    # build-time check and runs none. An eval-only pass beside the full suite
+    # (one that evaluates every architecture first) is fine; what is refused
+    # is a script whose only
     # flake check is `--no-build`.
     if [ "$utype" = "custom" ] && [ -f "$dir/scripts/update.sh" ]; then
       checks=$(grep -E 'nix flake check' "$dir/scripts/update.sh" || true)
@@ -596,15 +596,15 @@ if [ "$DO_REMOTE" -eq 1 ]; then
 
   # The fleet is every repo on GitHub carrying .github/update.json, not the
   # set that happens to be cloned here: sync, roll and this audit all walk the
-  # clones, so a consumer nobody cloned (durdraw-nix, five tags behind) was
-  # invisible to every one of them. A full sweep must see the whole fleet; a
-  # named-target run is scoped by the caller and skips this.
+  # clones, so a consumer with no clone is reached by none of them. A full
+  # sweep must see the whole fleet; a named-target run is scoped by the caller
+  # and skips this.
   if [ "${#TARGETS[@]}" -eq 0 ]; then
     hdr "remote: every GitHub consumer is cloned here (fleet discovery)"
     if ! remote_repos="$(gh_try repo list "$OWNER" --limit 200 --json name,isArchived --jq '.[] | select(.isArchived | not) | .name')"; then
-      red "could not list the owner's repositories (gh error: $(gherr))"
+      red "could not list the repositories of $OWNER (gh error: $(gherr))"
     elif [ -z "$remote_repos" ]; then
-      red "the owner's repository list came back empty (unexpected)"
+      red "the repository list of $OWNER came back empty (unexpected)"
     else
       missing=""
       while IFS= read -r name; do

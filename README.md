@@ -286,10 +286,10 @@ The one place a built binary does run on a runner is the Update verification
 host: it has no GPU, no display, no KVM, and Ubuntu's AppArmor refuses the
 unprivileged user namespace a `buildFHSEnv` wrapper's `bwrap` needs, so
 `update.yml` opens that knob before the update runs and proves it with
-`unshare`. A verification you add to an update path is proven on a runner
-(dispatch the Update workflow once) before the change is called done; passing
-on the M1 and ryzen said nothing about the runner, and lmstudio's smoke test
-sat green for two weeks until upstream moved.
+`unshare`. A verification added to an update path is proven on a runner
+(dispatch the Update workflow once) before the change is called done: a pass
+on a development host says nothing about the runner's kernel, sandboxing or
+devices, and the first live run is otherwise the first test.
 
 ## Architecture and platforms
 
@@ -957,7 +957,7 @@ tool. Named targets are now validated before any repo is touched and refused
 with exit 2. Consumers gain nothing from this tag: `fleet-roll.sh` is not a
 synced file, so v2.32.1 is byte-identical to v2.32.0 from a consumer's side.
 
-v2.33.0 (2026-09) closed three fail-opens found on one maintenance day. A
+v2.33.0 (2026-09) closed three fail-opens. A
 custom `update.sh` reported a 404 as exit 2 for two months while its Update run
 stayed green (eden-nix#13: upstream had moved its dependency manifest), so
 `update.yml` now carries a streak of consecutive exit-2 runs in the Actions
@@ -995,25 +995,27 @@ order wrong and every shell proves it at eval time; v2.37.1 let a shell with no
 hook install pass that check. v2.38.0 refetched the version base for a
 non-GitHub upstream too; v2.38.1 restored an executable bit.
 
-v2.39.0 (2026-09) closed what one maintenance day found. `update.yml` opens
-the unprivileged user namespace a `buildFHSEnv` wrapper needs on Ubuntu's
-runners and proves it, after lmstudio's smoke test, added two weeks earlier and
-proven only on dev hosts, failed on its first live run. The standard's own
-maintenance workflow had been an older copy of the shipped one for seven weeks
-(the separate heal job v2.17.0 removed), so `std-own-copies-match-shipped` now
-refuses an own copy that differs from a canonical. The README omitted seven
-checks, three helpers and five releases, so `std-readme-names-every-surface`
-refuses a README that does not name every check, helper and synced file, or
-whose example pin is not the newest release. `sync.sh` and `base.nix` read one
-`synced-files.json` instead of restating the map. durdraw-nix, a live consumer,
-sat five tags behind because the fleet was defined as the clones on one
-machine: `fleet-audit` now reds a GitHub consumer with no clone. Four custom
-updaters still gated a bump on `--no-build`, the fail-open v2.31.0 closed for
-the canonical; the audit reds it and the shipped recovery text stops
-recommending it. The two `| grep -q` pipelines in the shipped workflows were
-rewritten and `check-shell-pipelines` scans workflow files. The three actions
-now run on whatever `ubuntu-latest` is, with the knobs guarded on existence, so
-the move to 26.04 needs no edit.
+v2.39.0 (2026-09) closed a set of fail-opens. `update.yml` opens the
+unprivileged user namespace a `buildFHSEnv` wrapper needs on Ubuntu's runners
+and proves it, after a custom updater's smoke test, proven only on development
+hosts, failed on its first live run. The standard's own maintenance workflow
+had become an older copy of the shipped one (it still carried the separate heal
+job v2.17.0 removed), so `std-own-copies-match-shipped` refuses an own copy that
+differs from a canonical. The README omitted checks, helpers and releases, so
+`std-readme-names-every-surface` refuses a README that does not name every
+check, helper and synced file, or whose example pin is not the newest release.
+`sync.sh` and `base.nix` read one `synced-files.json` instead of restating the
+map. A consumer that exists on GitHub but is not cloned where the fleet tools
+run is reached by no sync, roll or audit, and one had fallen five tags behind
+that way: `fleet-audit` reds a GitHub consumer with no clone. Custom updaters
+still gated a bump on `--no-build`, the fail-open v2.31.0 closed for the
+canonical; the audit reds it and the shipped recovery text stops recommending
+it. The `| grep -q` pipelines in the shipped workflows were rewritten and
+`check-shell-pipelines` scans workflow files. `host-hooks.nix` builds a
+consumer's hook set for the host it is entered on, so a consumer whose flake
+declares no output for that host can still run its gate before a commit. The
+three actions run on whatever `ubuntu-latest` is, with the knobs guarded on
+existence, so the move to 26.04 needs no edit.
 
 ## License
 

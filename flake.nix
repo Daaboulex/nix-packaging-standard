@@ -318,11 +318,10 @@
                 fi
               '';
 
-          # This repo RUNS what it SHIPS: its own maintenance workflow must be
+          # This repo runs what it ships: its own maintenance workflow must be
           # the canonical (GitHub reads no symlinked workflow, so it is a copy),
           # and the two scripts that workflow calls are symlinks to the
-          # canonicals. The workflow copy drifted for seven weeks unnoticed: it
-          # still probed fixes in a separate job, the churn loop v2.17.0 removed.
+          # canonicals. Nothing else compares the copy with the shipped file.
           checks.std-own-copies-match-shipped =
             pkgs.runCommand "std-own-copies-match-shipped" { src = ./.; }
               ''
