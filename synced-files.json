@@ -1,0 +1,11 @@
+{
+  ".github/workflows/ci.yml": "ci.yml",
+  ".github/workflows/maintenance.yml": "maintenance.yml",
+  ".github/workflows/update.yml": "update.yml",
+  "scripts/update.sh": "update.sh",
+  "scripts/heal-overlays.sh": "heal-overlays.sh",
+  "scripts/classify-build-failure.sh": "classify-build-failure.sh",
+  "scripts/update-readme-options.sh": "update-readme-options.sh",
+  ".envrc": ".envrc",
+  ".editorconfig": ".editorconfig"
+}
