@@ -127,6 +127,7 @@ restore() {
 # repo it was mid-edit dirty, and the NEXT roll refuses that repo with "working
 # tree is not clean". That stranding has cost two runs, so it is trapped here.
 IN_FLIGHT=""
+# shellcheck disable=SC2329
 on_abort() {
   local rc=$?
   if [ -n "$IN_FLIGHT" ] && [ -n "$(git -C "$IN_FLIGHT" status --porcelain 2>/dev/null)" ]; then
@@ -151,12 +152,23 @@ hook_live() {
   [ -n "$p" ] && [ -e "$p" ]
 }
 
+# A consumer that declares no output for this host has no dev shell here; its
+# hook set is then built for the host from the standard it pins.
 ensure_hook() {
   local dir="$1"
   hook_live "$dir" && return 0
   printf '  pre-commit hook missing or dangling; reinstalling from the devshell\n'
-  (cd "$dir" && nix develop --command true) >/dev/null 2>&1 || true
+  (cd "$dir" && nix develop --command true) >/dev/null 2>&1 ||
+    (cd "$dir" && nix develop --impure --expr \
+      "import $STD/flake-modules/host-hooks.nix { consumer = $dir; system = builtins.currentSystem; }" \
+      --command true) >/dev/null 2>&1 || true
   hook_live "$dir"
+}
+
+# A flake with no checks for this host cannot be built here; it is verified by
+# evaluating every system it declares, and its build is CI's on push.
+foreign_flake() {
+  ! (cd "$1" && nix eval --raw ".#checks.$2" --apply 'x: "declared"') >/dev/null 2>&1
 }
 
 # A NAMED target that is not a consumer is an error, not a skip: the per-repo
@@ -274,8 +286,19 @@ for repo in "${TARGETS[@]}"; do
 
   note "changed: $(git -C "$dir" diff --name-only | tr '\n' ' ')"
 
-  if [ "$SKIP_BUILD" -eq 0 ]; then
-    sys=$(nix eval --impure --raw --expr 'builtins.currentSystem' 2>/dev/null)
+  sys=$(nix eval --impure --raw --expr 'builtins.currentSystem' 2>/dev/null)
+  FOREIGN=0
+  if [ "$SKIP_BUILD" -eq 0 ] && foreign_flake "$dir" "$sys"; then
+    FOREIGN=1
+    evallog="$LOGDIR/$repo.eval.log"
+    if (cd "$dir" && nix flake check --no-eval-cache --no-build --all-systems) >"$evallog" 2>&1; then
+      note "verify: no output for $sys here; every declared system evaluates, the build is CI's on push"
+    else
+      fail_repo "$repo" "eval over every system failed: $(tail -1 "$evallog")  log: $evallog"
+      restore "$dir"
+      continue
+    fi
+  elif [ "$SKIP_BUILD" -eq 0 ]; then
     buildlog="$LOGDIR/$repo.log"
     # -j is nix-fast-build's own worker count, NOT nix's max-jobs, but it
     # DEFAULTS to it: on a max-jobs=0 host it starts zero build workers and
@@ -341,7 +364,11 @@ for repo in "${TARGETS[@]}"; do
     {
       printf 'chore(std): adopt nix-packaging-standard %s\n\n' "$TAG"
       cat "$NOTES"
-      printf '\nTest: the canonical build, run locally before this push\n'
+      if [ "$FOREIGN" -eq 1 ]; then
+        printf '\nTest: nix flake check --no-eval-cache --no-build --all-systems on a host with no output for this flake; the build is CI'"'"'s on push\n'
+      else
+        printf '\nTest: the canonical build, run locally before this push\n'
+      fi
     } >"$msg"
     if ! git -C "$dir" commit --quiet -a -F "$msg"; then
       rm -f "$msg"

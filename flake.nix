@@ -318,6 +318,24 @@
                 fi
               '';
 
+          # A consumer with no output for the rolling host cannot be built there.
+          # The roll must still verify it (every declared system evaluates) and
+          # still run its gate (the hook set built for the host), and never
+          # push it silently unverified.
+          checks.std-fleet-roll-verifies-a-foreign-flake =
+            pkgs.runCommand "std-fleet-roll-verifies-a-foreign-flake" { roll = ./scripts/fleet-roll.sh; }
+              ''
+                grep -q 'foreign_flake "\$dir" "\$sys"' "$roll" \
+                  || { echo "fleet-roll never asks whether the host has an output for the flake, so a foreign flake either fails the roll or, worse, is pushed on a skipped build"; exit 1; }
+                grep -q -- '--no-build --all-systems' "$roll" \
+                  || { echo "a foreign flake is not verified by evaluating every system it declares"; exit 1; }
+                grep -q 'host-hooks.nix' "$roll" \
+                  || { echo "ensure_hook has no fallback for a flake with no dev shell on this host, so the commit would run no gate"; exit 1; }
+                grep -q 'the build is CI' "$roll" \
+                  || { echo "the adoption commit of a foreign flake does not say that the build is left to CI"; exit 1; }
+                touch "$out"
+              '';
+
           # This repo runs what it ships: its own maintenance workflow must be
           # the canonical (GitHub reads no symlinked workflow, so it is a copy),
           # and the two scripts that workflow calls are symlinks to the
