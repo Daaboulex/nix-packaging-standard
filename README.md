@@ -422,7 +422,12 @@ nix-direnv capture those exports for every in-project entry point -- `nix
 develop`, `nix run`, `nix shell`, and raw tool calls. Build outputs (`result*`),
 `.direnv/`, `.devshell/`, and ad-hoc tool litter (coverage, `dist/`, `target/`,
 `node_modules/`, venvs) stay untracked via the baseline `.gitignore`; the
-`std-devstate` check fails a repo whose core entries went missing.
+`std-devstate` check fails a repo whose core entries went missing. The proof
+behind the rule, `std-home-proof`, runs at push time: it enters the dev shell
+in a fresh clone with an empty home and fails on anything written there; on a
+host the flake declares no dev shell for, it enters the hook set
+`host-hooks.nix` builds for that host instead, the shell that host actually
+uses.
 
 ## Packaged apps keep their state out of the home root
 

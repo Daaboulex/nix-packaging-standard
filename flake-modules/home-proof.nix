@@ -21,20 +21,28 @@ pkgs.writeShellApplication {
         flake="$probe/Portable-Builder''${ref#../Portable-Builder}"
         ;;
     esac
+    system=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+    if nix eval --raw "$flake#devShells.$system.default.drvPath" >/dev/null 2>&1; then
+      shell=("$flake")
+      entered="the dev shell"
+    else
+      shell=(--impure --expr "import ${./host-hooks.nix} { consumer = $probe/repo; system = builtins.currentSystem; }")
+      entered="the hook set built for $system, since the flake declares no dev shell for it"
+    fi
     (
       cd "$probe/repo" && env -i HOME="$probe/home" USER="''${USER:-user}" LOGNAME="''${USER:-user}" PATH="$PATH" TERM=dumb \
         NIX_SSL_CERT_FILE="''${NIX_SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}" \
         SSL_CERT_FILE="''${SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}" \
-        nix develop "$flake" -c true
+        nix develop "''${shell[@]}" -c true
     )
     written=$(cd "$probe/home" && find . -mindepth 1 \
       -not -path './.cache/nix*' -not -path './.local/state/nix*' -not -path './.local/share/nix*' -not -path './.config/nix*' \
       -not -path './.cache' -not -path './.local' -not -path './.local/state' -not -path './.local/share' -not -path './.config' | sort)
     if [ -n "$written" ]; then
-      echo "std-home-proof: entered in a fresh clone with an empty HOME, the dev shell wrote there; pin each tool into .devshell:"
+      echo "std-home-proof: entered $entered in a fresh clone with an empty HOME, and it wrote there; pin each tool into .devshell:"
       echo "$written"
       exit 1
     fi
-    echo "std-home-proof: entered in a fresh clone with an empty HOME, the dev shell wrote nothing there"
+    echo "std-home-proof: entered $entered in a fresh clone with an empty HOME, and it wrote nothing there"
   '';
 }
