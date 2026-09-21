@@ -24,7 +24,7 @@ Canonical source of the shared tooling used by every `*-nix` packaging repo.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.39.0"; # pin the newest tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.39.1"; # pin the newest tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -1021,6 +1021,12 @@ consumer's hook set for the host it is entered on, so a consumer whose flake
 declares no output for that host can still run its gate before a commit. The
 three actions run on whatever `ubuntu-latest` is, with the knobs guarded on
 existence, so the move to 26.04 needs no edit.
+
+v2.39.1 (2026-09) made the roll and the audit treat a hook whose config link
+is gone as dead: a collection can take the generated `.pre-commit-config.yaml`
+while the hook binary survives, and the adoption commit then fails on a missing
+config after a green build. Consumers gain nothing from this tag: no shipped
+file changed, so v2.39.1 is byte-identical to v2.39.0 from a consumer's side.
 
 ## License
 

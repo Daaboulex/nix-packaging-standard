@@ -169,6 +169,11 @@
                   exit 1
                 fi
 
+                if ! grep -q 'e "\$1/.pre-commit-config.yaml"' "$roll"; then
+                  echo "the hook check does not test that the config link still resolves; the hook binary can survive a collection that took the config, and the commit then fails on a missing config"
+                  exit 1
+                fi
+
                 if ! grep -q 'hook_absent' "$audit"; then
                   echo "fleet-audit does not report a clone with NO pre-commit hook, so the silent half of this failure never announces itself"
                   exit 1

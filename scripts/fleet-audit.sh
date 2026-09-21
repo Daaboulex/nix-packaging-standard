@@ -143,13 +143,13 @@ if [ "$DO_LOCAL" -eq 1 ]; then
       continue
     fi
     hp=$(grep -oE '/nix/store/[a-z0-9]+-[^/]*/bin/pre-commit' "$hook" 2>/dev/null | head -1)
-    if [ -z "$hp" ] || [ ! -e "$hp" ]; then hook_dead+=("$repo"); fi
+    if [ -z "$hp" ] || [ ! -e "$hp" ] || [ ! -e "$REPOS_DIR/$repo/.pre-commit-config.yaml" ]; then hook_dead+=("$repo"); fi
   done
   if [ "${#hook_absent[@]}" -eq 0 ] && [ "${#hook_dead[@]}" -eq 0 ]; then
-    ok "every clone has a pre-commit hook whose store path still exists"
+    ok "every clone has a pre-commit hook whose store path and config link still exist"
   else
     [ "${#hook_absent[@]}" -gt 0 ] && red "NO pre-commit hook (commits bypass the gate silently): ${hook_absent[*]}"
-    [ "${#hook_dead[@]}" -gt 0 ] && red "pre-commit hook points at a garbage-collected store path (commits will fail): ${hook_dead[*]}"
+    [ "${#hook_dead[@]}" -gt 0 ] && red "pre-commit hook or its config link points at a garbage-collected store path (commits will fail): ${hook_dead[*]}"
     info "repair: run 'nix develop --command true' in the repo, or 'direnv allow' once to gcroot the devshell"
   fi
 

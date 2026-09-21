@@ -149,7 +149,7 @@ hook_live() {
   local hook="$1/.git/hooks/pre-commit" p
   [ -f "$hook" ] || return 1
   p=$(grep -oE '/nix/store/[a-z0-9]+-[^/]*/bin/pre-commit' "$hook" 2>/dev/null | head -1)
-  [ -n "$p" ] && [ -e "$p" ]
+  [ -n "$p" ] && [ -e "$p" ] && [ -e "$1/.pre-commit-config.yaml" ]
 }
 
 # A consumer that declares no output for this host has no dev shell here; its
