@@ -152,17 +152,24 @@ hook_live() {
   [ -n "$p" ] && [ -e "$p" ] && [ -e "$1/.pre-commit-config.yaml" ]
 }
 
-# A consumer that declares no output for this host has no dev shell here; its
-# hook set is then built for the host from the standard it pins.
-ensure_hook() {
+# The hook set is a function of the standard the consumer pins, so a pin bump
+# installs the hooks of the tag being adopted. A consumer that declares no
+# output for this host has no dev shell here; its hook set is then built for
+# the host from that same pinned standard.
+refresh_hook() {
   local dir="$1"
-  hook_live "$dir" && return 0
-  printf '  pre-commit hook missing or dangling; reinstalling from the devshell\n'
   (cd "$dir" && nix develop --command true) >/dev/null 2>&1 ||
     (cd "$dir" && nix develop --impure --expr \
       "import $STD/flake-modules/host-hooks.nix { consumer = $dir; system = builtins.currentSystem; }" \
       --command true) >/dev/null 2>&1 || true
   hook_live "$dir"
+}
+
+ensure_hook() {
+  local dir="$1"
+  hook_live "$dir" && return 0
+  printf '  pre-commit hook missing or dangling; reinstalling from the devshell\n'
+  refresh_hook "$dir"
 }
 
 # A flake with no checks for this host cannot be built here; it is verified by
@@ -280,6 +287,12 @@ for repo in "${TARGETS[@]}"; do
 
   if ! PKG_REPOS_DIR="$REPOS_DIR" bash "$STD/sync.sh" "$repo" >>"$steplog" 2>&1; then
     fail_repo "$repo" "sync.sh failed: $(tail -1 "$steplog")  log: $steplog"
+    restore "$dir"
+    continue
+  fi
+
+  if ! refresh_hook "$dir"; then
+    fail_repo "$repo" "the hook set of $TAG could not be installed, so the commit would run the old tag's gate or none"
     restore "$dir"
     continue
   fi

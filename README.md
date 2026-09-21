@@ -24,7 +24,7 @@ Canonical source of the shared tooling used by every `*-nix` packaging repo.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.39.1"; # pin the newest tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.39.2"; # pin the newest tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -1027,6 +1027,13 @@ is gone as dead: a collection can take the generated `.pre-commit-config.yaml`
 while the hook binary survives, and the adoption commit then fails on a missing
 config after a green build. Consumers gain nothing from this tag: no shipped
 file changed, so v2.39.1 is byte-identical to v2.39.0 from a consumer's side.
+
+v2.39.2 (2026-09) made the roll install the hook set of the tag it adopts.
+The hooks are a function of the pinned standard, but the roll regenerated them
+only when they were dead, so the adoption commit and push ran the old tag's
+gate; the old push-time proof needs a native dev shell and refused the push of
+every flake the host could not build. Consumers gain nothing from this tag
+either: it is byte-identical to v2.39.0 from a consumer's side.
 
 ## License
 

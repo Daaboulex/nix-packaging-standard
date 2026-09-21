@@ -169,6 +169,11 @@
                   exit 1
                 fi
 
+                if ! grep -q '^  if ! refresh_hook "\$dir"; then' "$roll"; then
+                  echo "the roll does not regenerate the hook set after the pin bump, so the adoption commit and push run the OLD tag's gate: a proof from the old tag that needs a native dev shell refuses the push of a flake the host cannot build"
+                  exit 1
+                fi
+
                 if ! grep -q 'e "\$1/.pre-commit-config.yaml"' "$roll"; then
                   echo "the hook check does not test that the config link still resolves; the hook binary can survive a collection that took the config, and the commit then fails on a missing config"
                   exit 1
