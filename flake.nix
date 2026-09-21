@@ -169,6 +169,11 @@
                   exit 1
                 fi
 
+                if ! grep -q 'REMOTELESS=1' "$roll"; then
+                  echo "fleet-roll has no path for a consumer with no remote: it fails at the fetch, so an unpushed WIP can never adopt a tag and sits on an old one while the audit reds its drift"
+                  exit 1
+                fi
+
                 if ! grep -q '^  if ! refresh_hook "\$dir"; then' "$roll"; then
                   echo "the roll does not regenerate the hook set after the pin bump, so the adoption commit and push run the OLD tag's gate: a proof from the old tag that needs a native dev shell refuses the push of a flake the host cannot build"
                   exit 1

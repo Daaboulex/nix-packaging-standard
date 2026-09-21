@@ -24,7 +24,7 @@ Canonical source of the shared tooling used by every `*-nix` packaging repo.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.39.2"; # pin the newest tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.39.3"; # pin the newest tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -1034,6 +1034,13 @@ only when they were dead, so the adoption commit and push ran the old tag's
 gate; the old push-time proof needs a native dev shell and refused the push of
 every flake the host could not build. Consumers gain nothing from this tag
 either: it is byte-identical to v2.39.0 from a consumer's side.
+
+v2.39.3 (2026-09) let the roll adopt a tag in a consumer with no git remote.
+It failed such a repo at the fetch, so an unpushed WIP could never be rolled
+and sat on an old tag while the audit red its drift, with nothing able to
+clear it; the roll now skips the fetch and the push for it and commits the
+adoption locally, which is how fleet-audit already treats a remoteless repo.
+Byte-identical to v2.39.0 from a consumer's side.
 
 ## License
 

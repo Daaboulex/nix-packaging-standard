@@ -21,7 +21,9 @@ fleet-roll - adopt a new nix-packaging-standard tag across every consumer repo.
   repo...        restrict to these repos (default: every consumer).
 
 Scope: every directory under PKG_REPOS_DIR holding a .github/update.json.
-A repo already pinned to <tag> is reported and left alone.
+A repo already pinned to <tag> is reported and left alone. A repo with no git
+remote (an unpushed WIP) is rolled locally and pushed nowhere, the way
+fleet-audit audits such a repo locally and skips it remotely.
 
 Exit: 0 = every targeted repo rolled or dry-ran clean; 1 = at least one repo
 failed; 2 = usage or environment error. Fails closed: a dirty repo, a repo out
@@ -232,27 +234,37 @@ for repo in "${TARGETS[@]}"; do
     continue
   fi
   steplog="$LOGDIR/$repo.steps.log"
-  if ! git -C "$dir" fetch --quiet origin >"$steplog" 2>&1; then
-    fail_repo "$repo" "cannot reach origin: $(tail -1 "$steplog")  log: $steplog"
-    continue
-  fi
-  counts=$(git -C "$dir" rev-list --left-right --count "origin/main...HEAD" 2>/dev/null) || counts=""
-  behind=$(awk '{print $1}' <<<"$counts")
-  ahead=$(awk '{print $2}' <<<"$counts")
-  if [ "${behind:-1}" != 0 ] && [ "${ahead:-1}" = 0 ] && [ "$SYNC" -eq 1 ]; then
-    if git -C "$dir" merge --ff-only --quiet origin/main 2>/dev/null; then
-      printf 'sync  %s: fast-forwarded %s commit(s)\n' "$repo" "$behind"
-      counts=$(git -C "$dir" rev-list --left-right --count "origin/main...HEAD" 2>/dev/null) || counts=""
-      behind=$(awk '{print $1}' <<<"$counts")
-      ahead=$(awk '{print $2}' <<<"$counts")
-    else
-      fail_repo "$repo" "fast-forward refused by git despite a clean tree behind origin"
+  # An unpushed WIP has no remote to sync with or push to, and fleet-audit
+  # already audits such a repo locally and skips it remotely. Rolled the same
+  # way: no fetch, no push, the adoption commit lands locally and the repo is
+  # reported as carrying it, so a remoteless consumer cannot sit on an old tag
+  # unseen.
+  REMOTELESS=0
+  if ! git -C "$dir" remote get-url origin >/dev/null 2>&1; then
+    REMOTELESS=1
+  else
+    if ! git -C "$dir" fetch --quiet origin >"$steplog" 2>&1; then
+      fail_repo "$repo" "cannot reach origin: $(tail -1 "$steplog")  log: $steplog"
       continue
     fi
-  fi
-  if [ "${behind:-1}" != 0 ] || [ "${ahead:-1}" != 0 ]; then
-    fail_repo "$repo" "out of sync with origin/main (behind=${behind:-?} ahead=${ahead:-?}); --sync fast-forwards a clean clone that is only behind"
-    continue
+    counts=$(git -C "$dir" rev-list --left-right --count "origin/main...HEAD" 2>/dev/null) || counts=""
+    behind=$(awk '{print $1}' <<<"$counts")
+    ahead=$(awk '{print $2}' <<<"$counts")
+    if [ "${behind:-1}" != 0 ] && [ "${ahead:-1}" = 0 ] && [ "$SYNC" -eq 1 ]; then
+      if git -C "$dir" merge --ff-only --quiet origin/main 2>/dev/null; then
+        printf 'sync  %s: fast-forwarded %s commit(s)\n' "$repo" "$behind"
+        counts=$(git -C "$dir" rev-list --left-right --count "origin/main...HEAD" 2>/dev/null) || counts=""
+        behind=$(awk '{print $1}' <<<"$counts")
+        ahead=$(awk '{print $2}' <<<"$counts")
+      else
+        fail_repo "$repo" "fast-forward refused by git despite a clean tree behind origin"
+        continue
+      fi
+    fi
+    if [ "${behind:-1}" != 0 ] || [ "${ahead:-1}" != 0 ]; then
+      fail_repo "$repo" "out of sync with origin/main (behind=${behind:-?} ahead=${ahead:-?}); --sync fast-forwards a clean clone that is only behind"
+      continue
+    fi
   fi
 
   current=$(grep -oE 'nix-packaging-standard\?ref=[^"]+' "$dir/flake.nix" 2>/dev/null | head -1 | cut -d= -f2)
@@ -390,6 +402,11 @@ for repo in "${TARGETS[@]}"; do
       continue
     fi
     rm -f "$msg"
+    if [ "$REMOTELESS" -eq 1 ]; then
+      note "committed: $(git -C "$dir" log -1 --format=%h) (no remote; nothing to push)"
+      rolled=$((rolled + 1))
+      continue
+    fi
     perr=$(mktemp)
     git -C "$dir" push origin main 2>&1 | tee "$perr"
     prc=${PIPESTATUS[0]}
