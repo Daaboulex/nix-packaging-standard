@@ -24,7 +24,7 @@ Canonical source of the shared tooling used by every `*-nix` packaging repo.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.39.3"; # pin the newest tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.39.4"; # pin the newest tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -1041,6 +1041,16 @@ and sat on an old tag while the audit red its drift, with nothing able to
 clear it; the roll now skips the fetch and the push for it and commits the
 adoption locally, which is how fleet-audit already treats a remoteless repo.
 Byte-identical to v2.39.0 from a consumer's side.
+
+v2.39.3's own CI was red, and so were the two tags before it, because the step
+that lints every tracked script called a bare `shellcheck`: the runner image's
+older build, which reports findings the pinned one does not, so the step failed
+on code that is clean locally and the log gave no reason. v2.39.4 takes every
+verdict-bearing tool in this repo's own CI from this flake's lock, fixes the
+two findings so any version is clean, and adds
+`std-own-ci-pins-its-tools`, which refuses a step that names such a tool
+without the pin on the same line. Byte-identical to v2.39.0 from a consumer's
+side.
 
 ## License
 

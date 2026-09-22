@@ -379,6 +379,48 @@
                 touch "$out"
               '';
 
+          # A verdict this repo's own CI reads must come from this flake's lock,
+          # never from whatever the runner image happens to ship. A bare
+          # `shellcheck` ran the image's older build and failed on findings the
+          # pinned one does not report, so the step was red on code that is
+          # clean locally and nothing in the log said why.
+          checks.std-own-ci-pins-its-tools =
+            pkgs.runCommand "std-own-ci-pins-its-tools" { own = ./.github/workflows; }
+              ''
+                # Every tool whose OUTPUT is a verdict. `bash script.sh` runs
+                # one of our own scripts and is not one; `bash -n` judges it,
+                # so it is.
+                tools="shellcheck actionlint check-jsonschema pipx nixfmt shfmt statix deadnix typos rumdl"
+                bad=0
+                report() {
+                  echo "  FAIL a step runs '$1' from the runner image, not from this flake:"
+                  echo "       $2"
+                  bad=1
+                }
+                # Any line that names one of them must carry the pin on that
+                # same line. A step name and a comment name a tool without
+                # running it; nothing else does.
+                judge() { # judge <label> <ere>
+                  local hits hit
+                  hits=$(grep -rhE -- "$2" "$own"/*.yml | grep -vE '^ *#|name:' || true)
+                  while IFS= read -r hit; do
+                    [ -n "$hit" ] || continue
+                    case "$hit" in
+                    *"nix run --inputs-from ."* | *"nix shell --inputs-from ."* | *"nix develop"*) continue ;;
+                    esac
+                    report "$1" "$hit"
+                  done <<< "$hits"
+                }
+                for t in $tools; do judge "$t" "\\b$t\\b"; done
+                judge "bash -n" '\bbash +-n\b'
+                [ "$bad" = 0 ] || {
+                  echo "put it behind 'nix run --inputs-from . nixpkgs#<tool> --' so the local run and the runner read the same version"
+                  exit 1
+                }
+                echo "ok: every verdict-bearing tool in this repo's own CI comes from its lock"
+                touch "$out"
+              '';
+
           # The README is the contract a consumer reads. Every check base
           # provides, every lib helper and every synced file must be named in
           # it, and the pin in the consumption example must be the newest

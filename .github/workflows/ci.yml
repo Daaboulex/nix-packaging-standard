@@ -36,16 +36,20 @@ jobs:
 
       - name: Shell syntax (bash -n)
         run: |
-          git ls-files '*.sh' | while IFS= read -r f; do bash -n "$f"; done
+          git ls-files -z '*.sh' | xargs -0 -n1 nix run --inputs-from . nixpkgs#bash -- -n
 
+      # Every tool comes from this flake's own lock, never from the runner
+      # image: a bare `shellcheck` ran the image's older build, which reports
+      # findings the pinned one does not, so this step failed on code that is
+      # clean locally and nothing said why.
       - name: ShellCheck
-        run: git ls-files -z '*.sh' | xargs -0 shellcheck
+        run: git ls-files -z '*.sh' | xargs -0 nix run --inputs-from . nixpkgs#shellcheck --
 
       - name: Schema is a valid JSON Schema
-        run: pipx run check-jsonschema --check-metaschema update.schema.json
+        run: nix run --inputs-from . nixpkgs#check-jsonschema -- --check-metaschema update.schema.json
 
       - name: Every supported config pattern satisfies the schema
-        run: pipx run check-jsonschema --schemafile update.schema.json tests/configs/*.json
+        run: nix run --inputs-from . nixpkgs#check-jsonschema -- --schemafile update.schema.json tests/configs/*.json
 
       - name: update.sh behavioral regression tests
         run: bash tests/run.sh

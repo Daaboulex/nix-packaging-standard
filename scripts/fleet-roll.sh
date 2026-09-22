@@ -86,10 +86,10 @@ if [ "$EXECUTE" -eq 1 ] && [ "$SKIP_BUILD" -eq 1 ]; then
   exit 2
 fi
 if [ "$EXECUTE" -eq 1 ]; then
-  [ -n "$NOTES" ] && [ -f "$NOTES" ] || {
+  if [ -z "$NOTES" ] || [ ! -f "$NOTES" ]; then
     echo "fleet-roll: --execute requires --notes <file> holding the commit body" >&2
     exit 2
-  }
+  fi
 fi
 git -C "$STD" rev-parse -q --verify "refs/tags/$TAG" >/dev/null || {
   echo "fleet-roll: tag '$TAG' does not exist in $STD" >&2
@@ -129,7 +129,7 @@ restore() {
 # repo it was mid-edit dirty, and the NEXT roll refuses that repo with "working
 # tree is not clean". That stranding has cost two runs, so it is trapped here.
 IN_FLIGHT=""
-# shellcheck disable=SC2329
+# shellcheck disable=SC2329,SC2317
 on_abort() {
   local rc=$?
   if [ -n "$IN_FLIGHT" ] && [ -n "$(git -C "$IN_FLIGHT" status --porcelain 2>/dev/null)" ]; then
