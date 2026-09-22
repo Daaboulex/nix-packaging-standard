@@ -24,7 +24,7 @@ Canonical source of the shared tooling used by every `*-nix` packaging repo.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.39.4"; # pin the newest tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.39.5"; # pin the newest tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -1042,15 +1042,19 @@ clear it; the roll now skips the fetch and the push for it and commits the
 adoption locally, which is how fleet-audit already treats a remoteless repo.
 Byte-identical to v2.39.0 from a consumer's side.
 
-v2.39.3's own CI was red, and so were the two tags before it, because the step
-that lints every tracked script called a bare `shellcheck`: the runner image's
-older build, which reports findings the pinned one does not, so the step failed
-on code that is clean locally and the log gave no reason. v2.39.4 takes every
-verdict-bearing tool in this repo's own CI from this flake's lock, fixes the
-two findings so any version is clean, and adds
-`std-own-ci-pins-its-tools`, which refuses a step that names such a tool
-without the pin on the same line. Byte-identical to v2.39.0 from a consumer's
-side.
+v2.39.4 (2026-09) took every verdict in this repo's own CI from this flake's
+lock. The step that lints every tracked script called a bare `shellcheck`, the
+runner image's older build, which reports findings the pinned one does not, so
+this repo's CI was red on three consecutive tags for code that is clean
+locally and the log gave no reason. The two findings are also fixed at the
+source so any version is clean, and `std-own-ci-pins-its-tools` refuses a step
+that names such a tool without the pin on the same line.
+
+v2.39.5 (2026-09) repaired the README gate that v2.39.4 tripped: a History
+entry is recognised by the version at the start of its line, and v2.39.4's did
+not begin that way, so the gate read the newest entry as the tag before it and
+called the example pin wrong. The entry above is the shape the gate reads.
+Every tag from v2.39.1 on is byte-identical to v2.39.0 from a consumer's side.
 
 ## License
 
