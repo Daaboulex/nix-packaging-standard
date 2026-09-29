@@ -7,11 +7,11 @@
 # SIGPIPE, and under `set -o pipefail` the whole pipeline reports failure. A
 # successful match therefore reads as a failed test, so the branch taken is the
 # wrong one. writeShellApplication always sets pipefail, so every shell string
-# in a Nix file is in scope too, and GitHub runs every workflow step under
-# `bash -eo pipefail`, so workflow files are in scope as well.
+# in a Nix file is in scope too, and a workflow step with `shell: bash` or its
+# own `set -o pipefail` runs under pipefail, so workflow files are in scope.
 #
 # The fix is to capture first and match against a here-string:
-#     out=$(producer 2>/dev/null || true)
+#     out=$(producer)
 #     if grep -q PATTERN <<<"$out"; then
 #
 # A deliberate exception is marked on the same line with: pipefail-safe
@@ -20,7 +20,12 @@ set -euo pipefail
 errors=0
 
 scan() {
-  local f=$1
+  local f=$1 hits rc=0
+  hits=$(grep -nE '\|[[:space:]]*grep[[:space:]]+-[a-zA-Z]*q' "$f") || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    echo "$f: grep could not read the file (exit $rc)" >&2
+    exit 2
+  fi
   # shellcheck disable=SC2016
   while IFS=: read -r line text; do
     [ -n "${line:-}" ] || continue
@@ -31,10 +36,10 @@ scan() {
     echo "$f:$line: pipeline ends in 'grep -q', whose early exit SIGPIPEs the producer under pipefail"
     echo "    $(printf '%s' "$text" | sed 's/^[[:space:]]*//')"
     errors=$((errors + 1))
-  done < <(grep -nE '\|[[:space:]]*grep[[:space:]]+-[a-zA-Z]*q' "$f" 2>/dev/null || true)
+  done <<<"$hits"
 }
 
-files=$(git ls-files '*.sh' '*.nix' '*.yml' '*.yaml' 2>/dev/null || true)
+files=$(git ls-files '*.sh' '*.nix' '*.yml' '*.yaml')
 for f in $files; do
   [ -f "$f" ] || continue
   case "$f" in
@@ -47,7 +52,7 @@ if [ "$errors" -ne 0 ]; then
   echo ""
   echo "Capture the producer first, then match a here-string, so the producer's exit"
   echo "status is not decided by the consumer closing the pipe early:"
-  echo "    out=\$(producer 2>/dev/null || true)"
+  echo "    out=\$(producer)"
   echo "    if grep -q PATTERN <<<\"\$out\"; then"
   echo "Mark a deliberate exception on the same line with: pipefail-safe"
   exit 1

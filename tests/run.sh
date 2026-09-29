@@ -375,6 +375,36 @@ run_classify "$d" "$d/nope.log"
 check "missing log exits 0" "0" "$RC"
 check "class unclassified" "unclassified" "$(get "$d" class)"
 
+echo "Test 11b: an evaluation failure is named eval-error, a clean evaluation is not"
+d="$WORK/t11b"
+mkdir -p "$d"
+: >"$d/out.env"
+cat >"$d/build.log" <<'LOG'
+       error: Failed assertions:
+       - The `nixfmt-rfc-style` hook has been removed. Use `hooks.nixfmt` instead.
+ERROR:nix_fast_build:EVAL: 10 successes, 2 failures
+ERROR:nix_fast_build:Failed attributes: .#checks.x86_64-linux.std-devshell-order .#checks.x86_64-linux.pre-commit
+LOG
+run_classify "$d" "$d/build.log"
+check "class eval-error" "eval-error" "$(get "$d" class)"
+: >"$d/out.env"
+printf 'ERROR:nix_fast_build:EVAL: 12 successes, 0 failures\n' >"$d/build.log"
+run_classify "$d" "$d/build.log"
+check "zero evaluation failures is not eval-error" "unclassified" "$(get "$d" class)"
+
+echo "Test 11c: a build that downloads inside the sandbox is sandbox-download, even beside a DNS error"
+d="$WORK/t11c"
+mkdir -p "$d"
+: >"$d/out.env"
+cat >"$d/build.log" <<'LOG'
+eden> -- [CPMUtil] Using bundled package zbic@11b08f2712264bbed731545085cbd9702096ceb7
+eden>   status: [6;"Could not resolve hostname"]
+eden> CMake Error at CMakeModules/CPMUtil.cmake:190 (file):
+eden>   file DOWNLOAD cannot compute hash on failed download
+LOG
+run_classify "$d" "$d/build.log"
+check "class sandbox-download" "sandbox-download" "$(get "$d" class)"
+
 echo "Test 12: two source hashes are unattributable -> config-error before any fetch"
 d="$WORK/t12"
 mkdir -p "$d/.github"
@@ -678,7 +708,7 @@ printf 'run: |\n  if ! nix eval .#x | grep -qx true; then exit 0; fi\n' >"$d/.gi
 check "a piped grep -q in a workflow is refused" "1" "$?"
 check "the finding names the workflow file" "1" "$(grep -c 'workflows/ci.yml' "$d/log")"
 # shellcheck disable=SC2016
-printf 'run: |\n  declared=$(nix eval .#x || true)\n  if [ "$declared" != true ]; then exit 0; fi\n' >"$d/.github/workflows/ci.yml"
+printf 'run: |\n  declared=$(nix eval .#x)\n  if [ "$declared" != true ]; then exit 0; fi\n' >"$d/.github/workflows/ci.yml"
 (cd "$d" && git add -A && git commit -qm good && bash "$CHECKER" >"$d/log" 2>&1)
 check "the captured form passes" "0" "$?"
 

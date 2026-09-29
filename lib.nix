@@ -241,6 +241,13 @@ rec {
       good = "substituteInPlace f --replace-fail a b";
       fix = "--replace-warn ships the package with the substitution missing and only a warning in a log nobody reads. Use --replace-fail, or mark the line std:fail-open-ok with the reason it must stay tolerant.";
     }
+    {
+      name = "nix eval swallowed";
+      ere = "\\$\\(nix eval[^)]*\\|\\| *true\\)";
+      bad = "declared=$(nix eval .#checks.x86_64-linux 2>/dev/null || true)";
+      good = "declared=$(nix eval .#checks.x86_64-linux)";
+      fix = "an evaluation error becomes an empty value, and the empty value reads as 'nothing declared', so a flake that no longer evaluates is skipped as green. Let the assignment fail.";
+    }
   ];
 
   # Assertions for a postPatch that rewrites upstream source. A bare `sed -i`,

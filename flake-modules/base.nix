@@ -191,8 +191,14 @@
           let
             inherit (import ../lib.nix) failOpenPatterns;
             scan = p: ''
-              hits=$(grep -rnE -- ${lib.escapeShellArg p.ere} ${src} \
-                --include='*.nix' --include='*.sh' | grep -v 'std:fail-open-ok') || true
+              rc=0
+              matches=$(grep -rnE -- ${lib.escapeShellArg p.ere} ${src} \
+                --include='*.nix' --include='*.sh' --include='*.yml') || rc=$?
+              if [ "$rc" -gt 1 ]; then
+                echo "::error::grep could not read the source tree (exit $rc)"
+                exit 1
+              fi
+              hits=$(grep -v 'std:fail-open-ok' <<<"$matches") || hits=
               if [ -n "$hits" ]; then
                 printf '%s\n' "$hits"
                 echo "::error::${p.name} -- ${p.fix}"

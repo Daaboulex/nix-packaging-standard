@@ -7,5 +7,6 @@
   "scripts/classify-build-failure.sh": "classify-build-failure.sh",
   "scripts/update-readme-options.sh": "update-readme-options.sh",
   ".envrc": ".envrc",
-  ".editorconfig": ".editorconfig"
+  ".editorconfig": ".editorconfig",
+  "scripts/declared-runners.sh": "declared-runners.sh"
 }

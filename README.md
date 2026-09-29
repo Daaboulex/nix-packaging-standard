@@ -24,7 +24,7 @@ Canonical source of the shared tooling used by every `*-nix` packaging repo.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.39.6"; # pin the newest tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.40.0"; # pin the newest tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -179,10 +179,11 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `update.sh` | `scripts/update.sh` | Detect + apply upstream updates (a `custom` repo keeps its own) |
 | `heal-overlays.sh` | `scripts/heal-overlays.sh` | Probe every temporary divergence against the updated inputs and drop the healed ones |
 | `classify-build-failure.sh` | `scripts/classify-build-failure.sh` | Name a red run's failure class and enumerate its failed targets |
+| `declared-runners.sh` | `scripts/declared-runners.sh` | Name a GitHub runner for every system the flake declares checks on, refusing an unknown system or a flake that does not evaluate |
 | `update-readme-options.sh` | `scripts/update-readme-options.sh` | Only where a repo already carries it: splice an options reference into the README |
-| `ci.yml` | `.github/workflows/ci.yml` | Archetype-blind CI (build every output) |
-| `maintenance.yml` | `.github/workflows/maintenance.yml` | `flake.lock` refresh on the repo's cadence, with the heal probe and the verification build |
-| `update.yml` | `.github/workflows/update.yml` | Scheduled Update workflow |
+| `ci.yml` | `.github/workflows/ci.yml` | Archetype-blind CI (build every output on a runner per declared system) |
+| `maintenance.yml` | `.github/workflows/maintenance.yml` | `flake.lock` refresh on the repo's cadence: heal probe, every declared system evaluated, the checks built on a runner per declared system, pushed only if all are green |
+| `update.yml` | `.github/workflows/update.yml` | Scheduled Update workflow, verified on every declared system before it pushes |
 | `.envrc` | `.envrc` | `use flake`, so nix-direnv carries the dev-state pins into every entry point |
 | `.editorconfig` | `.editorconfig` | The fleet's editor defaults |
 | `update.schema.json` | *(reference, not synced)* | JSON Schema for `update.json` |
@@ -193,9 +194,9 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `scripts/check-shell-pipelines.sh`, `scripts/check-readme-sections.sh` | *(hooks, not synced)* | The pre-commit hooks `base` wires into every consumer |
 
 The synced workflow files + `scripts/update.sh` are byte-identical fleet-wide
-and enforced by `std-conformance`. Keep them **stable** across minor standard
-releases — evolve via additive flakeModules. A change to a synced file is a
-major bump that re-syncs every repo in one coordinated batch.
+and enforced by `std-conformance`. A change to a synced file is a minor bump,
+adopted by every repo in one coordinated `fleet-roll`; a patch bump leaves the
+synced files byte-identical.
 
 ## Overlays compose against the consumer, not against our own lock
 
@@ -251,11 +252,15 @@ in its own `perSystem`, never by patching the standard:
 
 One archetype-blind `ci.yml`, identical fleet-wide. It runs the AI-artifact
 guard, reclaims ~20 GB of preinstalled toolchains nix never uses (large source
-builds otherwise exhaust the runner's ~14 GB default disk), then on a
-`[ubuntu-latest, ubuntu-24.04-arm]` matrix builds every output the flake declares
-for that runner's system via `nix-fast-build --skip-cached` — so a repo that
-declares no outputs for an arch, **or a package whose `meta.platforms` excludes
-it**, simply no-ops there (declared == built, per system *and* per package). There
+builds otherwise exhaust the runner's ~14 GB default disk), then builds every
+output the flake declares for each runner's system via `nix-fast-build
+--skip-cached`. The matrix is not fixed: a plan job runs
+`scripts/declared-runners.sh`, which names `ubuntu-latest` for `x86_64-linux`
+and `ubuntu-24.04-arm` for `aarch64-linux` among the systems the flake declares
+checks on, so no runner starts for an arch the repo does not build, and a flake
+that does not evaluate fails the plan instead of reading as "nothing declared".
+A package whose `meta.platforms` excludes a declared arch is simply not built
+there (declared == built, per system *and* per package). There
 is no per-repo build target, no archetype conditional, and no binary-cache token:
 `cache.nixos.org` substitutes every unmodified dependency for free.
 
@@ -294,13 +299,14 @@ devices, and the first live run is otherwise the first test.
 ## Architecture and platforms
 
 The fleet's canonical target set is **`x86_64-linux` + `aarch64-linux`**, and
-`ci.yml` runs a native runner for each (`ubuntu-latest`, `ubuntu-24.04-arm`). A
-repo's **supported arches are its flake `systems`** — the executable truth CI
-builds; nothing restates it.
+`ci.yml`, `update.yml` and `maintenance.yml` build on a native runner for each
+one a repo declares (`ubuntu-latest`, `ubuntu-24.04-arm`). A repo's **supported
+arches are its flake `systems`** — the executable truth CI builds; nothing
+restates it.
 
 Because CI is `declared == built`, an arch a repo does **not** list in `systems`
-is silently unsupported: the runner for it finds no outputs and goes green *by
-not trying*. That silence is the trap — a green check that never meant the arch
+is silently unsupported: no runner starts for it and CI goes green *by not
+trying*. That silence is the trap — a green check that never meant the arch
 works. So the standard makes every dropped arch **declared, with a reason**:
 
 - **To support an arch** — add it to `systems`. The native runner then builds
@@ -623,12 +629,18 @@ Capture first, then match a here-string, so the producer's exit status is not
 decided by the consumer closing the pipe:
 
 ```bash
-out=$(producer 2>/dev/null || true)
+out=$(producer)
 if grep -q PATTERN <<<"$out"; then
 ```
 
+The capture must not swallow the producer's own failure: `$(producer || true)`
+turns an error into an empty value that reads as "no match", the same wrong
+branch by another road. `std-no-fail-open` refuses that shape for `nix eval`.
+
 `check-shell-pipelines` enforces this over every tracked `*.sh`, `*.nix` and
-workflow file (GitHub runs every step under `bash -eo pipefail`).
+workflow file (a step with `shell: bash` runs under `bash -eo pipefail`; a step
+with no `shell:` runs under `bash -e` alone, so a workflow step that pipes sets
+`pipefail` itself).
 A line already ending in `|| true` is accepted, since its status is discarded
 either way. Mark a deliberate exception on the same line with `pipefail-safe`.
 
@@ -637,8 +649,8 @@ either way. Mark a deliberate exception on the same line with `pipefail-safe`.
 Rolling inputs break in classes, and every class is either fenced or NAMED:
 update verification builds run with `--keep-going`, so one red run enumerates
 every failing dependency instead of fix-one-discover-next; the maintenance
-issue carries a machine class (`transient-infra`,
-`upstream-rerelease-hash-mismatch`, `nixpkgs-package-drop`,
+issue carries a machine class (`transient-infra`, `eval-error`,
+`sandbox-download`, `upstream-rerelease-hash-mismatch`, `nixpkgs-package-drop`,
 `missing-python-dep`, `requirements-coverage`,
 `python-metadata-version-mismatch`, or an honest `unclassified`)
 plus the complete failed-attribute and failed-derivation lists
@@ -731,10 +743,10 @@ verification build, so every fix is judged against the inputs the repo is moving
 **to**. Probing the committed lock instead reads a fix that is needed only on
 the NEW nixpkgs as healed, drops it, and re-breaks on the next bump -- a churn
 loop, and the second half of what made a version proxy so damaging. Because the
-removals share the lock bump's single verification, the two land together or
-neither does: green pushes both in one commit, red restores the fixes, pushes
-nothing, and files a `maintenance` issue naming what was kept and what was
-restored. Nothing is ever dropped blind.
+removals share the lock bump's verification on every declared system, the two
+land together or neither does: green pushes both in one commit, red pushes
+nothing, so the fixes stay, and files a `maintenance` issue naming what was kept
+and which healed removals were not pushed. Nothing is ever dropped blind.
 
 Fail-closed by construction: a fix with no predicate, with both, with malformed
 `meta`, with a `dropWhenBuilds` that cannot even evaluate, or with a
@@ -878,7 +890,11 @@ plus a `CHANGELOG.md`).
 
 ## `update.yml` / `maintenance.yml` behaviour
 
-- Update success → silent commit + push to the default branch.
+- Update success → the change is built on a runner for every other system the
+  flake declares checks on (`scripts/declared-runners.sh`), then committed and
+  pushed to the default branch as the exact commit that was verified. A system
+  that fails files the same `update-failed` issue as `exit 1` and pushes
+  nothing.
 - Update failure (`exit 1`) → `update-failed` issue with the build log + a
   recovery branch; previous failure issues auto-close on the next success.
 - Update transient (`exit 2`) → no issue, but the run carries a streak counter
@@ -886,8 +902,11 @@ plus a `CHANGELOG.md`).
   `update-failed` issue with `error_type: stalled`, and the next exit-0 run
   closes it and resets the streak.
 - `EXIT_CODE=${PIPESTATUS[0]}` captures the real exit — **not** `tee`'s.
-- Maintenance: weekly `nix flake update`, rebuild, push only if green, else open
-  a labeled issue; plus stale-branch cleanup (>30 days).
+- Maintenance: `nix flake update` on the repo's cadence, the heal probe,
+  `nix flake check --no-build --all-systems`, then the checks built on a runner
+  for every declared system; push only if every one is green, else open a
+  labeled issue whose class names an evaluation failure (`eval-error`) apart
+  from a build one; plus stale-branch cleanup (>30 days).
 
 ## History
 
@@ -1063,6 +1082,32 @@ it, so every consumer's scheduled lock refresh failed to evaluate its
 and an aarch64-only consumer pushed the broken lock. The formatter package is
 unchanged, so formatting is identical. The new name evaluates against both
 the old and the new git-hooks.nix.
+
+v2.40.0 (2026-09) verifies every declared system before anything is pushed.
+The maintenance and update jobs built on one x86 runner, and the step that
+asked whether the flake declared checks for it swallowed the evaluation's
+error: an aarch64-only consumer, or any flake whose checks no longer
+evaluated, read as "nothing declared", was reported as verified and pushed.
+That is how steam-arm64-nix shipped the lock v2.39.6 fixes. Both jobs now
+produce the change once, build it on a runner for each system the flake
+declares (`scripts/declared-runners.sh`, which fails on an evaluation error or
+an unknown system), and push the verified commit only when every system is
+green; maintenance evaluates every system first. `ci.yml` takes its matrix
+from the same script, so no runner starts for an arch a repo does not build.
+An evaluation failure is classified as `eval-error`, a build that downloads
+inside the sandbox (CMake CPM or FetchContent) as `sandbox-download`, and the
+issue quotes the first error, which the log tail had cut. The pipeline checker no longer
+recommends the swallowing capture that caused this, `std-no-fail-open`
+refuses a swallowed `nix eval` in workflows too, and `fleet-roll` refuses a tag
+that is not yet on the remote before touching any repo. The Fleet CI watch read
+a fork's pull request from a branch named like the default branch as the
+default branch's state, and skipped a consumer that is a GitHub fork; it now
+judges each repo by its own non-PR runs and watches every consumer.
+`update.sh` bound a bare `hashes[]` field to whichever matching file `grep`
+listed first, so a runner image that changed directory order moved
+free-claude-code-nix's source hash onto a pinned wheel and failed it daily;
+a bare field set in more than one file is now a `config-error` before any
+fetch, naming the files, as the schema section below already required.
 
 ## License
 

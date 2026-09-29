@@ -213,6 +213,57 @@
                 touch "$out"
               '';
 
+          checks.std-declared-runners =
+            pkgs.runCommand "std-declared-runners"
+              {
+                script = ./declared-runners.sh;
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                mkdir bin
+                cat > bin/nix <<'STUB'
+                #!${pkgs.runtimeShell}
+                if [ -n "$STUB_FAIL" ]; then
+                  echo "error: stub evaluation failure" >&2
+                  exit 1
+                fi
+                printf '%s' "$STUB_DECLARED"
+                STUB
+                chmod +x bin/nix
+                export PATH="$PWD/bin:$PATH" STUB_FAIL=
+                bad=0
+                expect() {
+                  local got
+                  if got=$(STUB_DECLARED="$2" bash "$script" $3); then
+                    if [ "$got" = "$4" ]; then
+                      echo "  ok   $1"
+                    else
+                      echo "  FAIL $1: printed $got, expected $4"
+                      bad=1
+                    fi
+                  else
+                    echo "  FAIL $1: exited non-zero"
+                    bad=1
+                  fi
+                }
+                refuse() {
+                  if STUB_DECLARED="$2" STUB_FAIL="$3" bash "$script" >/dev/null 2>&1; then
+                    echo "  FAIL $1: passed, so a flake nothing verifies would read as green"
+                    bad=1
+                  else
+                    echo "  ok   $1"
+                  fi
+                }
+                expect "both systems name both runners" '["aarch64-linux","x86_64-linux"]' "" '["ubuntu-24.04-arm","ubuntu-latest"]'
+                expect "the system already built is left out" '["aarch64-linux","x86_64-linux"]' x86_64-linux '["ubuntu-24.04-arm"]'
+                expect "nothing left to build is an empty list" '["x86_64-linux"]' x86_64-linux '[]'
+                refuse "a system no runner builds is refused" '["riscv64-linux"]' ""
+                refuse "a flake with checks on no system is refused" '[]' ""
+                refuse "an evaluation error is refused" '["x86_64-linux"]' 1
+                [ "$bad" = 0 ] || exit 1
+                touch "$out"
+              '';
+
           checks.std-update-retire-guard =
             pkgs.runCommand "std-update-retire-guard" { canonical = ./update.yml; }
               ''
@@ -367,7 +418,7 @@
                   diff -u maintenance.yml .github/workflows/maintenance.yml | head -40
                   bad=1
                 fi
-                for s in heal-overlays.sh classify-build-failure.sh; do
+                for s in heal-overlays.sh classify-build-failure.sh declared-runners.sh; do
                   if [ "$(readlink "scripts/$s")" = "../$s" ]; then
                     echo "  ok   scripts/$s is a link to the canonical"
                   else
