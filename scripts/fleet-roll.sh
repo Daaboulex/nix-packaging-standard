@@ -8,7 +8,8 @@ fleet-roll - adopt a new nix-packaging-standard tag across every consumer repo.
 
   PKG_REPOS_DIR=/path/to/repos ./scripts/fleet-roll.sh <tag> [options] [repo...]
 
-  <tag>          the standard tag to adopt, e.g. v2.27.0. Must exist locally.
+  <tag>          the standard tag to adopt, e.g. v2.27.0. Must exist locally
+                 and be pushed to the standard's remote.
   --execute      commit and push. WITHOUT IT THIS IS A DRY RUN: each repo is
                  bumped, synced and verified, then restored to its clean state.
   --notes <file> the commit body, required by --execute. What the tag changes
@@ -93,6 +94,14 @@ if [ "$EXECUTE" -eq 1 ]; then
 fi
 git -C "$STD" rev-parse -q --verify "refs/tags/$TAG" >/dev/null || {
   echo "fleet-roll: tag '$TAG' does not exist in $STD" >&2
+  exit 2
+}
+published=$(git -C "$STD" ls-remote --tags origin "refs/tags/$TAG") || {
+  echo "fleet-roll: could not reach the standard's remote to confirm '$TAG' is published" >&2
+  exit 2
+}
+[ -n "$published" ] || {
+  echo "fleet-roll: tag '$TAG' is not on the standard's remote, and every consumer fetches it from there; push it first: git -C $STD push origin $TAG" >&2
   exit 2
 }
 
