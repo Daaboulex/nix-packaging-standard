@@ -189,22 +189,8 @@
 
         std-no-fail-open =
           let
-            inherit (import ../lib.nix) failOpenPatterns;
-            scan = p: ''
-              rc=0
-              matches=$(grep -rnE -- ${lib.escapeShellArg p.ere} ${src} \
-                --include='*.nix' --include='*.sh' --include='*.yml') || rc=$?
-              if [ "$rc" -gt 1 ]; then
-                echo "::error::grep could not read the source tree (exit $rc)"
-                exit 1
-              fi
-              hits=$(grep -v 'std:fail-open-ok' <<<"$matches") || hits=
-              if [ -n "$hits" ]; then
-                printf '%s\n' "$hits"
-                echo "::error::${p.name} -- ${p.fix}"
-                bad=1
-              fi
-            '';
+            inherit (import ../lib.nix) failOpenPatterns failOpenScan;
+            scan = failOpenScan { inherit lib src; };
           in
           pkgs.runCommand "std-no-fail-open" { } ''
             bad=0

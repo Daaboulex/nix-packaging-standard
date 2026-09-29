@@ -219,6 +219,24 @@ rec {
   # from the same list, so the gate cannot silently stop matching. A line
   # carrying `std:fail-open-ok: <reason>` is exempt: a tolerance that is
   # declared is not the same defect as one nobody noticed.
+  failOpenScan =
+    { lib, src }:
+    p: ''
+      rc=0
+      matches=$(grep -rnE --include='*.nix' --include='*.sh' --include='*.yml' \
+        -- ${lib.escapeShellArg p.ere} ${src}) || rc=$?
+      if [ "$rc" -gt 1 ]; then
+        echo "::error::grep could not read the source tree (exit $rc)"
+        exit 1
+      fi
+      hits=$(grep -v 'std:fail-open-ok' <<<"$matches") || hits=
+      if [ -n "$hits" ]; then
+        printf '%s\n' "$hits"
+        echo "::error::${p.name} -- ${p.fix}"
+        bad=1
+      fi
+    '';
+
   failOpenPatterns = [
     {
       name = "grep -c piped into || echo";

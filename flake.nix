@@ -118,6 +118,36 @@
               touch "$out"
             '';
 
+          checks.std-no-fail-open-scan =
+            let
+              inherit (import ./lib.nix) failOpenPatterns failOpenScan;
+              swallowed = builtins.head (builtins.filter (p: p.name == "nix eval swallowed") failOpenPatterns);
+              fixture = pkgs.runCommand "fail-open-fixture" { } ''
+                mkdir -p "$out/.github/workflows"
+                printf '%s\n' ${pkgs.lib.escapeShellArg swallowed.bad} > "$out/.github/workflows/ci.yml"
+                printf '%s\n' ${pkgs.lib.escapeShellArg swallowed.bad} > "$out/notes.txt"
+              '';
+            in
+            pkgs.runCommand "std-no-fail-open-scan" { } ''
+              bad=0
+              {
+                ${failOpenScan {
+                  inherit (pkgs) lib;
+                  src = fixture;
+                } swallowed}
+              } > report.txt
+              cat report.txt
+              if [ "$bad" != 1 ]; then
+                echo "the consumer scan missed a swallowed nix eval in a workflow file"
+                exit 1
+              fi
+              if grep -q notes.txt report.txt; then
+                echo "the consumer scan read a file outside its --include set"
+                exit 1
+              fi
+              touch "$out"
+            '';
+
           checks.std-fleet-roll-build-is-bounded =
             pkgs.runCommand "std-fleet-roll-build-is-bounded" { roll = ./scripts/fleet-roll.sh; }
               ''

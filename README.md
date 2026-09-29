@@ -24,7 +24,7 @@ Canonical source of the shared tooling used by every `*-nix` packaging repo.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.40.0"; # pin the newest tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.40.1"; # pin the newest tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -1108,6 +1108,18 @@ listed first, so a runner image that changed directory order moved
 free-claude-code-nix's source hash onto a pinned wheel and failed it daily;
 a bare field set in more than one file is now a `config-error` before any
 fetch, naming the files, as the schema section below already required.
+
+v2.40.1 (2026-09) made v2.40.0 adoptable; no consumer ever ran v2.40.0. Its
+first roll failed both trial repos before any push, on two defects the tag
+exposed. The consumer `std-no-fail-open` scan passed its `--include` filters
+after `--`, so grep read them as file names and exited 2; the old `|| true`
+had hidden that for as long as the scan existed, and it searched every file
+type. The filters now precede the pattern, the scan lives in `lib.nix` as
+`failOpenScan`, and `std-no-fail-open-scan` runs it here against a fixture.
+And the roll built and committed with `commit -a` without staging what
+`sync.sh` wrote, so the new `scripts/declared-runners.sh` was invisible to the
+build and would never have been committed; the roll now stages the adoption,
+and its restore resets the index instead of checking out from it.
 
 ## License
 
