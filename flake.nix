@@ -200,6 +200,16 @@
                   exit 1
                 fi
 
+                if ! grep -q '^  if ! git -C "\$dir" add -A; then' "$roll"; then
+                  echo "fleet-roll builds and commits without staging what sync.sh wrote, so a newly synced file is invisible to the flake build and never committed"
+                  exit 1
+                fi
+
+                if ! grep -q 'reset --quiet --hard HEAD' "$roll"; then
+                  echo "restore does not reset the index, so a staged adoption survives a failed roll and strands the repo"
+                  exit 1
+                fi
+
                 if ! grep -q 'restore "\$IN_FLIGHT"' "$roll"; then
                   echo "the abort trap does not restore the in-flight repo, so it reports the interruption while still stranding the tree"
                   exit 1

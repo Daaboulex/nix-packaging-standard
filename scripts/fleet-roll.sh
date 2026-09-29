@@ -127,7 +127,7 @@ fail_repo() {
 
 restore() {
   local dir="$1"
-  git -C "$dir" checkout -- . >/dev/null 2>&1
+  git -C "$dir" reset --quiet --hard HEAD || echo "fleet-roll: could not reset $dir to HEAD; it is left dirty" >&2
   local f
   while IFS= read -r f; do
     [ -n "$f" ] && rm -f "$dir/$f"
@@ -318,7 +318,12 @@ for repo in "${TARGETS[@]}"; do
     continue
   fi
 
-  note "changed: $(git -C "$dir" diff --name-only | tr '\n' ' ')"
+  if ! git -C "$dir" add -A; then
+    fail_repo "$repo" "could not stage the adoption, so a file sync.sh added would be invisible to the build and missing from the commit"
+    restore "$dir"
+    continue
+  fi
+  note "changed: $(git -C "$dir" diff --cached --name-only | tr '\n' ' ')"
 
   sys=$(nix eval --impure --raw --expr 'builtins.currentSystem' 2>/dev/null)
   FOREIGN=0
