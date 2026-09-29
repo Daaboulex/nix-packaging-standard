@@ -25,7 +25,7 @@ jobs:
             });
             const bad = [];
             for (const r of repos) {
-              if (r.archived || r.fork) continue;
+              if (r.archived) continue;
               // A consumer carries .github/update.json on its default branch.
               try {
                 await github.rest.repos.getContent({ owner, repo: r.name, path: '.github/update.json' });
@@ -35,9 +35,11 @@ jobs:
                 try {
                   const runs = await github.rest.actions.listWorkflowRuns({
                     owner, repo: r.name, workflow_id: wf,
-                    branch: r.default_branch, per_page: 1
+                    branch: r.default_branch, per_page: 30
                   });
-                  const run = runs.data.workflow_runs[0];
+                  const run = runs.data.workflow_runs.find(x =>
+                    x.event !== 'pull_request'
+                    && x.head_repository && x.head_repository.full_name === r.full_name);
                   if (run) verdict = run.conclusion || run.status;
                 } catch (e) { verdict = 'missing'; }
                 // A run still in flight is not a defect; flag real reds and holes.
