@@ -24,7 +24,7 @@ Canonical source of the shared tooling used by every `*-nix` packaging repo.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.39.5"; # pin the newest tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.39.6"; # pin the newest tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -137,7 +137,7 @@ against the tree:
 
 | Module | Provides |
 | --- | --- |
-| `base` | git-hooks gate (`nixfmt-rfc-style`, `typos`, `rumdl`, `check-readme-sections`, `check-shell-pipelines`, and `std-home-proof` at push time), `formatter`, `devShells.default`, every declared package aliased into `checks` on the systems its `meta.platforms` supports (so `nix flake check` BUILDS it), and these checks: `std-conformance` (synced files byte-match the canonical), `std-update-json` (`.github/update.json` satisfies the schema), `std-devstate` (the baseline `.gitignore` entries are present), `std-devshell-order` (every dev shell pins `PRE_COMMIT_HOME` before it installs the hooks), `std-homestate` (no `home.file` in the home root), `std-meta-maintainers` (maintainers carry the nixpkgs shape), `std-no-fail-open` (no shell shape that reports success while doing nothing), `std-no-deprecated-system` (no `pkgs.system` read), `std-no-host-profile` (no path under the host's profile) |
+| `base` | git-hooks gate (`nixfmt`, `typos`, `rumdl`, `check-readme-sections`, `check-shell-pipelines`, and `std-home-proof` at push time), `formatter`, `devShells.default`, every declared package aliased into `checks` on the systems its `meta.platforms` supports (so `nix flake check` BUILDS it), and these checks: `std-conformance` (synced files byte-match the canonical), `std-update-json` (`.github/update.json` satisfies the schema), `std-devstate` (the baseline `.gitignore` entries are present), `std-devshell-order` (every dev shell pins `PRE_COMMIT_HOME` before it installs the hooks), `std-homestate` (no `home.file` in the home root), `std-meta-maintainers` (maintainers carry the nixpkgs shape), `std-no-fail-open` (no shell shape that reports success while doing nothing), `std-no-deprecated-system` (no `pkgs.system` read), `std-no-host-profile` (no path under the host's profile) |
 
 ## `lib`
 
@@ -1055,6 +1055,14 @@ entry is recognised by the version at the start of its line, and v2.39.4's did
 not begin that way, so the gate read the newest entry as the tag before it and
 called the example pin wrong. The entry above is the shape the gate reads.
 Every tag from v2.39.1 on is byte-identical to v2.39.0 from a consumer's side.
+
+v2.39.6 (2026-09) renamed the formatter hook from `nixfmt-rfc-style` to
+`nixfmt`. git-hooks.nix removed the old name on 2026-09-27 and now asserts on
+it, so every consumer's scheduled lock refresh failed to evaluate its
+`pre-commit` and `std-devshell-order` checks and filed a maintenance issue,
+and an aarch64-only consumer pushed the broken lock. The formatter package is
+unchanged, so formatting is identical. The new name evaluates against both
+the old and the new git-hooks.nix.
 
 ## License
 

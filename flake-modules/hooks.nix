@@ -7,9 +7,7 @@ let
   homeProof = import ./home-proof.nix { inherit pkgs; };
 in
 {
-  # Use pkgs.nixfmt directly: pkgs.nixfmt-rfc-style is now an alias of it
-  # and emits a deprecation warning on every eval. Same formatter, no noise.
-  nixfmt-rfc-style = {
+  nixfmt = {
     enable = true;
     package = pkgs.nixfmt;
   };

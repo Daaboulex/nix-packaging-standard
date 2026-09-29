@@ -5,7 +5,7 @@
 #
 # Provides, in the consumer's own module fixpoint (so each repo stays
 # self-contained and reproducible against its own lock):
-#   - the git-hooks lint/format gate (nixfmt-rfc-style, typos, rumdl with its
+#   - the git-hooks lint/format gate (nixfmt, typos, rumdl with its
 #     config, and the standard's own check-readme-sections script), the
 #     formatter, and a dev shell — so repos carry no .rumdl.toml or linter scripts;
 #   - every declared package aliased into `checks` (so `nix flake check` /
