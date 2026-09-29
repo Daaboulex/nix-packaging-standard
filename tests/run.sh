@@ -403,6 +403,24 @@ STUB_CURL_FILE="$STD/tests/fixtures/mullvad-releases.json" run_update "$d"
 check "source plus vendor hashes accepted" "0" "$RC"
 check "no config error" "" "$(get "$d" error_type)"
 
+echo "Test 12c: a bare hash field set in two files is refused before any fetch"
+d="$WORK/t12c"
+mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "github-release", "owner": "o", "repo": "r", "tagFilter": "^[0-9]" },
+  "packageFile": "package.nix", "hashes": [ "hash" ], "verify": { "check": "eval" } }
+JSON
+printf 'version = "2026.1";\nhash = "sha256-a";\n' >"$d/package.nix"
+printf 'hash = "sha256-b";\n' >"$d/wheel.nix"
+STUB_CURL_FILE="$STD/tests/fixtures/mullvad-releases.json" run_update "$d"
+check "an ambiguous bare field exits 1" "1" "$RC"
+check "error_type config-error" "config-error" "$(get "$d" error_type)"
+check "failed before version read" "" "$(get "$d" old_version)"
+rm "$d/wheel.nix"
+STUB_CURL_FILE="$STD/tests/fixtures/mullvad-releases.json" run_update "$d"
+check "the same field in one file passes validation" "2026.1" "$(get "$d" old_version)"
+
 echo "Test 13: variantAssets with a non-empty hashes[] -> config-error"
 d="$WORK/t13"
 mkdir -p "$d/.github"
