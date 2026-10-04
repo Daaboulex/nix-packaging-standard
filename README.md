@@ -24,7 +24,7 @@ Canonical source of the shared tooling used by every `*-nix` packaging repo.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.40.1"; # pin the newest tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.41.0"; # pin the newest tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -178,6 +178,7 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `synced-files.json` | *(the map itself)* | Consumer path to canonical file: the one map `sync.sh` bootstraps from and `std-conformance` enforces |
 | `update.sh` | `scripts/update.sh` | Detect + apply upstream updates (a `custom` repo keeps its own) |
 | `heal-overlays.sh` | `scripts/heal-overlays.sh` | Probe every temporary divergence against the updated inputs and drop the healed ones |
+| `after-lock-update.sh` | `scripts/after-lock-update.sh` | Run the flake's `apps.<system>.after-lock-update` after the lock update, when it declares one, and stage the tracked files it rewrote |
 | `classify-build-failure.sh` | `scripts/classify-build-failure.sh` | Name a red run's failure class and enumerate its failed targets |
 | `declared-runners.sh` | `scripts/declared-runners.sh` | Name a GitHub runner for every system the flake declares checks on, refusing an unknown system or a flake that does not evaluate |
 | `update-readme-options.sh` | `scripts/update-readme-options.sh` | Only where a repo already carries it: splice an options reference into the README |
@@ -902,8 +903,12 @@ plus a `CHANGELOG.md`).
   `update-failed` issue with `error_type: stalled`, and the next exit-0 run
   closes it and resets the streak.
 - `EXIT_CODE=${PIPESTATUS[0]}` captures the real exit — **not** `tee`'s.
-- Maintenance: `nix flake update` on the repo's cadence, the heal probe,
-  `nix flake check --no-build --all-systems`, then the checks built on a runner
+- Maintenance: `nix flake update` on the repo's cadence, then the flake's
+  `after-lock-update` app when it declares one (a repo that pins something
+  outside `flake.lock`, such as meson wrap files, rewrites it from the new lock
+  there; the app may only rewrite tracked files, an untracked file fails the
+  run, and what it rewrote rides the same verification and commit as the lock),
+  the heal probe, `nix flake check --no-build --all-systems`, then the checks built on a runner
   for every declared system; push only if every one is green, else open a
   labeled issue whose class names an evaluation failure (`eval-error`) apart
   from a build one; plus stale-branch cleanup (>30 days).
@@ -1120,6 +1125,18 @@ And the roll built and committed with `commit -a` without staging what
 `sync.sh` wrote, so the new `scripts/declared-runners.sh` was invisible to the
 build and would never have been committed; the roll now stages the adoption,
 and its restore resets the index instead of checking out from it.
+
+v2.41.0 (2026-10) lets a consumer keep a second pin in step with its lock.
+vkBasalt_overlay_wayland builds third-party sources from flake inputs and
+also ships meson wrap files for plain meson builds; the maintenance job moved
+the lock and never the wraps, so the two drifted with every bump. The job now
+runs `scripts/after-lock-update.sh` right after `nix flake update`: it reads
+whether the flake declares `apps.<system>.after-lock-update` with the `?`
+operator, so a flake without one is a no-op and a flake that does not evaluate
+fails; it runs the app, refuses any file the app left untracked, and stages
+the tracked files it rewrote into the candidate. `tests/run.sh` Test 23 pins
+the no-op, the staged rewrite, the untracked refusal, a failing app and a
+broken flake.
 
 ## License
 

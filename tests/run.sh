@@ -712,6 +712,76 @@ printf 'run: |\n  declared=$(nix eval .#x)\n  if [ "$declared" != true ]; then e
 (cd "$d" && git add -A && git commit -qm good && bash "$CHECKER" >"$d/log" 2>&1)
 check "the captured form passes" "0" "$?"
 
+if command -v nix >/dev/null 2>&1; then
+  echo "Test 23: after-lock-update runs the flake's app and stages only what it rewrote"
+  HOOK="$STD/after-lock-update.sh"
+  NP=$(nix eval --impure --raw --expr "(builtins.getFlake \"$STD\").inputs.nixpkgs.outPath")
+  hook_fixture() { # hook_fixture <dir> <app script, or empty for no apps>
+    mkdir -p "$1"
+    if [ -z "$2" ]; then
+      printf '{ outputs = _: { }; }\n' >"$1/flake.nix"
+    else
+      cat >"$1/flake.nix" <<NIX
+{
+  inputs.nixpkgs.url = "path:$NP";
+  outputs = { nixpkgs, ... }: {
+    apps = nixpkgs.lib.genAttrs [ "x86_64-linux" "aarch64-linux" ] (system: {
+      after-lock-update = {
+        type = "app";
+        program = "\${nixpkgs.legacyPackages.\${system}.writeShellScript "hook" ''$2''}";
+      };
+    });
+  };
+}
+NIX
+    fi
+    printf 'old\n' >"$1/pinned.txt"
+    (cd "$1" && git init -q && git config user.email t@t && git config user.name t && git add -A &&
+      nix flake lock && git add -A && git commit -qm fixture) >"$1.setup.log" 2>&1 || {
+      echo "  fixture setup failed:"
+      sed "s/^/    /" "$1.setup.log"
+    }
+  }
+  run_hook() {
+    (cd "$1" && bash "$HOOK" >"$1.log" 2>&1)
+    local rc=$?
+    [ "$rc" -eq 0 ] || tail -5 "$1.log" | sed "s/^/    hook: /"
+    return "$rc"
+  }
+
+  d="$WORK/t23a"
+  hook_fixture "$d" ""
+  run_hook "$d"
+  check "a flake with no apps is a clean no-op" "0" "$?"
+  check "and says nothing was run" "1" "$(grep -c 'nothing to run' "$d.log")"
+
+  d="$WORK/t23b"
+  hook_fixture "$d" 'echo new > pinned.txt'
+  run_hook "$d"
+  check "an app rewriting a tracked file exits 0" "0" "$?"
+  check "the rewritten file is staged" "pinned.txt" "$(cd "$d" && git diff --cached --name-only)"
+
+  d="$WORK/t23c"
+  hook_fixture "$d" 'echo stray > stray.txt'
+  run_hook "$d"
+  check "an app leaving an untracked file fails closed" "1" "$?"
+  check "the failure names the file" "1" "$(grep -c 'stray.txt' "$d.log")"
+
+  d="$WORK/t23d"
+  hook_fixture "$d" 'exit 3'
+  run_hook "$d"
+  check "a failing app fails the hook" "1" "$([ "$?" -ne 0 ] && echo 1 || echo 0)"
+
+  d="$WORK/t23e"
+  hook_fixture "$d" ""
+  printf '{ outputs = _: { ' >"$d/flake.nix"
+  (cd "$d" && git add -A)
+  run_hook "$d"
+  check "a flake that does not evaluate fails the hook" "1" "$([ "$?" -ne 0 ] && echo 1 || echo 0)"
+else
+  echo "Test 23 skipped (nix unavailable)"
+fi
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"
