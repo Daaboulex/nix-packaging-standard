@@ -269,7 +269,12 @@ if [ -z "$VARIANT_ASSETS" ] && [ "$TRACK_ONLY" != "true" ] &&
   [ -z "$PYREQ_FILE_PRESENT" ] && [ "$VERSION_SCHEME" = "literal" ] &&
   [ "$TAG_FILTER" = ".*" ] && [ "$DECLARED_HASHES" -gt 0 ]; then
   log "Standard case: delegating detection + hashes to nix-update"
-  if ! $NIX_UPDATE --flake default 2>&1; then
+  # --override-filename points nix-update at the file that holds the version
+  # literal: by default it rewrites the file that defines the package, and a
+  # repo whose package.nix only takes the version as an argument then changes
+  # nothing while nix-update has already seen the newer release.
+  NIX_UPDATE_LOG=$(mktemp)
+  if ! $NIX_UPDATE --flake default --override-filename "$VERSION_FILE" 2>&1 | tee "$NIX_UPDATE_LOG"; then
     err "nix-update failed"
     output "updated" "false"
     output "error_type" "build-error"
@@ -277,6 +282,15 @@ if [ -z "$VARIANT_ASSETS" ] && [ "$TRACK_ONLY" != "true" ] &&
   fi
   NEW_VERSION=$(grep -oP "(?<![A-Za-z_])${VERSION_ATTR_RE}\s*[?=]\s*\"\K[^\"]+" \
     "$VERSION_FILE" 2>/dev/null | head -1 || true)
+  SEEN_VERSION=$(grep -m1 -oP '^Update \S+ -> \K\S+' "$NIX_UPDATE_LOG" || true)
+  rm -f "$NIX_UPDATE_LOG"
+  if [ "$NEW_VERSION" = "$CURRENT_VERSION" ] && [ -n "$SEEN_VERSION" ] && [ "$SEEN_VERSION" != "$CURRENT_VERSION" ]; then
+    err "nix-update found $SEEN_VERSION but $VERSION_FILE still says $CURRENT_VERSION: it rewrote nothing in the file the version lives in"
+    output "new_version" "$SEEN_VERSION"
+    output "updated" "false"
+    output "error_type" "config-error"
+    exit 1
+  fi
   output "new_version" "$NEW_VERSION"
   if [ "$NEW_VERSION" = "$CURRENT_VERSION" ]; then
     log "Already up to date ($CURRENT_VERSION)"

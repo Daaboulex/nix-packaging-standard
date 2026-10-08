@@ -580,6 +580,51 @@ NIX_UPDATE="fake-nix-update-noop" run_update "$d"
 check "shim no-op exit 0" "0" "$RC"
 check "shim no-op updated false" "false" "$(get "$d" updated)"
 
+echo "Test 16c: shim fails when nix-update sees a newer version but rewrites nothing"
+d="$WORK/t16c"
+mkdir -p "$d/.github"
+cp "$WORK/t16/.github/update.json" "$d/.github/update.json"
+printf '{\n  version = "1.0.0";\n  hash = "sha256-old";\n}\n' >"$d/package.nix"
+cat >"$BIN/fake-nix-update-elsewhere" <<'SH'
+#!/usr/bin/env bash
+echo "Update 1.0.0 -> 1.1.0 in /elsewhere/default.nix"
+echo "No changes detected, skipping remaining steps"
+SH
+chmod +x "$BIN/fake-nix-update-elsewhere"
+: >"$d/.nixflag"
+NIX_UPDATE="fake-nix-update-elsewhere" run_update "$d"
+check "shim seen-but-unwritten exit 1" "1" "$RC"
+check "shim seen-but-unwritten error_type" "config-error" "$(get "$d" error_type)"
+check "shim seen-but-unwritten names the version it saw" "1.1.0" "$(get "$d" new_version)"
+
+echo "Test 16d: shim points nix-update at the version file"
+d="$WORK/t16d"
+mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "github-release", "owner": "o", "repo": "r" },
+  "packageFile": "flake.nix", "hashes": [ "hash" ], "verify": { "check": "eval" } }
+JSON
+printf '{\n  version = "1.0.0";\n  hash = "sha256-old";\n}\n' >"$d/flake.nix"
+printf '{ version, src }: { inherit version src; }\n' >"$d/package.nix"
+cat >"$BIN/fake-nix-update-override" <<'SH'
+#!/usr/bin/env bash
+file=""
+while [ $# -gt 0 ]; do
+  [ "$1" = "--override-filename" ] && file=$2
+  shift
+done
+[ -n "$file" ] || { echo "no --override-filename given" >&2; exit 1; }
+echo "Update 1.0.0 -> 1.1.0 in $file"
+sed -i 's/version = "1.0.0"/version = "1.1.0"/' "$file"
+SH
+chmod +x "$BIN/fake-nix-update-override"
+: >"$d/.nixflag"
+NIX_UPDATE="fake-nix-update-override" run_update "$d"
+check "shim with a versionFile exit 0" "0" "$RC"
+check "shim with a versionFile updated true" "true" "$(get "$d" updated)"
+check "shim rewrote the version file, not the package file" "1.1.0" "$(grep -oP 'version = "\K[^"]+' "$d/flake.nix")"
+
 echo "Test 17: no-tracked-ignored-files check catches a tracked file inside an ignored dir"
 d="$WORK/t17"
 mkdir -p "$d/.claude"
