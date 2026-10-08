@@ -45,6 +45,10 @@
             })
             // {
               check-readme-sections.enable = false;
+              shellcheck = {
+                enable = true;
+                files = "\\.sh$";
+              };
             };
 
           # patchAssertions is a shell string, so nothing type-checks it: this
