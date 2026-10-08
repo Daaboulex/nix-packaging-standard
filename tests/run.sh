@@ -814,15 +814,15 @@ NIX
 
   d="$WORK/t23d"
   hook_fixture "$d" 'exit 3'
-  run_hook "$d"
-  check "a failing app fails the hook" "1" "$([ "$?" -ne 0 ] && echo 1 || echo 0)"
+  if run_hook "$d"; then failed=0; else failed=1; fi
+  check "a failing app fails the hook" "1" "$failed"
 
   d="$WORK/t23e"
   hook_fixture "$d" ""
   printf '{ outputs = _: { ' >"$d/flake.nix"
   (cd "$d" && git add -A)
-  run_hook "$d"
-  check "a flake that does not evaluate fails the hook" "1" "$([ "$?" -ne 0 ] && echo 1 || echo 0)"
+  if run_hook "$d"; then failed=0; else failed=1; fi
+  check "a flake that does not evaluate fails the hook" "1" "$failed"
 else
   echo "Test 23 skipped (nix unavailable)"
 fi
