@@ -72,6 +72,11 @@ verify_artifact() {
   VERIFY_BINARY=$(echo "$CONFIG" | jq -r '.verify.binary // empty')
   read -ra VERIFY_ARGS <<<"$(echo "$CONFIG" | jq -r '.verify.args // "--version"')"
   VERIFY_CHECK=$(echo "$CONFIG" | jq -r '.verify.check // empty')
+  if { [ -n "$VERIFY_BINARY" ] || [ "$VERIFY_CHECK" = "elf" ]; } && ! command -v file >/dev/null; then
+    err "Artifact verification reads ELF headers with the 'file' tool, which is not on PATH"
+    output "error_type" "verification-error"
+    exit 1
+  fi
   nix build .#default
   if [ -n "$VERIFY_BINARY" ]; then
     ./result/bin/"$VERIFY_BINARY" "${VERIFY_ARGS[@]}" 2>&1 || {
