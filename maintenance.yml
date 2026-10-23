@@ -339,6 +339,7 @@ jobs:
             ];
             const candidates = allRefs.filter(r => stalePatterns.some(p => p.test(r.ref)));
             const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+            const failed = [];
             for (const ref of candidates) {
               try {
                 const { data: commit } = await github.rest.git.getCommit({
@@ -346,13 +347,20 @@ jobs:
                   commit_sha: ref.object.sha
                 });
                 if (new Date(commit.author.date).getTime() < thirtyDaysAgo) {
-                  console.log(`Deleting stale branch: ${ref.ref}`);
+                  core.info(`Deleting stale branch: ${ref.ref}`);
                   await github.rest.git.deleteRef({
                     owner: context.repo.owner, repo: context.repo.repo,
                     ref: ref.ref.replace('refs/', '')
                   });
                 }
               } catch (e) {
-                console.log(`Skip ${ref.ref}: ${e.message}`);
+                if (e.status === 422) {
+                  core.info(`${ref.ref} was already deleted`);
+                  continue;
+                }
+                failed.push(`${ref.ref}: ${e.message}`);
               }
+            }
+            if (failed.length) {
+              core.setFailed(`could not clean ${failed.length} stale branch(es): ${failed.join('; ')}`);
             }

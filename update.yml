@@ -431,17 +431,11 @@ jobs:
             const keep = process.env.KEEP
               ? `refs/heads/update/${pkg}-${process.env.KEEP}`
               : '';
-            let refs = [];
-            try {
-              const res = await github.rest.git.listMatchingRefs({
-                owner: context.repo.owner, repo: context.repo.repo,
-                ref: `heads/update/${pkg}-`
-              });
-              refs = res.data;
-            } catch (e) {
-              core.info(`could not list attempt branches: ${e.message}`);
-              return;
-            }
+            const { data: refs } = await github.rest.git.listMatchingRefs({
+              owner: context.repo.owner, repo: context.repo.repo,
+              ref: `heads/update/${pkg}-`
+            });
+            const failed = [];
             for (const r of refs) {
               if (r.ref === keep) continue;
               try {
@@ -451,6 +445,13 @@ jobs:
                 });
                 core.info(`retired ${r.ref}`);
               } catch (e) {
-                core.info(`could not retire ${r.ref}: ${e.message}`);
+                if (e.status === 422) {
+                  core.info(`${r.ref} was already deleted`);
+                  continue;
+                }
+                failed.push(`${r.ref}: ${e.message}`);
               }
+            }
+            if (failed.length) {
+              core.setFailed(`could not retire ${failed.length} attempt branch(es): ${failed.join('; ')}`);
             }
