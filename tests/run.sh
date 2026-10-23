@@ -873,6 +873,14 @@ cat >"$GHBIN/gh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_CALLS"
 if [ -n "${STUB_GH_FAIL:-}" ]; then exit 1; fi
+if [ -n "${STUB_GH_FAIL_TIMES:-}" ]; then
+  n=0
+  if [ -f "$GH_CALLS.fails" ]; then n=$(cat "$GH_CALLS.fails"); fi
+  if [ "$n" -lt "$STUB_GH_FAIL_TIMES" ]; then
+    echo $((n + 1)) >"$GH_CALLS.fails"
+    exit 1
+  fi
+fi
 prev=""
 for a in "$@"; do
   if [ "$prev" = "--body-file" ]; then cp "$a" "$GH_BODY"; fi
@@ -895,7 +903,7 @@ report_fixture() { # report_fixture <dir> <open-issues-json>
 }
 run_report() { # run_report <dir> <title>
   (cd "$1" && PATH="$GHBIN:$PATH" GH_CALLS="$1/calls" GH_BODY="$1/body.md" STUB_GH_LIST="$1/list.json" \
-    STUB_GH_FAIL="${STUB_GH_FAIL:-}" GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=7 GITHUB_OUTPUT="$1/out.env" \
+    STUB_GH_FAIL="${STUB_GH_FAIL:-}" STUB_GH_FAIL_TIMES="${STUB_GH_FAIL_TIMES:-}" REPORT_RETRY_DELAY=0 GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=7 GITHUB_OUTPUT="$1/out.env" \
     FAILED_ATTRS=".#checks.x86_64-linux.package-x" \
     bash "$REPORT" update-failed "Update " "$2" "$1/head.md" "$1/build.log" >"$1/rlog" 2>&1)
   RC=$?
@@ -908,7 +916,7 @@ run_report "$d" "Update x 1 -> 2: build-error"
 check "a first failure exits 0" "0" "$RC"
 check "a first failure files one issue" "1" "$(grep -c '^issue create --label update-failed --title Update x 1 -> 2: build-error' "$d/calls")"
 check "the issue number is reported" "42" "$(get "$d" number)"
-check "the body says when it started" "1" "$(grep -c "^Failing since $today\. Latest run: https://github.com/o/r/actions/runs/7" "$d/body.md")"
+check "the body says which run first reported it" "1" "$(grep -c "^First reported on $today by https://github.com/o/r/actions/runs/7$" "$d/body.md")"
 check "the body names the failing target" "1" "$(grep -c '^\.#checks\.x86_64-linux\.package-x$' "$d/body.md")"
 check "the first-error block opens on the plain error line" "1" "$(sed -n '/First error/,/<\/details>/p' "$d/body.md" | grep -c '^error: builder for x failed$')"
 check "the body carries no terminal colour codes" "0" "$(grep -c $'\033' "$d/body.md")"
@@ -922,14 +930,14 @@ check "a repeat failure files nothing new" "0" "$(grep -c '^issue create' "$d/ca
 check "a repeat failure edits the open issue" "1" "$(grep -c '^issue edit 7 --title Update x 1 -> 2: build-error' "$d/calls")"
 check "an unchanged failure adds no comment" "0" "$(grep -c '^issue comment' "$d/calls")"
 days=$((($(date -u -d "$today" +%s) - $(date -u -d 2026-10-04 +%s)) / 86400))
-check "the body counts the days since the issue opened" "1" "$(grep -c "^Failing since 2026-10-04, $days days\. " "$d/body.md")"
+check "the body counts the days the issue has been open" "1" "$(grep -c "^Open since 2026-10-04 ($days days); no run has succeeded since\. Latest failing run on $today: " "$d/body.md")"
 check "the open issue keeps its number" "7" "$(get "$d" number)"
 
 d="$WORK/t24c"
 report_fixture "$d" '[{"number":7,"title":"Update x 1 -> 2: build-error","createdAt":"2026-10-04T06:10:00Z"}]'
 run_report "$d" "Update x 1 -> 3: compile-error"
 check "a changed failure edits the open issue" "1" "$(grep -c '^issue edit 7 --title Update x 1 -> 3: compile-error' "$d/calls")"
-check "a changed failure comments once" "1" "$(grep -c '^issue comment 7 ' "$d/calls")"
+check "a changed report comments once, naming both titles" "1" "$(grep -c '^issue comment 7 --body Now reported as: Update x 1 -> 3: compile-error (previously: Update x 1 -> 2: build-error)' "$d/calls")"
 
 d="$WORK/t24d"
 report_fixture "$d" '[{"number":9,"title":"Update x 1 -> 2: build-error","createdAt":"2026-10-05T06:10:00Z"},{"number":7,"title":"Update x 1 -> 2: build-error","createdAt":"2026-10-04T06:10:00Z"},{"number":8,"title":"Maintenance: flake.lock update broke build (eval-error)","createdAt":"2026-10-04T06:10:00Z"}]'
@@ -942,6 +950,12 @@ d="$WORK/t24e"
 report_fixture "$d" '[]'
 STUB_GH_FAIL=1 run_report "$d" "Update x 1 -> 2: build-error"
 check "a failing gh fails the report" "1" "$RC"
+check "a failing gh is tried three times before the report gives up" "3" "$(wc -l <"$d/calls")"
+
+d="$WORK/t24g"
+report_fixture "$d" '[]'
+STUB_GH_FAIL_TIMES=2 run_report "$d" "Update x 1 -> 2: build-error"
+check "a gh call that fails twice and then answers still files the issue" "0:42" "$RC:$(get "$d" number)"
 
 d="$WORK/t24f"
 report_fixture "$d" '[]'
