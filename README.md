@@ -24,7 +24,7 @@ Canonical source of the shared tooling used by every `*-nix` packaging repo.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.41.0"; # pin the newest tag
+      url = "github:Daaboulex/nix-packaging-standard?ref=v2.42.0"; # pin the newest tag
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -181,6 +181,7 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `after-lock-update.sh` | `scripts/after-lock-update.sh` | Run the flake's `apps.<system>.after-lock-update` after the lock update, when it declares one, and stage the tracked files it rewrote |
 | `classify-build-failure.sh` | `scripts/classify-build-failure.sh` | Name a red run's failure class and enumerate its failed targets |
 | `declared-runners.sh` | `scripts/declared-runners.sh` | Name a GitHub runner for every system the flake declares checks on, refusing an unknown system or a flake that does not evaluate |
+| `report-failure.sh` | `scripts/report-failure.sh` | Keep one open issue per failure: file it the first day, then rewrite it each failing run with the days since it opened, commenting only when the failure changes |
 | `update-readme-options.sh` | `scripts/update-readme-options.sh` | Only where a repo already carries it: splice an options reference into the README |
 | `ci.yml` | `.github/workflows/ci.yml` | Archetype-blind CI (build every output on a runner per declared system) |
 | `maintenance.yml` | `.github/workflows/maintenance.yml` | `flake.lock` refresh on the repo's cadence: heal probe, every declared system evaluated, the checks built on a runner per declared system, pushed only if all are green |
@@ -648,18 +649,27 @@ either way. Mark a deliberate exception on the same line with `pipefail-safe`.
 ## Rolling-CI failure handling
 
 Rolling inputs break in classes, and every class is either fenced or NAMED:
-update verification builds run with `--keep-going`, so one red run enumerates
-every failing dependency instead of fix-one-discover-next; the maintenance
-issue carries a machine class (`transient-infra`, `eval-error`,
-`sandbox-download`, `upstream-rerelease-hash-mismatch`, `nixpkgs-package-drop`,
+update verification builds and the updater's check suite run with
+`--keep-going`, so one red run enumerates every failing dependency instead of
+fix-one-discover-next; every failure issue carries a machine class
+(`transient-infra`, `eval-error`, `compile-error`, `sandbox-download`,
+`upstream-rerelease-hash-mismatch`, `nixpkgs-package-drop`,
 `missing-python-dep`, `requirements-coverage`,
-`python-metadata-version-mismatch`, or an honest `unclassified`)
-plus the complete failed-attribute and failed-derivation lists
-(`scripts/classify-build-failure.sh`); temporary divergences bridge nixpkgs
-regressions, missing dependencies, and pins, and remove themselves once they
-stop doing any work; and the weekly Fleet CI watch (standard repo only) keeps
-one open issue naming any consumer whose required workflow is red or missing,
-closing it when the fleet is clean.
+`python-metadata-version-mismatch`, `substitution-pattern-drift`, or an honest
+`unclassified`) plus the failed attributes of every runner and the failed
+derivations (`scripts/classify-build-failure.sh`); temporary divergences
+bridge nixpkgs regressions, missing dependencies, and pins, and remove
+themselves once they stop doing any work; and the weekly Fleet CI watch
+(standard repo only) keeps one open issue naming any consumer with an open
+`update-failed` or `maintenance` issue or a required workflow that is red or
+missing, closing it when the fleet is clean.
+
+Each job uploads its log under its own file name and the report downloads them
+with `merge-multiple`, so the log reaches the issue whether one job failed or
+several. `scripts/report-failure.sh` keeps one open issue per failure: the
+first failing run files it, every later failing run rewrites its title and body
+with the days since it opened, and it comments only when the failure itself
+changes, so a failure that has lasted three weeks reads as three weeks old.
 
 `transient-infra` covers a runner-side store/fetch race as well as a network
 one (`path '...' is not valid`): the same revision re-runs green, so it is never
@@ -896,8 +906,11 @@ plus a `CHANGELOG.md`).
   pushed to the default branch as the exact commit that was verified. A system
   that fails files the same `update-failed` issue as `exit 1` and pushes
   nothing.
-- Update failure (`exit 1`) → `update-failed` issue with the build log + a
-  recovery branch; previous failure issues auto-close on the next success.
+- Update failure (`exit 1`) → the one open `update-failed` issue is filed or
+  rewritten with the build log and a recovery branch, and the run ends red, so
+  the Actions page and the Fleet CI watch see it too; the next success closes
+  the issue. A branch that cannot be pushed is named in the issue with git's
+  own error, never dropped silently.
 - Update transient (`exit 2`) → no issue, but the run carries a streak counter
   in the Actions cache; the seventh consecutive exit-2 run files the same
   `update-failed` issue with `error_type: stalled`, and the next exit-0 run
@@ -909,9 +922,10 @@ plus a `CHANGELOG.md`).
   there; the app may only rewrite tracked files, an untracked file fails the
   run, and what it rewrote rides the same verification and commit as the lock),
   the heal probe, `nix flake check --no-build --all-systems`, then the checks built on a runner
-  for every declared system; push only if every one is green, else open a
-  labeled issue whose class names an evaluation failure (`eval-error`) apart
-  from a build one; plus stale-branch cleanup (>30 days).
+  for every declared system; push only if every one is green, else file or
+  rewrite the one open `maintenance` issue, whose class names an evaluation
+  failure (`eval-error`) apart from a build one; plus stale-branch cleanup
+  (>30 days).
 
 ## History
 
@@ -1137,6 +1151,27 @@ fails; it runs the app, refuses any file the app left untracked, and stages
 the tracked files it rewrote into the candidate. `tests/run.sh` Test 23 pins
 the no-op, the staged rewrite, the untracked refusal, a failing app and a
 broken flake.
+
+v2.42.0 (2026-10) makes a failure visible for as long as it lasts. From
+v2.40.0 the report job looked for each log in a folder named after its
+artifact, but download-artifact extracts a lone artifact flat into the path,
+so every failure seen on one system was filed with "No job uploaded a log" and
+classed `unclassified`: 43 fleet issues in three weeks. Each failing run also
+closed the previous issue as not planned and filed a new one, and the Update
+run stayed green, so two packages failed every day for three weeks while every
+issue looked a day old and the Fleet CI watch reported a clean fleet. Now every
+job uploads its log under its own name and the report downloads with
+`merge-multiple`; `scripts/report-failure.sh`, shared by both workflows, keeps
+one open issue, rewrites it with the days since it opened and comments only
+when the failure changes; the Update run ends red when it reports; an attempt
+branch that cannot be pushed is named in the issue instead of being swallowed
+by an empty `catch`; a retry no longer overwrites the log of the attempt
+before it. The updater's check suite runs with `--keep-going`, so one fired
+patch tripwire no longer cancels the rest. The classifier reads coloured store
+paths, keeps every runner's failed attributes, and names a `compile-error`.
+The Fleet CI watch also names any consumer with an open failure issue, and
+stops treating a failed repository lookup as "not a consumer".
+`tests/run.sh` Test 10b and Test 24 pin all of it with a stubbed `gh`.
 
 ## License
 

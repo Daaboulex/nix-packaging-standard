@@ -30,14 +30,16 @@ err() { echo "::error::$*"; }
 check_suite() {
   local clog rc
   clog=$(mktemp)
-  nix flake check --no-eval-cache --print-build-logs 2>&1 | tee "$clog"
+  nix flake check --keep-going --no-eval-cache --print-build-logs 2>&1 | tee "$clog"
   rc=${PIPESTATUS[0]}
   if [ "$rc" -eq 0 ]; then
     rm -f "$clog"
     return 0
   fi
   err "Check suite failed"
-  if grep -qE "Cannot build '/nix/store/[^']+\.drv'" "$clog"; then
+  local plain
+  plain=$(sed 's/\x1b\[[0-9;]*m//g' "$clog")
+  if grep -qE "Cannot build '/nix/store/[^']+\.drv'" <<<"$plain"; then
     output "error_type" "build-error"
   else
     output "error_type" "eval-error"

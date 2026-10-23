@@ -1,7 +1,7 @@
 # Fleet CI watch -- nix-packaging-standard repo ONLY (never synced to
 # consumers). A consumer's red CI can otherwise sit silent between fleet-audit
 # runs; this weekly sweep reads every consumer's latest run per required
-# workflow on its default branch and keeps exactly ONE open issue here naming
+# workflow on its default branch and its open failure issues, and keeps exactly ONE open issue here naming
 # the red or missing ones, closing it when the fleet is clean.
 name: Fleet CI watch
 on:
@@ -29,7 +29,18 @@ jobs:
               // A consumer carries .github/update.json on its default branch.
               try {
                 await github.rest.repos.getContent({ owner, repo: r.name, path: '.github/update.json' });
-              } catch (e) { continue; }
+              } catch (e) {
+                if (e.status === 404) continue;
+                throw e;
+              }
+              for (const label of ['update-failed', 'maintenance']) {
+                const issues = await github.rest.issues.listForRepo({
+                  owner, repo: r.name, labels: label, state: 'open'
+                });
+                for (const i of issues.data) {
+                  bad.push(`${r.name}: open ${label} issue #${i.number} since ${i.created_at.slice(0, 10)}: ${i.title}`);
+                }
+              }
               for (const wf of ['ci.yml', 'maintenance.yml', 'update.yml']) {
                 let verdict = 'missing';
                 try {
@@ -67,7 +78,7 @@ jobs:
               return;
             }
             const body = [
-              'Latest run per required workflow on the default branch, non-success only:',
+              'Open failure issues, and the latest run per required workflow on the default branch that is not green:',
               '',
               ...bad.map(b => `- ${b}`),
               '',

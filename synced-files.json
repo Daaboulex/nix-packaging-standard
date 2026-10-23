@@ -9,5 +9,6 @@
   "scripts/update-readme-options.sh": "update-readme-options.sh",
   ".envrc": ".envrc",
   ".editorconfig": ".editorconfig",
-  "scripts/declared-runners.sh": "declared-runners.sh"
+  "scripts/declared-runners.sh": "declared-runners.sh",
+  "scripts/report-failure.sh": "report-failure.sh"
 }

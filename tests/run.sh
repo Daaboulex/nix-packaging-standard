@@ -708,6 +708,23 @@ STUB_CHECKS_FAIL=1 STUB_CURL_FILE="$STD/tests/fixtures/mullvad-releases.json" ru
 check "update refuses to proceed" "1" "$RC"
 check "reported as a check failure" "eval-error" "$(get "$d" error_type)"
 
+echo "Test 10b: classifier reads coloured paths, every runner's attributes, and names a compile error"
+d="$WORK/t10b"
+mkdir -p "$d"
+: >"$d/out.env"
+printf '%s\n' \
+  '=== log-ubuntu-latest' \
+  "error: Cannot build '$(printf '\033[35;1m')/nix/store/eeee-eden-0.2.1.drv$(printf '\033[0m')'." \
+  'eden> /build/source/src/core/memory/cheat_engine.cpp:240:47: error: '"'"'<unknown>'"'"' may be used uninitialized [-Werror=maybe-uninitialized]' \
+  'ERROR:nix_fast_build:Failed attributes: .#checks.x86_64-linux.package-eden' \
+  '=== log-ubuntu-24.04-arm' \
+  'ERROR:nix_fast_build:Failed attributes: .#checks.aarch64-linux.package-eden .#checks.aarch64-linux.package-default' >"$d/build.log"
+run_classify "$d" "$d/build.log"
+check "classifier exits 0" "0" "$RC"
+check "class compile-error" "compile-error" "$(get "$d" class)"
+check "the coloured drv path is read" "/nix/store/eeee-eden-0.2.1.drv" "$(get "$d" failed_drvs)"
+check "both runners' attributes are listed" "3" "$(get "$d" failed_attrs | tr ' ' '\n' | grep -c checks)"
+
 echo "Test 20: classifier names a substitution whose pattern upstream moved"
 d="$WORK/t20"
 mkdir -p "$d"
@@ -826,6 +843,90 @@ NIX
 else
   echo "Test 23 skipped (nix unavailable)"
 fi
+
+echo "Test 24: report-failure keeps one open issue per failure and says how long it has failed"
+REPORT="$STD/report-failure.sh"
+GHBIN="$WORK/ghbin"
+mkdir -p "$GHBIN"
+cat >"$GHBIN/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_CALLS"
+if [ -n "${STUB_GH_FAIL:-}" ]; then exit 1; fi
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--body-file" ]; then cp "$a" "$GH_BODY"; fi
+  prev="$a"
+done
+case "$1 $2" in
+"issue list") cat "$STUB_GH_LIST" ;;
+"issue create") echo "https://github.com/o/r/issues/42" ;;
+esac
+exit 0
+SH
+chmod +x "$GHBIN/gh"
+report_fixture() { # report_fixture <dir> <open-issues-json>
+  mkdir -p "$1"
+  : >"$1/out.env"
+  : >"$1/calls"
+  printf '%s\n' "$2" >"$1/list.json"
+  printf '## Update failed: x 1 -> 2\n' >"$1/head.md"
+  printf '%s\n' 'building x' "$(printf '\033[31m')error:$(printf '\033[0m') builder for x failed" "$(printf 'y%.0s' $(seq 1 500))" >"$1/build.log"
+}
+run_report() { # run_report <dir> <title>
+  (cd "$1" && PATH="$GHBIN:$PATH" GH_CALLS="$1/calls" GH_BODY="$1/body.md" STUB_GH_LIST="$1/list.json" \
+    STUB_GH_FAIL="${STUB_GH_FAIL:-}" GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=7 GITHUB_OUTPUT="$1/out.env" \
+    FAILED_ATTRS=".#checks.x86_64-linux.package-x" \
+    bash "$REPORT" update-failed "Update " "$2" "$1/head.md" "$1/build.log" >"$1/rlog" 2>&1)
+  RC=$?
+}
+today=$(date -u +%F)
+
+d="$WORK/t24a"
+report_fixture "$d" '[]'
+run_report "$d" "Update x 1 -> 2: build-error"
+check "a first failure exits 0" "0" "$RC"
+check "a first failure files one issue" "1" "$(grep -c '^issue create --label update-failed --title Update x 1 -> 2: build-error' "$d/calls")"
+check "the issue number is reported" "42" "$(get "$d" number)"
+check "the body says when it started" "1" "$(grep -c "^Failing since $today\. Latest run: https://github.com/o/r/actions/runs/7" "$d/body.md")"
+check "the body names the failing target" "1" "$(grep -c '^\.#checks\.x86_64-linux\.package-x$' "$d/body.md")"
+check "the first-error block opens on the plain error line" "1" "$(sed -n '/First error/,/<\/details>/p' "$d/body.md" | grep -c '^error: builder for x failed$')"
+check "the body carries no terminal colour codes" "0" "$(grep -c $'\033' "$d/body.md")"
+check "a long log line is cut to 300 characters" "300" "$(grep -m1 '^yyy' "$d/body.md" | tr -d '\n' | wc -c)"
+
+d="$WORK/t24b"
+report_fixture "$d" '[{"number":7,"title":"Update x 1 -> 2: build-error","createdAt":"2026-10-04T06:10:00Z"}]'
+run_report "$d" "Update x 1 -> 2: build-error"
+check "a repeat failure exits 0" "0" "$RC"
+check "a repeat failure files nothing new" "0" "$(grep -c '^issue create' "$d/calls")"
+check "a repeat failure edits the open issue" "1" "$(grep -c '^issue edit 7 --title Update x 1 -> 2: build-error' "$d/calls")"
+check "an unchanged failure adds no comment" "0" "$(grep -c '^issue comment' "$d/calls")"
+days=$((($(date -u -d "$today" +%s) - $(date -u -d 2026-10-04 +%s)) / 86400))
+check "the body counts the days since the issue opened" "1" "$(grep -c "^Failing since 2026-10-04, $days days\. " "$d/body.md")"
+check "the open issue keeps its number" "7" "$(get "$d" number)"
+
+d="$WORK/t24c"
+report_fixture "$d" '[{"number":7,"title":"Update x 1 -> 2: build-error","createdAt":"2026-10-04T06:10:00Z"}]'
+run_report "$d" "Update x 1 -> 3: compile-error"
+check "a changed failure edits the open issue" "1" "$(grep -c '^issue edit 7 --title Update x 1 -> 3: compile-error' "$d/calls")"
+check "a changed failure comments once" "1" "$(grep -c '^issue comment 7 ' "$d/calls")"
+
+d="$WORK/t24d"
+report_fixture "$d" '[{"number":9,"title":"Update x 1 -> 2: build-error","createdAt":"2026-10-05T06:10:00Z"},{"number":7,"title":"Update x 1 -> 2: build-error","createdAt":"2026-10-04T06:10:00Z"},{"number":8,"title":"Maintenance: flake.lock update broke build (eval-error)","createdAt":"2026-10-04T06:10:00Z"}]'
+run_report "$d" "Update x 1 -> 2: build-error"
+check "a duplicate is closed into the oldest" "1" "$(grep -c '^issue close 9 --reason not planned --comment The same failure is tracked in #7\.' "$d/calls")"
+check "an issue with another prefix is left alone" "0" "$(grep -c ' 8 ' "$d/calls")"
+check "the oldest stays the open one" "1" "$(grep -c '^issue edit 7 ' "$d/calls")"
+
+d="$WORK/t24e"
+report_fixture "$d" '[]'
+STUB_GH_FAIL=1 run_report "$d" "Update x 1 -> 2: build-error"
+check "a failing gh fails the report" "1" "$RC"
+
+d="$WORK/t24f"
+report_fixture "$d" '[]'
+rm "$d/build.log"
+run_report "$d" "Update x 1 -> 2: build-error"
+check "a missing log fails the report before any gh call" "1:0" "$RC:$(wc -l <"$d/calls")"
 
 echo
 echo "------------------------------------------"

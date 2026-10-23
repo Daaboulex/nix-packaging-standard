@@ -448,7 +448,7 @@
 
           # This repo runs what it ships: its own maintenance workflow must be
           # the canonical (GitHub reads no symlinked workflow, so it is a copy),
-          # and the two scripts that workflow calls are symlinks to the
+          # and the scripts that workflow calls are symlinks to the
           # canonicals. Nothing else compares the copy with the shipped file.
           checks.std-own-copies-match-shipped =
             pkgs.runCommand "std-own-copies-match-shipped" { src = ./.; }
@@ -462,7 +462,7 @@
                   diff -u maintenance.yml .github/workflows/maintenance.yml | head -40
                   bad=1
                 fi
-                for s in heal-overlays.sh classify-build-failure.sh declared-runners.sh; do
+                for s in heal-overlays.sh classify-build-failure.sh declared-runners.sh after-lock-update.sh report-failure.sh; do
                   if [ "$(readlink "scripts/$s")" = "../$s" ]; then
                     echo "  ok   scripts/$s is a link to the canonical"
                   else
