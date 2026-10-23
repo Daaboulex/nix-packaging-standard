@@ -625,6 +625,27 @@ check "shim with a versionFile exit 0" "0" "$RC"
 check "shim with a versionFile updated true" "true" "$(get "$d" updated)"
 check "shim rewrote the version file, not the package file" "1.1.0" "$(grep -oP 'version = "\K[^"]+' "$d/flake.nix")"
 
+echo "Test 16e: shim hands every declared subpackage to nix-update"
+d="$WORK/t16e"
+mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "github-release", "owner": "o", "repo": "r" },
+  "packageFile": "package.nix", "hashes": [ "hash", "npmDepsHash" ], "subpackages": [ "ui", "docs" ],
+  "verify": { "check": "eval" } }
+JSON
+printf '{\n  version = "1.0.0";\n  hash = "sha256-old";\n  npmDepsHash = "sha256-old";\n}\n' >"$d/package.nix"
+cat >"$BIN/fake-nix-update-args" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >nix-update.args
+sed -i 's/version = "1.0.0"/version = "1.1.0"/' package.nix
+SH
+chmod +x "$BIN/fake-nix-update-args"
+: >"$d/.nixflag"
+NIX_UPDATE="fake-nix-update-args" run_update "$d"
+check "shim with subpackages exit 0" "0" "$RC"
+check "each subpackage reaches nix-update" "--subpackage ui --subpackage docs" "$(grep -A1 -- '^--subpackage$' "$d/nix-update.args" | grep -v -- '^--$' | tr '\n' ' ' | sed 's/ $//')"
+
 echo "Test 17: no-tracked-ignored-files check catches a tracked file inside an ignored dir"
 d="$WORK/t17"
 mkdir -p "$d/.claude"

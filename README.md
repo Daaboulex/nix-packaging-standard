@@ -568,6 +568,54 @@ matches twice, which would otherwise duplicate a C label or a table entry.
 `landed_soft` warns instead of failing, for an edit that is deliberately
 best-effort.
 
+## Prefer upstream's own switch to any edit
+
+Before writing a patch or a substitution, read upstream for the knob it already
+ships, and use it: a build option, a command-line flag, an environment
+variable, a config key. Every one found in the 2026-10 audit removed an edit
+that broke on a later release: eden's `-Werror` turns off with upstream's
+`-DENABLE_WERROR=OFF`; StreamController takes its data directory from `--data`;
+coolercontrold now spawns an absolute `/bin/sh`, so the substitution that
+pointed it at a shell had nothing left to fix. A package built against
+nixpkgs-unstable switches off upstream's warnings-as-errors through that
+option, because a new compiler's new warning is not a defect of the package.
+
+A patch that stays carries its own retirement: a check that fails the build
+the day upstream adopts the change, with the step to take in its message
+(coolercontrol's `*-still-needed` checks retired four patches that way in
+5.1.1). An edit without one is permanent the moment it lands.
+
+## Regenerate, never restate
+
+Anything upstream already states, the package reads instead of copying: a
+version from `Cargo.toml` with `lib.importTOML`, npm dependencies with
+`importNpmLock` from the lock file, Python requirements through
+`pythonRequirements`, a second derivation's hash through `subpackages`. A
+package that overrides a nixpkgs derivation to track git main does not
+inherit an edit written against one release's literal text: unsloth passes
+`pypaBuildFlags = [ "--skip-dependency-check" ]` instead of matching upstream's
+setuptools pins, which move with every bump. A copied value is correct for one
+release and wrong from the next, and the update that finds it out fails.
+
+## Errors stay visible, and a tool's own state stays its own
+
+No package, module or activation step hides a failure: no `|| true`, no
+`2>/dev/null` in front of a failure, no empty `except`. A step that may
+legitimately have nothing to do tests for that case explicitly (`[ -e ... ]`)
+and fails on anything else. The synced `update.sh` still carries these shapes,
+which is why `std-no-fail-open` does not refuse them yet: the gate follows once
+the canonical is clean, so it never reds a consumer for the standard's own debt.
+
+Nix seeds a tool's file once when it is absent and never replays it: no unit
+that re-applies settings at login or boot, no store link over a file the
+program writes. A rewrite of the tool's own file is allowed only as a guarded
+migration of a legacy value, and is removed once every host has migrated.
+
+A source build finds the libraries it `dlopen`s through its RUNPATH
+(`patchelf --add-rpath`, `addDriverRunpath`), proven by a check that resolves
+each one from the binary, never through `LD_LIBRARY_PATH` in a wrapper, which
+leaks into every child process the program starts.
+
 ## Prebuilt self-reading binaries
 
 Some prebuilt binaries read their own file at runtime -- embedded resource
@@ -816,6 +864,13 @@ doing any work.
   declared non-vendor field; a second source hash absorbs nothing, stays dummied,
   and the convergence loop can never finish. Declaring two fails closed with
   `config-error` — use `variantAssets` instead.
+- **`subpackages`** names attributes of the default package whose own
+  fixed-output hashes nix-update must refresh too, each handed to it as
+  `--subpackage`. nix-update reaches only the hashes of the package it updates,
+  so a hash in a separate derivation, a web UI's `npmDepsHash` built apart from
+  the daemon that embeds it, stays stale and the next bump fails on it. Expose
+  that derivation through `passthru` (`passthru.ui = coolercontrol-ui-data;`)
+  and list the attribute here (`"subpackages": [ "ui" ]`).
 - **`variantAssets`** is the multi-variant prebuilt-release mode (mutually
   exclusive with `hashes`). The updater enumerates the newest matching release's
   assets, takes each `<variant>` from `<assetPrefix><tag>-<variant><assetSuffix>`,
@@ -1171,7 +1226,16 @@ patch tripwire no longer cancels the rest. The classifier reads coloured store
 paths, keeps every runner's failed attributes, and names a `compile-error`.
 The Fleet CI watch also names any consumer with an open failure issue, and
 stops treating a failed repository lookup as "not a consumer".
-`tests/run.sh` Test 10b and Test 24 pin all of it with a stubbed `gh`.
+`tests/run.sh` Test 10b and Test 24 pin all of it with a stubbed `gh`. The
+updater also learns `subpackages`: coolercontrol's web UI is its own
+derivation, so nix-update never refreshed its `npmDepsHash` and no release
+since 4.3.1 updated without a hand edit; each listed attribute now reaches
+nix-update as `--subpackage` (Test 16e). Four rules join the README from the
+same audit of the fleet's patches and workarounds: prefer upstream's own
+switch to any edit, regenerate rather than restate, keep errors visible and a
+tool's own state its own, and find `dlopen`ed libraries through RUNPATH. They
+are written rules for now; `std-no-fail-open` gains the `|| true` shape only
+once the synced `update.sh` no longer carries it.
 
 ## License
 

@@ -3,7 +3,10 @@
   "title": "Nix Packaging Standard — .github/update.json",
   "description": "Config consumed by the Nix Packaging Standard update.sh. Canonical repo: github.com/Daaboulex/nix-packaging-standard.",
   "type": "object",
-  "required": ["package", "upstream"],
+  "required": [
+    "package",
+    "upstream"
+  ],
   "additionalProperties": false,
   "properties": {
     "package": {
@@ -18,7 +21,10 @@
     "topics": {
       "type": "array",
       "uniqueItems": true,
-      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]*$"
+      },
       "description": "Canonical GitHub repo topics, applied by sync-meta.sh. Convention: 'nix', 'nixos', 'flake' baseline + 'nixos-module'/'home-manager' where applicable + the software name + a few domain topics. Lowercase, hyphenated."
     },
     "platforms": {
@@ -41,7 +47,9 @@
     },
     "upstream": {
       "type": "object",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false,
       "properties": {
         "type": {
@@ -57,11 +65,24 @@
             "custom"
           ]
         },
-        "owner": { "type": "string" },
-        "repo": { "type": "string" },
-        "host": { "type": "string", "description": "GitLab/Gitea host." },
-        "project": { "type": "string", "description": "GitLab project path." },
-        "url": { "type": "string", "description": "git-ls-remote URL." },
+        "owner": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string",
+          "description": "GitLab/Gitea host."
+        },
+        "project": {
+          "type": "string",
+          "description": "GitLab project path."
+        },
+        "url": {
+          "type": "string",
+          "description": "git-ls-remote URL."
+        },
         "branch": {
           "type": "string",
           "description": "Branch for *-commit types (default: main)."
@@ -75,42 +96,89 @@
       "allOf": [
         {
           "if": {
-            "required": ["type"],
+            "required": [
+              "type"
+            ],
             "properties": {
               "type": {
-                "enum": ["github-release", "github-tag", "github-commit"]
+                "enum": [
+                  "github-release",
+                  "github-tag",
+                  "github-commit"
+                ]
               }
             }
           },
-          "then": { "required": ["owner", "repo"] }
+          "then": {
+            "required": [
+              "owner",
+              "repo"
+            ]
+          }
         },
         {
           "if": {
-            "required": ["type"],
+            "required": [
+              "type"
+            ],
             "properties": {
-              "type": { "enum": ["gitlab-tag", "gitlab-commit"] }
+              "type": {
+                "enum": [
+                  "gitlab-tag",
+                  "gitlab-commit"
+                ]
+              }
             }
           },
-          "then": { "required": ["project"] }
+          "then": {
+            "required": [
+              "project"
+            ]
+          }
         },
         {
           "if": {
-            "required": ["type"],
-            "properties": { "type": { "const": "gitea-commit" } }
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "gitea-commit"
+              }
+            }
           },
-          "then": { "required": ["host", "owner", "repo"] }
+          "then": {
+            "required": [
+              "host",
+              "owner",
+              "repo"
+            ]
+          }
         },
         {
           "if": {
-            "required": ["type"],
-            "properties": { "type": { "const": "git-ls-remote" } }
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "git-ls-remote"
+              }
+            }
           },
-          "then": { "required": ["url"] }
+          "then": {
+            "required": [
+              "url"
+            ]
+          }
         }
       ]
     },
     "packageFile": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "default": "package.nix",
       "description": "File `nix build .#default` centers on. null/omitted for module-only or non-building repos (upstream type none/trackOnly)."
     },
@@ -128,7 +196,11 @@
       "description": "File holding the package src `rev` literal for commit-tracked upstreams (default: versionFile). Set it when several `rev = \"...\"` literals exist so the package src rev is bumped, not a dependency's."
     },
     "versionScheme": {
-      "enum": ["literal", "unstable-date", "rev-only"],
+      "enum": [
+        "literal",
+        "unstable-date",
+        "rev-only"
+      ],
       "default": "literal",
       "description": "How the version literal is written. 'literal': the upstream string verbatim (a bare 7-char SHA for commit-tracked repos). 'unstable-date': '<base>-unstable-<YYYY-MM-DD>' (nixpkgs VCS-snapshot convention), where <base> is upstream's newest tagFilter-matching tag, refetched on every bump — commit-tracked types only; comparison is by rev. 'rev-only': bump rev (+ hash + date) and LEAVE the human-set version string untouched (git-snapshot packages like mesa-git whose version is upstream's self-reported MESA_VERSION); commit-tracked types only; comparison is by rev."
     },
@@ -162,11 +234,18 @@
           },
           {
             "type": "object",
-            "required": ["field", "file"],
+            "required": [
+              "field",
+              "file"
+            ],
             "additionalProperties": false,
             "properties": {
-              "field": { "type": "string" },
-              "file": { "type": "string" }
+              "field": {
+                "type": "string"
+              },
+              "file": {
+                "type": "string"
+              }
             },
             "description": "Explicit placement when a field name appears in multiple files. `file` may be a .json (e.g. version.json) for a JSON-resident hash (\"field\": \"sha256-...\"); required there since the bare-string form only scans *.nix."
           }
@@ -175,7 +254,9 @@
     },
     "variantAssets": {
       "type": "object",
-      "required": ["assetPrefix"],
+      "required": [
+        "assetPrefix"
+      ],
       "additionalProperties": false,
       "description": "Multi-arch prebuilt-binary release mode (github-release only, mutually exclusive with `hashes`). The updater enumerates the newest matching release's assets, takes each <variant> from <assetPrefix><tag>-<variant><assetSuffix>, prefetches it unpacked (the FOD hash a fetchzip yields), and regenerates the marker-delimited rolling `variants` attrset in sourceFile — between `# std:variants-begin` and `# std:variants-end`. A newly published variant (a future x86_64_v4) is picked up with no config change; a dropped one disappears; pins outside the markers are never touched.",
       "properties": {
@@ -205,12 +286,25 @@
       "additionalProperties": false,
       "properties": {
         "binary": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Binary under result/bin to run; null to skip."
         },
-        "args": { "type": ["string", "null"] },
+        "args": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "check": {
-          "enum": ["elf", "wrapper", "desktop", "eval"],
+          "enum": [
+            "elf",
+            "wrapper",
+            "desktop",
+            "eval"
+          ],
           "description": "Artifact check when no binary is run. 'eval': eval + clean build are the verification, no artifact-shape assertion (also the behavior when omitted). 'elf'/'wrapper'/'desktop': additionally assert the named artifact exists under result/."
         }
       }
@@ -219,7 +313,9 @@
       "type": "object",
       "additionalProperties": false,
       "description": "Env+source python app (python.withPackages + upstream source, no wheel metadata): reconcile the upstream requirements file against the env. update.sh auto-adds a nixpkgs-resolvable new requirement above the '# std:requirements-auto-add' marker in envFile; lib.requirementsCoveredCheck gates real coverage in CI and the update verification build.",
-      "required": ["file"],
+      "required": [
+        "file"
+      ],
       "properties": {
         "file": {
           "type": "string",
@@ -231,10 +327,21 @@
         },
         "ignore": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Requirement names (PEP503-normalized) knowingly not shipped: dev/packaging tooling the app never imports on shipped paths, or dist-name mismatches provided under another attr. One source of truth for BOTH update.sh's auto-add and lib.requirementsCoveredCheck."
         }
       }
+    },
+    "subpackages": {
+      "type": "array",
+      "description": "Attributes of the default package (its passthru) whose fixed-output hashes nix-update also recomputes, each passed as --subpackage. A hash that lives in a separate derivation, such as a web UI's npmDepsHash, is otherwise never refreshed.",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+      },
+      "uniqueItems": true
     }
   }
 }

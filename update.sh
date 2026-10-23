@@ -281,7 +281,11 @@ if [ -z "$VARIANT_ASSETS" ] && [ "$TRACK_ONLY" != "true" ] &&
   # repo whose package.nix only takes the version as an argument then changes
   # nothing while nix-update has already seen the newer release.
   NIX_UPDATE_LOG=$(mktemp)
-  if ! $NIX_UPDATE --flake default --override-filename "$VERSION_FILE" 2>&1 | tee "$NIX_UPDATE_LOG"; then
+  SUBPACKAGE_ARGS=()
+  while IFS= read -r subpackage; do
+    SUBPACKAGE_ARGS+=(--subpackage "$subpackage")
+  done < <(echo "$CONFIG" | jq -r '.subpackages // [] | .[]')
+  if ! $NIX_UPDATE --flake default --override-filename "$VERSION_FILE" "${SUBPACKAGE_ARGS[@]}" 2>&1 | tee "$NIX_UPDATE_LOG"; then
     err "nix-update failed"
     output "updated" "false"
     output "error_type" "build-error"
