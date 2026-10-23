@@ -41,6 +41,19 @@ jobs:
                   bad.push(`${r.name}: open ${label} issue #${i.number} since ${i.created_at.slice(0, 10)}: ${i.title}`);
                 }
               }
+              let lock;
+              try {
+                const { data } = await github.rest.repos.getContent({ owner, repo: r.name, path: 'flake.lock' });
+                lock = JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
+              } catch (e) {
+                if (e.status !== 404) throw e;
+              }
+              const std = lock && lock.nodes && lock.nodes.std;
+              if (!std) {
+                bad.push(`${r.name}: flake.lock has no std input`);
+              } else if (std.original.ref !== 'release') {
+                bad.push(`${r.name}: std follows ${std.original.ref ? `ref ${std.original.ref}` : 'no ref'}, not the release branch, so no lock refresh moves it`);
+              }
               for (const wf of ['ci.yml', 'maintenance.yml', 'update.yml']) {
                 let verdict = 'missing';
                 try {
@@ -52,7 +65,9 @@ jobs:
                     x.event !== 'pull_request'
                     && x.head_repository && x.head_repository.full_name === r.full_name);
                   if (run) verdict = run.conclusion || run.status;
-                } catch (e) { verdict = 'missing'; }
+                } catch (e) {
+                  if (e.status !== 404) throw e;
+                }
                 // A run still in flight is not a defect; flag real reds and holes.
                 if (!['success', 'in_progress', 'queued', 'waiting', 'pending'].includes(verdict)) {
                   bad.push(`${r.name}: ${wf} = ${verdict}`);

@@ -9,6 +9,8 @@
 # throw on failure) but stores only a context-free string — it never depends on
 # or realizes the closure, so the check is eval-only and cheap, even in CI.
 rec {
+  releaseUrl = "github:Daaboulex/nix-packaging-standard/release";
+
   nixosModuleCheck =
     {
       nixpkgs,

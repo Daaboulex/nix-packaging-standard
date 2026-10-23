@@ -10,9 +10,8 @@
 #     formatter, and a dev shell — so repos carry no .rumdl.toml or linter scripts;
 #   - every declared package aliased into `checks` (so `nix flake check` /
 #     nix-fast-build actually BUILD the package — nix#13470);
-#   - `std-conformance`: a hermetic check that the synced workflow/script
-#     files byte-match this standard's canonicals (replaces the old
-#     curl-based drift-check.yml — no network, no raw.githubusercontent);
+#   - `std-conformance`: a hermetic check that the synced callers and
+#     dotfiles byte-match this standard's canonicals;
 #   - `std-update-json`: validates .github/update.json against the schema.
 { inputs, lib, ... }:
 {
@@ -23,8 +22,6 @@
     let
       src = inputs.self;
 
-      # custom-updater repos ship a bespoke scripts/update.sh — exclude it from
-      # the byte-conformance check (it is intentionally not the canonical).
       updateJson =
         if builtins.pathExists (src + "/.github/update.json") then
           builtins.fromJSON (builtins.readFile (src + "/.github/update.json"))
@@ -37,14 +34,22 @@
         && lib.hasInfix "[tool.ruff" (builtins.readFile (src + "/pyproject.toml"));
       ruffConfigArg = lib.optionalString (!hasOwnRuffConfig) " --config ${../ruff.toml}";
 
-      # consumer path -> canonical shipped in this standard, from the one map
-      # sync.sh reads too (synced-files.json), so the two can never disagree.
-      syncedAll = lib.mapAttrs (_: canon: ../. + "/${canon}") (lib.importJSON ../synced-files.json);
+      syncMap = lib.importJSON ../synced-files.json;
       hasReadmeOptions = builtins.pathExists (src + "/scripts/update-readme-options.sh");
-      synced = builtins.removeAttrs syncedAll (
-        lib.optional isCustom "scripts/update.sh"
-        ++ lib.optional (!hasReadmeOptions) "scripts/update-readme-options.sh"
+      synced = lib.mapAttrs (_: canon: ../. + "/${canon}") (
+        builtins.removeAttrs (lib.filterAttrs (_: canon: canon != null) syncMap) (
+          lib.optional (!hasReadmeOptions) "scripts/update-readme-options.sh"
+        )
       );
+      retired = builtins.attrNames (
+        builtins.removeAttrs (lib.filterAttrs (_: canon: canon == null) syncMap) (
+          lib.optional isCustom "scripts/update.sh"
+        )
+      );
+      retiredPresent = builtins.filter (dst: builtins.pathExists (src + "/${dst}")) retired;
+
+      inherit (import ../lib.nix) releaseUrl;
+      declaredStdUrl = ((import (src + "/flake.nix")).inputs.std or { }).url or "(no std input)";
 
       # Only alias a package into `checks` on systems it actually supports (its
       # own meta.platforms / badPlatforms). Without this, an x86_64-only package
@@ -88,6 +93,31 @@
           ))
           + "\ntouch \"$out\"\n"
         );
+
+        std-no-retired-copies =
+          pkgs.runCommand "std-no-retired-copies" { passthru.present = retiredPresent; }
+            (
+              if retiredPresent == [ ] then
+                ''touch "$out"''
+              else
+                lib.concatMapStringsSep "\n" (
+                  dst:
+                  "echo ${lib.escapeShellArg "::error::${dst} is a retired copy: the workflows run the standard's own script at the commit that defines them, so this file is never read; delete it"}"
+                ) retiredPresent
+                + "\nexit 1\n"
+            );
+
+        std-follows-release =
+          pkgs.runCommand "std-follows-release" { passthru.declared = declaredStdUrl; }
+            (
+              if declaredStdUrl == releaseUrl then
+                ''touch "$out"''
+              else
+                ''
+                  echo ${lib.escapeShellArg "::error::inputs.std.url is '${declaredStdUrl}'; it must be '${releaseUrl}', so the scheduled lock refresh moves this repository to each verified release instead of leaving it on the one it was pinned to"}
+                  exit 1
+                ''
+            );
 
         # Self-contained dev state: the baseline .gitignore must keep build
         # outputs and shell state out of the tree -- the dev shell writes tool

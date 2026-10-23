@@ -1,28 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Sync the canonical standard files into the packaging-repo clones.
-#
-#   sync.sh            # sync every repo
-#   sync.sh <repo>...  # sync named repos only
-#   sync.sh --check    # report drift, change nothing, exit 1 if any
-#
-# Project-agnostic: every path is derived, never hardcoded. The
-# packaging-repo directory is taken from PKG_REPOS_DIR (e.g. the consuming
-# nix flake's `repos/` directory, or a /tmp clone tree). Each repo commits
-# + pushes its own changes; CI runs --check so a per-repo copy can never
-# silently drift from the canonical.
-
+usage="usage: PKG_REPOS_DIR=<dir> sync.sh [--check] [repo...]"
 STD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPOS_DIR="${PKG_REPOS_DIR:?set PKG_REPOS_DIR to the directory holding the packaging-repo clones}"
+REPOS_DIR="${PKG_REPOS_DIR:?set PKG_REPOS_DIR to the directory holding the packaging-repo clones; $usage}"
 
-# canonical file in the standard repo -> destination path inside each repo,
-# read from synced-files.json, the same map flakeModules.base enforces with
-# std-conformance, so the bootstrap and the gate can never disagree.
 declare -A FILES=()
+declare -a RETIRED=()
 while IFS=$'\t' read -r dst src; do
-  FILES["$src"]="$dst"
-done < <(jq -r 'to_entries[] | [.key, .value] | @tsv' "$STD/synced-files.json")
+  if [ -z "$src" ]; then
+    RETIRED+=("$dst")
+  else
+    FILES["$src"]="$dst"
+  fi
+done < <(jq -r 'to_entries[] | [.key, (.value // "")] | @tsv' "$STD/synced-files.json")
 [ "${#FILES[@]}" -gt 0 ] || {
   echo "sync.sh: synced-files.json is empty or unreadable" >&2
   exit 2
@@ -33,12 +24,16 @@ declare -a targets=()
 for arg in "$@"; do
   case "$arg" in
   --check) CHECK=1 ;;
+  -*)
+    echo "sync.sh: unknown option '$arg'; $usage" >&2
+    exit 2
+    ;;
   *) targets+=("$arg") ;;
   esac
 done
 if [ ${#targets[@]} -eq 0 ]; then
   while IFS= read -r d; do targets+=("$(basename "$d")"); done \
-    < <(find "$REPOS_DIR" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+    < <(find "$REPOS_DIR" -maxdepth 1 -mindepth 1 -type d | sort)
 fi
 
 drift=0
@@ -56,14 +51,8 @@ for repo in "${targets[@]}"; do
     echo "skip   $repo (no update.json)"
     continue
   }
-  # custom-type repos keep their own bespoke scripts/update.sh — sync only
-  # the generic workflow into them, never the canonical update.sh.
-  rtype=$(jq -r '.upstream.type // "none"' "$dir/.github/update.json" 2>/dev/null || echo none)
+  rtype=$(jq -r '.upstream.type // "none"' "$dir/.github/update.json")
   for src in "${!FILES[@]}"; do
-    if [ "$src" = "update.sh" ] && [ "$rtype" = "custom" ]; then
-      echo "keep   $repo/scripts/update.sh (custom updater)"
-      continue
-    fi
     if [ "$src" = "update-readme-options.sh" ] && [ ! -f "$dir/${FILES[$src]}" ]; then
       continue
     fi
@@ -78,6 +67,21 @@ for repo in "${targets[@]}"; do
       mkdir -p "$(dirname "$dst")"
       cp "$STD/$src" "$dst"
       echo "synced $repo/${FILES[$src]}"
+    fi
+  done
+
+  for dst in "${RETIRED[@]}"; do
+    if [ "$dst" = scripts/update.sh ] && [ "$rtype" = custom ]; then
+      echo "keep   $repo/scripts/update.sh (custom updater)"
+      continue
+    fi
+    [ -e "$dir/$dst" ] || continue
+    drift=1
+    if [ "$CHECK" -eq 1 ]; then
+      echo "DRIFT  $repo/$dst is retired and still present"
+    else
+      rm "$dir/$dst"
+      echo "retired $repo/$dst"
     fi
   done
 
@@ -97,12 +101,12 @@ for repo in "${targets[@]}"; do
 done
 
 if [ "$CHECK" -eq 1 ]; then
-  [ "$drift" -eq 0 ] && {
+  if [ "$drift" -eq 0 ]; then
     echo "all repos in sync with the canonical standard"
     exit 0
-  }
-  echo "drift detected — run sync.sh to fix"
+  fi
+  echo "drift detected: run sync.sh to fix"
   exit 1
 fi
 echo
-echo "Done. Review each repo's diff, then commit + push within that repo."
+echo "Done. Review each repo's diff, then commit and push within that repo."

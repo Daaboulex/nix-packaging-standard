@@ -1,14 +1,14 @@
 {
-  ".github/workflows/ci.yml": "ci.yml",
-  ".github/workflows/maintenance.yml": "maintenance.yml",
-  ".github/workflows/update.yml": "update.yml",
-  "scripts/update.sh": "update.sh",
-  "scripts/heal-overlays.sh": "heal-overlays.sh",
-  "scripts/after-lock-update.sh": "after-lock-update.sh",
-  "scripts/classify-build-failure.sh": "classify-build-failure.sh",
-  "scripts/update-readme-options.sh": "update-readme-options.sh",
+  ".github/workflows/ci.yml": "callers/ci.yml",
+  ".github/workflows/maintenance.yml": "callers/maintenance.yml",
+  ".github/workflows/update.yml": "callers/update.yml",
   ".envrc": ".envrc",
   ".editorconfig": ".editorconfig",
-  "scripts/declared-runners.sh": "declared-runners.sh",
-  "scripts/report-failure.sh": "report-failure.sh"
+  "scripts/update-readme-options.sh": "update-readme-options.sh",
+  "scripts/update.sh": null,
+  "scripts/heal-overlays.sh": null,
+  "scripts/after-lock-update.sh": null,
+  "scripts/classify-build-failure.sh": null,
+  "scripts/declared-runners.sh": null,
+  "scripts/report-failure.sh": null
 }

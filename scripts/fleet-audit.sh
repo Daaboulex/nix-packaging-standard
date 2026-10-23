@@ -201,9 +201,6 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     ntopics="$(jq -r '.topics | length // 0' "$uj" 2>/dev/null || echo 0)"
     [ -n "$desc" ] || red "$repo: update.json missing 'description'"
     [ "${ntopics:-0}" -ge 1 ] || red "$repo: update.json missing 'topics'"
-    # No per-repo dependabot: GitHub Actions are pinned + bumped centrally in the
-    # synced workflows (and re-synced fleet-wide), so a consumer dependabot only
-    # opens github-actions PRs that break std-conformance and cannot be merged.
     if [ -f "$dir/.github/dependabot.yml" ]; then
       red "$repo: has .github/dependabot.yml (consumers carry none; actions are managed centrally in the standard)"
     fi

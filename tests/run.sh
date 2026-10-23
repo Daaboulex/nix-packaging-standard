@@ -963,6 +963,95 @@ rm "$d/build.log"
 run_report "$d" "Update x 1 -> 2: build-error"
 check "a missing log fails the report before any gh call" "1:0" "$RC:$(wc -l <"$d/calls")"
 
+echo "Test 25: sync.sh writes the callers and deletes retired copies, except a custom updater"
+SYNC="$STD/sync.sh"
+d="$WORK/t25"
+for r in plain custom; do
+  mkdir -p "$d/$r/.git" "$d/$r/.github/workflows" "$d/$r/scripts"
+  printf 'stale\n' >"$d/$r/.github/workflows/ci.yml"
+  printf '#!/usr/bin/env bash\n' >"$d/$r/scripts/heal-overlays.sh"
+  printf '#!/usr/bin/env bash\n' >"$d/$r/scripts/update.sh"
+done
+printf '{"upstream":{"type":"github-release"}}\n' >"$d/plain/.github/update.json"
+printf '{"upstream":{"type":"custom"}}\n' >"$d/custom/.github/update.json"
+PKG_REPOS_DIR="$d" bash "$SYNC" --check plain >/dev/null
+check "a repo carrying stale and retired files is reported as drift" "1" "$?"
+check "--check changes nothing" "stale" "$(cat "$d/plain/.github/workflows/ci.yml")"
+PKG_REPOS_DIR="$d" bash "$SYNC" plain custom >"$d/log"
+check "sync exits clean" "0" "$?"
+if cmp -s "$STD/callers/ci.yml" "$d/plain/.github/workflows/ci.yml"; then same=yes; else same=no; fi
+check "the CI workflow becomes the caller" "yes" "$same"
+check "a retired script is deleted" "absent" "$([ -e "$d/plain/scripts/heal-overlays.sh" ] && echo present || echo absent)"
+check "the canonical updater copy is deleted" "absent" "$([ -e "$d/plain/scripts/update.sh" ] && echo present || echo absent)"
+check "a custom repo keeps its own updater" "present" "$([ -e "$d/custom/scripts/update.sh" ] && echo present || echo absent)"
+check "a custom repo still loses the other retired copies" "absent" "$([ -e "$d/custom/scripts/heal-overlays.sh" ] && echo present || echo absent)"
+PKG_REPOS_DIR="$d" bash "$SYNC" --check plain custom >/dev/null
+check "a synced repo is in sync" "0" "$?"
+printf 'not json\n' >"$d/plain/.github/update.json"
+if PKG_REPOS_DIR="$d" bash "$SYNC" --check plain >/dev/null 2>&1; then rc=passed; else rc=failed; fi
+check "a malformed update.json fails the sync instead of guessing its type" "failed" "$rc"
+
+echo "Test 26: release.sh builds only what the candidate changed, on the systems this host builds"
+d="$WORK/t26"
+mkdir -p "$d/bin"
+(
+  # shellcheck source=/dev/null
+  source "$STD/scripts/release.sh"
+  printf '{"x86_64-linux":{"a":"/nix/store/a.drv","b":"/nix/store/b.drv"},"aarch64-linux":{"c":"/nix/store/c.drv"}}\n' >"$d/base.json"
+  printf '{"x86_64-linux":{"a":"/nix/store/a.drv","b":"/nix/store/b2.drv","n":"/nix/store/n.drv"},"aarch64-linux":{"c":"/nix/store/c.drv"}}\n' >"$d/cand.json"
+  check "a changed and a new check are the changed ones" "/nix/store/b2.drv /nix/store/n.drv" "$(changed_drvs "$d/base.json" "$d/cand.json" x86_64-linux | sort | tr '\n' ' ' | sed 's/ $//')"
+  check "an unchanged system has nothing to build" "" "$(changed_drvs "$d/base.json" "$d/cand.json" aarch64-linux)"
+  echo '{}' >"$d/empty.json"
+  check "a HEAD that did not evaluate makes every candidate check changed" "3" "$(changed_drvs "$d/empty.json" "$d/cand.json" x86_64-linux | wc -l)"
+
+  cat >"$d/bin/nix" <<'SH'
+#!/usr/bin/env bash
+case "$3" in
+system) echo aarch64-linux ;;
+extra-platforms) echo "" ;;
+builders) echo "@$MACHINES" ;;
+esac
+SH
+  chmod +x "$d/bin/nix"
+  printf 'ssh-ng://a x86_64-linux,i686-linux /k 20 15 big-parallel - -\n# ssh-ng://b riscv64-linux /k 1 1 - - -\n' >"$d/machines"
+  check "the host system and every builder's systems are buildable" "aarch64-linux i686-linux x86_64-linux" \
+    "$(PATH="$d/bin:$PATH" MACHINES="$d/machines" build_systems | sort -u | tr '\n' ' ' | sed 's/ $//')"
+
+  STD="$d/std"
+  git init -q "$STD"
+  git -C "$STD" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+  git -C "$STD" tag v2.42.0
+  git -C "$STD" tag v2.9.0
+  if newer_than_every_tag v3.0.0; then r=newer; else r=refused; fi
+  check "a version past the newest tag is accepted" "newer" "$r"
+  if newer_than_every_tag v2.42.0; then r=newer; else r=refused; fi
+  check "the newest tag itself is refused" "refused" "$r"
+  if newer_than_every_tag v2.10.0; then r=newer; else r=refused; fi
+  check "a version older than the newest tag is refused, compared as versions" "refused" "$r"
+
+  g() { git -C "$STD" -c user.name=t -c user.email=t@t "$@"; }
+  mkdir -p "$STD/callers"
+  printf '{"x/ci.yml":"callers/ci.yml","x/old.sh":null}\n' >"$STD/synced-files.json"
+  printf 'one\n' >"$STD/callers/ci.yml"
+  printf 'result\n' >"$STD/.gitignore"
+  printf 'a\n' >"$STD/update.sh"
+  g add -A && g commit -qm base && base=$(g rev-parse HEAD)
+  printf 'b\n' >"$STD/update.sh"
+  g commit -qam script && script=$(g rev-parse HEAD)
+  printf 'result\n.devshell\n' >"$STD/.gitignore"
+  g commit -qam ignore && ignore=$(g rev-parse HEAD)
+  printf 'two\n' >"$STD/callers/ci.yml"
+  g commit -qam caller && caller=$(g rev-parse HEAD)
+  if consumers_need_roll "$base" "$script"; then r=roll; else r=none; fi
+  check "a script change needs no roll" "none" "$r"
+  if consumers_need_roll "$script" "$ignore"; then r=roll; else r=none; fi
+  check "a new baseline .gitignore line needs a roll" "roll" "$r"
+  if consumers_need_roll "$ignore" "$caller"; then r=roll; else r=none; fi
+  check "a changed caller needs a roll" "roll" "$r"
+  printf '%s %s\n' "$pass" "$fail" >"$d/counts"
+)
+read -r pass fail <"$d/counts"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

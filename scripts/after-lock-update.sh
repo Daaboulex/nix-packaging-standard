@@ -1,1 +1,0 @@
-../after-lock-update.sh

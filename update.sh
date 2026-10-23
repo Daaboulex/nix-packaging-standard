@@ -3,11 +3,6 @@ set -euo pipefail
 
 # Canonical auto-updater — Nix Packaging Standard.
 #
-# Source of truth: github.com/Daaboulex/nix-packaging-standard (update.sh),
-# checked out locally at repos/nix-packaging-standard/. Synced into each
-# packaging repo's scripts/update.sh by sync.sh — DO NOT edit per-repo copies;
-# edit the canonical and re-sync (drift-check CI verifies the copy's checksum).
-#
 # Reads config from .github/update.json (schema: update.schema.json in the
 # canonical repo). Contract: exit 0 = success / no update, exit 1 = update
 # failed, exit 2 = network or API error (retry next run).

@@ -35,8 +35,28 @@
           config,
           lib,
           pkgs,
+          system,
           ...
         }:
+        let
+          actionlintIgnore = ''property "workflow_(repository|sha)" is not defined in object type'';
+          baseOn =
+            fixture:
+            (inputs.flake-parts.lib.mkFlake
+              {
+                inputs = inputs // {
+                  self = {
+                    outPath = fixture;
+                    inherit inputs;
+                  };
+                };
+              }
+              {
+                systems = [ system ];
+                imports = [ ./flake-modules/base.nix ];
+              }
+            ).checks.${system};
+        in
         {
           pre-commit.settings.hooks =
             (import ./flake-modules/hooks.nix {
@@ -49,7 +69,70 @@
                 enable = true;
                 files = "\\.sh$";
               };
+              actionlint = {
+                enable = true;
+                files = "^(\\.github/workflows|callers)/";
+                entry = lib.mkForce "${pkgs.actionlint}/bin/actionlint -ignore ${lib.escapeShellArg actionlintIgnore}";
+              };
             };
+
+          checks.std-actionlint-ignore-still-needed =
+            pkgs.runCommand "std-actionlint-ignore-still-needed"
+              {
+                nativeBuildInputs = [ pkgs.actionlint ];
+                probe = ./.github/workflows/package-ci.yml;
+              }
+              ''
+                if actionlint "$probe" >lint.txt 2>&1; then
+                  echo "actionlint ${pkgs.actionlint.version} accepts job.workflow_repository and job.workflow_sha; delete actionlintIgnore and its -ignore from flake.nix"
+                  exit 1
+                fi
+                if ! grep -q 'property "workflow_sha" is not defined' lint.txt; then
+                  cat lint.txt
+                  echo "actionlint rejects the probe for a reason other than the one the ignore covers"
+                  exit 1
+                fi
+                if ! actionlint -ignore ${lib.escapeShellArg actionlintIgnore} "$probe"; then
+                  echo "the ignore no longer silences the job.workflow_* finding; its message changed"
+                  exit 1
+                fi
+                touch "$out"
+              '';
+
+          checks.std-base-fixtures =
+            let
+              current = baseOn ./tests/fixtures/consumer-current;
+              stale = baseOn ./tests/fixtures/consumer-stale;
+              custom = baseOn ./tests/fixtures/consumer-custom;
+              expect =
+                what: got: want:
+                if got == want then null else "${what}: got ${builtins.toJSON got}, want ${builtins.toJSON want}";
+              failures = lib.filter (x: x != null) [
+                (expect "a consumer on the release branch is declared as one" current.std-follows-release.declared
+                  (import ./lib.nix).releaseUrl
+                )
+                (expect "a consumer pinned to a tag is declared as that tag" stale.std-follows-release.declared
+                  "github:Daaboulex/nix-packaging-standard?ref=v2.42.0"
+                )
+                (expect "a consumer carrying no retired copy has none" current.std-no-retired-copies.present [ ])
+                (expect "a consumer carrying retired copies has each one named" stale.std-no-retired-copies.present
+                  [
+                    "scripts/heal-overlays.sh"
+                    "scripts/update.sh"
+                  ]
+                )
+                (expect "a custom updater's own scripts/update.sh is not a retired copy"
+                  custom.std-no-retired-copies.present
+                  [ ]
+                )
+              ];
+            in
+            pkgs.runCommand "std-base-fixtures" { } (
+              if failures == [ ] then
+                ''touch "$out"''
+              else
+                lib.concatMapStringsSep "\n" (f: "echo ${lib.escapeShellArg f}") failures + "\nexit 1\n"
+            );
 
           # patchAssertions is a shell string, so nothing type-checks it: this
           # exercises every primitive both ways. A helper that cannot fail is
@@ -309,7 +392,7 @@
               '';
 
           checks.std-update-retire-guard =
-            pkgs.runCommand "std-update-retire-guard" { canonical = ./update.yml; }
+            pkgs.runCommand "std-update-retire-guard" { canonical = ./.github/workflows/package-update.yml; }
               ''
                 guarded() {
                   local step
@@ -392,42 +475,6 @@
                 touch "$out"
               '';
 
-          checks.std-action-pins =
-            pkgs.runCommand "std-action-pins"
-              {
-                shipped = [
-                  ./ci.yml
-                  ./maintenance.yml
-                  ./update.yml
-                ];
-                own = ./.github/workflows;
-              }
-              ''
-                pins() { grep -ohE '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[a-f0-9]{40}' "$@" | sort -u; }
-                pins $shipped > shipped.txt
-                pins "$own"/*.yml > own.txt
-
-                if awk -F@ '
-                  NR == FNR { canon[$1] = $2; next }
-                  ($1 in canon) && canon[$1] != $2 {
-                    printf "  %s\n    shipped canonical: %s\n    this repo CI:      %s\n", $1, canon[$1], $2
-                    bad = 1
-                  }
-                  END { exit bad ? 1 : 0 }
-                ' shipped.txt own.txt; then
-                  echo "ok: every action pinned in both places agrees"
-                  touch "$out"
-                else
-                  echo ""
-                  echo "An action is pinned to different SHAs in the workflows this repo SHIPS"
-                  echo "(ci.yml, maintenance.yml, update.yml at the root) and the ones it RUNS"
-                  echo "(.github/workflows). Dependabot only scans .github/workflows, so it bumps"
-                  echo "the second and never the first: the fleet keeps the old pin until the"
-                  echo "canonical is bumped by hand. Bump the canonical to match, then re-run."
-                  exit 1
-                fi
-              '';
-
           # A consumer with no output for the rolling host cannot be built there.
           # The roll must still verify it (every declared system evaluates) and
           # still run its gate (the hook set built for the host), and never
@@ -446,31 +493,22 @@
                 touch "$out"
               '';
 
-          # This repo runs what it ships: its own maintenance workflow must be
-          # the canonical (GitHub reads no symlinked workflow, so it is a copy),
-          # and the scripts that workflow calls are symlinks to the
-          # canonicals. Nothing else compares the copy with the shipped file.
           checks.std-own-copies-match-shipped =
-            pkgs.runCommand "std-own-copies-match-shipped" { src = ./.; }
+            pkgs.runCommand "std-own-copies-match-shipped"
+              {
+                own = ./.github/workflows/maintenance.yml;
+                shipped = ./callers/maintenance.yml;
+              }
               ''
-                cd "$src"
-                bad=0
-                if cmp -s maintenance.yml .github/workflows/maintenance.yml; then
-                  echo "  ok   .github/workflows/maintenance.yml is the shipped canonical"
-                else
-                  echo "  FAIL .github/workflows/maintenance.yml differs from the maintenance.yml this repo ships; copy the canonical over it"
-                  diff -u maintenance.yml .github/workflows/maintenance.yml | head -40
-                  bad=1
+                sed 's#uses: Daaboulex/nix-packaging-standard/\(.*\)@release#uses: ./\1#' "$shipped" >local.yml
+                if cmp -s "$shipped" local.yml; then
+                  echo "  FAIL callers/maintenance.yml no longer calls package-maintenance.yml@release, so this check compares nothing"
+                  exit 1
                 fi
-                for s in heal-overlays.sh classify-build-failure.sh declared-runners.sh after-lock-update.sh report-failure.sh; do
-                  if [ "$(readlink "scripts/$s")" = "../$s" ]; then
-                    echo "  ok   scripts/$s is a link to the canonical"
-                  else
-                    echo "  FAIL scripts/$s is not a symlink to ../$s; a copy would drift the way the workflow did"
-                    bad=1
-                  fi
-                done
-                [ "$bad" = 0 ] || exit 1
+                if ! diff -u local.yml "$own"; then
+                  echo "  FAIL .github/workflows/maintenance.yml is not the consumers' caller pointed at this commit's own package-maintenance.yml"
+                  exit 1
+                fi
                 touch "$out"
               '';
 
@@ -549,16 +587,11 @@
                 for p in $syncedPaths; do
                   want "$p" "a synced file"
                 done
-                newest=$(grep -oE '^v[0-9]+\.[0-9]+\.[0-9]+ \(' "$readme" | tail -1 | tr -d ' (')
-                pin=$(grep -oE 'nix-packaging-standard\?ref=v[0-9]+\.[0-9]+\.[0-9]+' "$readme" | head -1 | cut -d= -f2)
-                if [ -z "$newest" ] || [ -z "$pin" ]; then
-                  echo "  FAIL could not read the newest History version ('$newest') or the example pin ('$pin')"
-                  bad=1
-                elif [ "$newest" != "$pin" ]; then
-                  echo "  FAIL the consumption example pins $pin while History's newest entry is $newest"
-                  bad=1
+                if grep -qF '"${(import ./lib.nix).releaseUrl}"' "$readme"; then
+                  echo "  ok   the consumption example follows the release branch"
                 else
-                  echo "  ok   the example pins the newest version, $pin"
+                  echo "  FAIL the README shows no std input set to \"${(import ./lib.nix).releaseUrl}\", the only url std-follows-release accepts"
+                  bad=1
                 fi
                 [ "$bad" = 0 ] || exit 1
                 touch "$out"

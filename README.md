@@ -6,11 +6,18 @@ Canonical source of the shared tooling used by every `*-nix` packaging repo.
 
 1. **Nix-side logic** (lint/format gate, dev shell, package→check aliasing,
    conformance + schema checks) is a flake-parts **flakeModule** that each repo
-   imports via a pinned `inputs.std` — versioned, type-checked, reproducible.
-2. **GitHub Actions YAML + scripts** (which cannot be a Nix import) are
-   bootstrapped into each repo by `sync.sh`, and their byte-identity to the
-   canonical is then enforced by the `std-conformance` flake check — no
-   curl-based drift workflow, no `raw.githubusercontent` dependency.
+   imports through `inputs.std`, which follows the `release` branch and is
+   locked like any other input.
+2. **GitHub Actions** are three reusable workflows in
+   `.github/workflows/package-*.yml`. Each consumer carries three small callers
+   (`callers/*.yml`, kept byte-identical by `std-conformance`), and every job
+   fetches the standard at the commit that defines the workflow it runs, so
+   the scripts and the workflow that calls them always come from one commit.
+   A fix to a workflow or script reaches the whole fleet on its next run once
+   it is released; nothing is copied into the consumers.
+
+The `release` branch only moves through `scripts/release.sh`, which checks the
+candidate against every consumer first (see "Releasing").
 
 ## How a repo consumes the standard
 
@@ -24,7 +31,7 @@ Canonical source of the shared tooling used by every `*-nix` packaging repo.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     std = {
-      url = "github:Daaboulex/nix-packaging-standard?ref=v2.42.0"; # pin the newest tag
+      url = "github:Daaboulex/nix-packaging-standard/release";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.git-hooks.follows = "git-hooks";
     };
@@ -44,8 +51,12 @@ Canonical source of the shared tooling used by every `*-nix` packaging repo.
 }
 ```
 
-Pin a **release tag**, never `main`: an eval-breaking change in the standard
-must never reach a repo except by a deliberate, reviewed lock bump.
+Follow the **`release` branch**, never `main` and never a tag. `main` is where
+the standard is developed; `release` only fast-forwards to a commit that passed
+the standard's CI and the fleet check, and each repo's scheduled lock refresh
+moves it there and verifies the result like any other input bump. A tag pin
+never moves: on 2026-10-23, 17 repos still sat on v2.40.1 after v2.42.0 had
+fixed their failure reports. `std-follows-release` refuses one.
 
 ## Repo conventions
 
@@ -62,14 +73,13 @@ paths below.
 Every consumer repo follows these. Metadata (description + topics) is declared in
 `.github/update.json` and applied with `sync-meta.sh`, so it can't silently drift.
 
-- **Default branch**: `main`, and a single branch — the `maintenance.yml`
+- **Default branch**: `main`, and a single branch — the Maintenance
   cleanup job prunes stale `update/*` branches.
-- **No per-repo dependabot**: GitHub Actions are pinned by SHA in the synced
-  workflows and bumped centrally in this standard, then re-synced fleet-wide. A
-  consumer `.github/dependabot.yml` would only open `github-actions` PRs that
-  cannot be merged (they break `std-conformance`), so consumers carry none —
-  dependabot lives only on this standard repo. `fleet-audit` enforces this.
-- **Issues enabled**: `update.yml`/`maintenance.yml` report a failed update or
+- **No per-repo dependabot**: GitHub Actions are pinned by SHA in this
+  standard's reusable workflows and bumped here by dependabot; a consumer's
+  callers pin no action, so a consumer `.github/dependabot.yml` has nothing to
+  bump and consumers carry none. `fleet-audit` enforces this.
+- **Issues enabled**: the Update and Maintenance workflows report a failed update or
   lock bump by filing an issue, so every repo keeps GitHub Issues enabled — a
   disabled-Issues repo would swallow those failures silently. `fleet-audit`
   enforces this.
@@ -112,8 +122,8 @@ rules above, plus:
   (`doCheck = false`) — its real correctness is already gated by nixpkgs' own
   build (the canonical case: unsloth's `accelerate` override).
 - **Crates** come from `static.crates.io` (the `crates.io/api/v1` download
-  endpoint rate-limits CI and 403s); `ci.yml` also retries transient fetch
-  failures once.
+  endpoint rate-limits CI and 403s); CI also retries transient fetch
+  failures, twice, after 60 and 300 seconds.
 
 ## Documentation
 
@@ -137,7 +147,7 @@ against the tree:
 
 | Module | Provides |
 | --- | --- |
-| `base` | git-hooks gate (`nixfmt`, `typos`, `rumdl`, `check-readme-sections`, `check-shell-pipelines`, and `std-home-proof` at push time), `formatter`, `devShells.default`, every declared package aliased into `checks` on the systems its `meta.platforms` supports (so `nix flake check` BUILDS it), and these checks: `std-conformance` (synced files byte-match the canonical), `std-update-json` (`.github/update.json` satisfies the schema), `std-devstate` (the baseline `.gitignore` entries are present), `std-devshell-order` (every dev shell pins `PRE_COMMIT_HOME` before it installs the hooks), `std-homestate` (no `home.file` in the home root), `std-meta-maintainers` (maintainers carry the nixpkgs shape), `std-no-fail-open` (no shell shape that reports success while doing nothing), `std-no-deprecated-system` (no `pkgs.system` read), `std-no-host-profile` (no path under the host's profile) |
+| `base` | git-hooks gate (`nixfmt`, `typos`, `rumdl`, `check-readme-sections`, `check-shell-pipelines`, and `std-home-proof` at push time), `formatter`, `devShells.default`, every declared package aliased into `checks` on the systems its `meta.platforms` supports (so `nix flake check` BUILDS it), and these checks: `std-conformance` (synced files byte-match the canonical), `std-no-retired-copies` (no script copy the workflows no longer read), `std-follows-release` (`inputs.std.url` is the `release` branch, `releaseUrl`), `std-update-json` (`.github/update.json` satisfies the schema), `std-devstate` (the baseline `.gitignore` entries are present), `std-devshell-order` (every dev shell pins `PRE_COMMIT_HOME` before it installs the hooks), `std-homestate` (no `home.file` in the home root), `std-meta-maintainers` (maintainers carry the nixpkgs shape), `std-no-fail-open` (no shell shape that reports success while doing nothing), `std-no-deprecated-system` (no `pkgs.system` read), `std-no-host-profile` (no path under the host's profile) |
 
 ## `lib`
 
@@ -155,6 +165,7 @@ without building the closure — eval-only and cheap, even in CI.
 | `patchAssertions` (a shell string, not a function) | Any `postPatch` that rewrites upstream source with `sed`/`awk` rather than `substituteInPlace --replace-fail`. Prepend it, then assert after every edit with `landed` / `gone` / `present` / `exactly_one` / `landed_soft`. Without it a renamed upstream anchor makes the edit apply to nothing and the package still builds green. See "Patching upstream source" below. |
 | `devStateHook` (a shell string) | The exports that keep every tool's cache and home under the project's `.devshell/`; `base` wires it into the default shell. See "Self-contained dev state" below. |
 | `mkDevShell { pkgs, config } args` | A custom dev shell that cannot get the pin order wrong: the pins, then the hook install, then the caller's own hook. |
+| `releaseUrl` (a string) | The one `inputs.std.url` every consumer declares; `std-follows-release`, `scripts/release.sh` and `scripts/fleet-roll.sh` all read it here. |
 | `failOpenPatterns` (a list) | The shell shapes `std-no-fail-open` refuses, each with its bad and good example; the standard's own check proves each pattern matches only the bad form. |
 
 Example:
@@ -175,30 +186,35 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | --- | --- | --- |
 | `flake.nix` | *(not synced)* | Exposes `flakeModules.*` |
 | `flake-modules/base.nix` | *(imported, not synced)* | The shared flakeModule |
-| `synced-files.json` | *(the map itself)* | Consumer path to canonical file: the one map `sync.sh` bootstraps from and `std-conformance` enforces |
-| `update.sh` | `scripts/update.sh` | Detect + apply upstream updates (a `custom` repo keeps its own) |
-| `heal-overlays.sh` | `scripts/heal-overlays.sh` | Probe every temporary divergence against the updated inputs and drop the healed ones |
-| `after-lock-update.sh` | `scripts/after-lock-update.sh` | Run the flake's `apps.<system>.after-lock-update` after the lock update, when it declares one, and stage the tracked files it rewrote |
-| `classify-build-failure.sh` | `scripts/classify-build-failure.sh` | Name a red run's failure class and enumerate its failed targets |
-| `declared-runners.sh` | `scripts/declared-runners.sh` | Name a GitHub runner for every system the flake declares checks on, refusing an unknown system or a flake that does not evaluate |
-| `report-failure.sh` | `scripts/report-failure.sh` | Keep one open issue per failure: file it the first day, then rewrite it each failing run with the days since it opened, commenting only when the failure changes |
+| `synced-files.json` | *(the map itself)* | Consumer path to canonical file, or `null` for a retired copy that must be absent: the one map `sync.sh` reads and `std-conformance` and `std-no-retired-copies` enforce |
+| `callers/ci.yml` | `.github/workflows/ci.yml` | Triggers, permissions and concurrency of CI; calls `package-ci.yml@release` |
+| `callers/update.yml` | `.github/workflows/update.yml` | The daily Update schedule; calls `package-update.yml@release` |
+| `callers/maintenance.yml` | `.github/workflows/maintenance.yml` | The daily Maintenance trigger, passing the `MAINTENANCE_CADENCE` repository variable (`daily`, `biweekly` or `weekly`; unset is `weekly`, anything else fails the run) |
+| `.github/workflows/package-ci.yml` | *(reusable, not synced)* | Archetype-blind CI (build every output on a runner per declared system) |
+| `.github/workflows/package-update.yml` | *(reusable, not synced)* | The update, verified on every declared system before it pushes |
+| `.github/workflows/package-maintenance.yml` | *(reusable, not synced)* | `flake.lock` refresh on the repo's cadence: heal probe, every declared system evaluated, the checks built on a runner per declared system, pushed only if all are green |
+| `update.sh` | *(run from here; retired copy `scripts/update.sh`)* | Detect + apply upstream updates. A `custom` repo keeps its own `scripts/update.sh`, which the Update workflow runs instead |
+| `heal-overlays.sh` | *(run from here; retired copy `scripts/heal-overlays.sh`)* | Probe every temporary divergence against the updated inputs and drop the healed ones |
+| `after-lock-update.sh` | *(run from here; retired copy `scripts/after-lock-update.sh`)* | Run the flake's `apps.<system>.after-lock-update` after the lock update, when it declares one, and stage the tracked files it rewrote |
+| `classify-build-failure.sh` | *(run from here; retired copy `scripts/classify-build-failure.sh`)* | Name a red run's failure class and enumerate its failed targets |
+| `declared-runners.sh` | *(run from here; retired copy `scripts/declared-runners.sh`)* | Name a GitHub runner for every system the flake declares checks on, refusing an unknown system or a flake that does not evaluate |
+| `report-failure.sh` | *(run from here; retired copy `scripts/report-failure.sh`)* | Keep one open issue per failure: file it the first day, then rewrite it each failing run with the days since it opened, commenting only when the failure changes |
 | `update-readme-options.sh` | `scripts/update-readme-options.sh` | Only where a repo already carries it: splice an options reference into the README |
-| `ci.yml` | `.github/workflows/ci.yml` | Archetype-blind CI (build every output on a runner per declared system) |
-| `maintenance.yml` | `.github/workflows/maintenance.yml` | `flake.lock` refresh on the repo's cadence: heal probe, every declared system evaluated, the checks built on a runner per declared system, pushed only if all are green |
-| `update.yml` | `.github/workflows/update.yml` | Scheduled Update workflow, verified on every declared system before it pushes |
 | `.envrc` | `.envrc` | `use flake`, so nix-direnv carries the dev-state pins into every entry point |
 | `.editorconfig` | `.editorconfig` | The fleet's editor defaults |
 | `update.schema.json` | *(reference, not synced)* | JSON Schema for `update.json` |
-| `sync.sh` | *(run from here)* | Bootstrap canonical files into repos |
+| `sync.sh` | *(run from here)* | Write the synced files into repos and delete the retired copies |
 | `sync-meta.sh` | *(run from here)* | Apply repo description + topics from `update.json` to GitHub |
+| `scripts/release.sh` | *(run from here)* | The only way `release` moves: CI on the commit, then the fleet check, then the tag and the fast-forward |
 | `scripts/fleet-audit.sh` | *(run from here)* | The fleet's green/red oracle: conformance + metadata + archetype + branches + issues + CI, local and remote |
-| `scripts/fleet-roll.sh` | *(run from here)* | Adopt a new tag across every consumer: pin, sync, build, commit, push, each repo restored on any failure |
+| `scripts/fleet-roll.sh` | *(run from here)* | Adopt the `release` head across every consumer: pin, lock, sync from that commit, build, commit, push, each repo restored on any failure |
 | `scripts/check-shell-pipelines.sh`, `scripts/check-readme-sections.sh` | *(hooks, not synced)* | The pre-commit hooks `base` wires into every consumer |
 
-The synced workflow files + `scripts/update.sh` are byte-identical fleet-wide
-and enforced by `std-conformance`. A change to a synced file is a minor bump,
-adopted by every repo in one coordinated `fleet-roll`; a patch bump leaves the
-synced files byte-identical.
+"Run from here" means a job fetches the file from the standard at the commit
+of the reusable workflow it runs (`job.workflow_repository` at
+`job.workflow_sha`). What a consumer carries is byte-identical fleet-wide and
+enforced by `std-conformance`; a release that changes it needs a `fleet-roll`
+right after it, and `scripts/release.sh` says so when it does.
 
 ## Overlays compose against the consumer, not against our own lock
 
@@ -252,12 +268,12 @@ in its own `perSystem`, never by patching the standard:
 
 ## CI model
 
-One archetype-blind `ci.yml`, identical fleet-wide. It runs the AI-artifact
+One archetype-blind `package-ci.yml`, called by every consumer. It runs the AI-artifact
 guard, reclaims ~20 GB of preinstalled toolchains nix never uses (large source
 builds otherwise exhaust the runner's ~14 GB default disk), then builds every
 output the flake declares for each runner's system via `nix-fast-build
 --skip-cached`. The matrix is not fixed: a plan job runs
-`scripts/declared-runners.sh`, which names `ubuntu-latest` for `x86_64-linux`
+`declared-runners.sh`, which names `ubuntu-latest` for `x86_64-linux`
 and `ubuntu-24.04-arm` for `aarch64-linux` among the systems the flake declares
 checks on, so no runner starts for an arch the repo does not build, and a flake
 that does not evaluate fails the plan instead of reading as "nothing declared".
@@ -292,7 +308,7 @@ The one place a built binary does run on a runner is the Update verification
 (`verify.binary`, and a custom updater's smoke test). A runner is not a dev
 host: it has no GPU, no display, no KVM, and Ubuntu's AppArmor refuses the
 unprivileged user namespace a `buildFHSEnv` wrapper's `bwrap` needs, so
-`update.yml` opens that knob before the update runs and proves it with
+the Update workflow opens that knob before the update runs and proves it with
 `unshare`. A verification added to an update path is proven on a runner
 (dispatch the Update workflow once) before the change is called done: a pass
 on a development host says nothing about the runner's kernel, sandboxing or
@@ -301,7 +317,7 @@ devices, and the first live run is otherwise the first test.
 ## Architecture and platforms
 
 The fleet's canonical target set is **`x86_64-linux` + `aarch64-linux`**, and
-`ci.yml`, `update.yml` and `maintenance.yml` build on a native runner for each
+the CI, Update and Maintenance workflows build on a native runner for each
 one a repo declares (`ubuntu-latest`, `ubuntu-24.04-arm`). A repo's **supported
 arches are its flake `systems`** — the executable truth CI builds; nothing
 restates it.
@@ -350,9 +366,54 @@ export PKG_REPOS_DIR=/path/to/repos   # directory holding the packaging clones
 ./sync.sh --check               # report drift, change nothing, exit 1 if any
 ```
 
-`custom`-type repos keep a bespoke `scripts/update.sh` (skipped here).
-Enforcement is the per-repo `std-conformance` flake check; `sync.sh --check` is
-the same comparison locally.
+`sync.sh` copies each synced file and deletes each retired copy; a `custom`-type
+repo keeps its own `scripts/update.sh`. Enforcement is the per-repo
+`std-conformance` and `std-no-retired-copies` checks; `sync.sh --check` is the
+same comparison locally.
+
+## Releasing
+
+```bash
+export PKG_REPOS_DIR=/path/to/repos
+scripts/release.sh v3.0.1 --dry-run   # every check, the tag message, nothing pushed
+scripts/release.sh v3.0.1             # then tag it and fast-forward release
+```
+
+`release.sh` refuses unless the tree is clean on `main` and pushed, the
+standard's own CI passed on GitHub for that commit, the version is newer than
+every tag and has a History entry, and `release` fast-forwards to the commit.
+It then runs the fleet check: each consumer is fetched and cloned at its
+`origin/main` (its HEAD when it has no remote), the clone is rolled to the
+candidate (pin and synced files), and every system the consumer
+declares is evaluated with `std` overridden to the candidate. A check whose
+derivation did not change cannot change its result, so only the changed ones
+are built, on every system this host or its remote builders build; any other
+system is evaluated only. The tag message records how many consumers passed,
+how many changed checks were built and where, which systems were evaluated
+only, and every consumer left out with `--skip`. One failing consumer refuses
+the release.
+
+When a release changes what consumers carry (every file `synced-files.json`
+names, the map itself, or the baseline `.gitignore`), each consumer's next lock
+refresh fails `std-conformance` or `std-devstate` until it is rolled, so
+`release.sh` names the roll to run: `scripts/fleet-roll.sh --execute --notes
+<file>`. Everything else, every workflow and script change, reaches the fleet
+on its next run.
+
+Two of the three workflows run before a release reaches anyone: this repo's CI
+calls `package-ci.yml` from the same commit on every push, and its own
+Maintenance calls the local `package-maintenance.yml`, so `main` refreshes this
+repo's lock with the workflow it is about to release. `release.sh` requires
+that CI to be green. The Update workflow has no canary here (this repo has no
+upstream to update); when it or a script it runs changed, `release.sh` says so
+and names the dispatch to run on one consumer before 06:00 UTC, when every
+consumer runs it.
+
+actionlint 1.7.12 does not yet know `job.workflow_repository` and
+`job.workflow_sha` (rhysd/actionlint#707 is open), so this repo's own
+actionlint hook ignores exactly those two findings. `std-actionlint-ignore-still-needed`
+fails the day the pinned actionlint accepts them, so the ignore goes with the
+next lock bump that makes it unnecessary.
 
 ## `fleet-audit`
 
@@ -602,9 +663,10 @@ release and wrong from the next, and the update that finds it out fails.
 No package, module or activation step hides a failure: no `|| true`, no
 `2>/dev/null` in front of a failure, no empty `except`. A step that may
 legitimately have nothing to do tests for that case explicitly (`[ -e ... ]`)
-and fails on anything else. The synced `update.sh` still carries these shapes,
-which is why `std-no-fail-open` does not refuse them yet: the gate follows once
-the canonical is clean, so it never reds a consumer for the standard's own debt.
+and fails on anything else. `update.sh`, which every consumer carried until
+v3.0.0, still carries these shapes, and so may the custom updaters, which is
+why `std-no-fail-open` does not refuse them yet: adding the shape is its own
+release, through the fleet check, once both are clean.
 
 Nix seeds a tool's file once when it is absent and never replays it: no unit
 that re-applies settings at login or boot, no store link over a file the
@@ -705,7 +767,7 @@ fix-one-discover-next; every failure issue carries a machine class
 `missing-python-dep`, `requirements-coverage`,
 `python-metadata-version-mismatch`, `substitution-pattern-drift`, or an honest
 `unclassified`) plus the failed attributes of every runner and the failed
-derivations (`scripts/classify-build-failure.sh`); temporary divergences
+derivations (`classify-build-failure.sh`); temporary divergences
 bridge nixpkgs regressions, missing dependencies, and pins, and remove
 themselves once they stop doing any work; and the weekly Fleet CI watch
 (standard repo only) keeps one open issue naming any consumer with an open
@@ -714,7 +776,7 @@ missing, closing it when the fleet is clean.
 
 Each job uploads its log under its own file name and the report downloads them
 with `merge-multiple`, so the log reaches the issue whether one job failed or
-several. `scripts/report-failure.sh` keeps one open issue per failure: the
+several. `report-failure.sh` keeps one open issue per failure: the
 first failing run files it, every later failing run rewrites its title and body
 with the days since it opened, and it comments only when the failure itself
 changes, so a failure that has lasted three weeks reads as three weeks old.
@@ -792,8 +854,8 @@ the moment nixpkgs' own package carries the dependency:
 ```
 
 The repo composes `overlays.default` = its permanent glue + every fix, and
-exports `overlays.probe` = the glue alone. `scripts/heal-overlays.sh` (synced)
-probes every fix against the probe pkgs -- evaluating a `dropWhen`, **building**
+exports `overlays.probe` = the glue alone. `heal-overlays.sh`, run by the
+Maintenance workflow, probes every fix against the probe pkgs -- evaluating a `dropWhen`, **building**
 a `dropWhenBuilds` -- and deletes the ones that fire.
 
 **Where it runs is load-bearing.** Maintenance runs the probe INSIDE the
@@ -954,10 +1016,10 @@ plus a `CHANGELOG.md`).
 - Outputs (to `$GITHUB_OUTPUT`): `updated`, `old_version`, `new_version`,
   `package_name`, `upstream_url`, `error_type`.
 
-## `update.yml` / `maintenance.yml` behaviour
+## Update and Maintenance behaviour
 
 - Update success → the change is built on a runner for every other system the
-  flake declares checks on (`scripts/declared-runners.sh`), then committed and
+  flake declares checks on (`declared-runners.sh`), then committed and
   pushed to the default branch as the exact commit that was verified. A system
   that fails files the same `update-failed` issue as `exit 1` and pushes
   nothing.
@@ -1236,6 +1298,26 @@ switch to any edit, regenerate rather than restate, keep errors visible and a
 tool's own state its own, and find `dlopen`ed libraries through RUNPATH. They
 are written rules for now; `std-no-fail-open` gains the `|| true` shape only
 once the synced `update.sh` no longer carries it.
+
+v3.0.0 (2026-10) ends the copy-and-roll cycle. Through v2 every consumer
+carried byte-identical copies of three workflows and up to seven scripts, so
+each fix to them was a minor bump that reached a repo only when someone rolled
+it there, and a tag pin never moved: on 2026-10-23, 17 repos still ran v2.40.1
+and filed the false "No job uploaded a log" issues v2.42.0 had fixed, and the
+v2.42.0 roll itself copied an uncommitted working tree into one repo. The
+workflows are now reusable workflows in this repo; a consumer carries three
+callers, every job fetches the scripts at the commit that defines its
+workflow, and the retired copies are deleted by `sync.sh` and refused by
+`std-no-retired-copies`. Consumers follow the `release` branch
+(`std-follows-release`, `releaseUrl`), which only `scripts/release.sh` moves,
+after the commit's CI and a fleet check that builds every check the candidate
+changes (`tests/run.sh` Test 26). `fleet-roll` adopts what `release` points to
+and syncs from that commit, never from the working tree. The maintenance
+cadence fails on an unknown value instead of falling back to weekly; branch
+cleanup fails on an error it cannot handle instead of logging it as a skip;
+CI retries a transient fetch twice. `std-action-pins` is gone: the shipped
+workflows are the ones dependabot bumps. `std-base-fixtures` evaluates `base`
+against three fixture consumers.
 
 ## License
 

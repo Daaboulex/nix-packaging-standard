@@ -31,9 +31,6 @@ jobs:
           nix fmt
           git diff --exit-code --stat
 
-      - name: Workflow lint
-        run: nix run --inputs-from . nixpkgs#actionlint -- ci.yml update.yml maintenance.yml .github/workflows/*.yml
-
       - name: Shell syntax (bash -n)
         run: |
           git ls-files -z '*.sh' | xargs -0 -n1 nix run --inputs-from . nixpkgs#bash -- -n
@@ -54,5 +51,8 @@ jobs:
       - name: update.sh behavioral regression tests
         run: bash tests/run.sh
 
-      - name: Flake checks (std-action-pins, patch assertions, fail-open patterns, hooks)
+      - name: Flake checks (patch assertions, fail-open patterns, fixtures, hooks)
         run: nix flake check --keep-going --print-build-logs
+
+  package-ci:
+    uses: ./.github/workflows/package-ci.yml

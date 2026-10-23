@@ -4,16 +4,18 @@ set -uo pipefail
 
 usage() {
   cat <<'USAGE'
-fleet-roll - adopt a new nix-packaging-standard tag across every consumer repo.
+fleet-roll - adopt the standard's release branch head across every consumer repo.
 
-  PKG_REPOS_DIR=/path/to/repos ./scripts/fleet-roll.sh <tag> [options] [repo...]
+  PKG_REPOS_DIR=/path/to/repos ./scripts/fleet-roll.sh [options] [repo...]
 
-  <tag>          the standard tag to adopt, e.g. v2.27.0. Must exist locally
-                 and be pushed to the standard's remote.
+  The target is the commit origin/release points to, published by
+  scripts/release.sh. Each repo's std input is set to follow the release
+  branch, its lock is moved to that commit, and the synced files are copied
+  from that same commit, never from this working tree.
   --execute      commit and push. WITHOUT IT THIS IS A DRY RUN: each repo is
                  bumped, synced and verified, then restored to its clean state.
-  --notes <file> the commit body, required by --execute. What the tag changes
-                 is the author's to state; the script will not invent it.
+  --notes <file> the commit body, required by --execute. What the release
+                 changes is the author's to state; the script will not invent it.
   --skip-build   skip the local canonical build. Refused with --execute, since
                  pushing unverified is the thing this exists to prevent.
   --sync         fast-forward a clone that is clean and strictly behind its
@@ -22,14 +24,15 @@ fleet-roll - adopt a new nix-packaging-standard tag across every consumer repo.
   repo...        restrict to these repos (default: every consumer).
 
 Scope: every directory under PKG_REPOS_DIR holding a .github/update.json.
-A repo already pinned to <tag> is reported and left alone. A repo with no git
+A repo already following the release branch, locked to its head and in sync
+is reported and left alone. A repo with no git
 remote (an unpushed WIP) is rolled locally and pushed nowhere, the way
 fleet-audit audits such a repo locally and skips it remotely.
 
 Exit: 0 = every targeted repo rolled or dry-ran clean; 1 = at least one repo
 failed; 2 = usage or environment error. Fails closed: a dirty repo, a repo out
-of sync with its remote, a missing tag, or a failing build is a failure and is
-never rolled past.
+of sync with its remote, a missing release branch, or a failing build is a
+failure and is never rolled past.
 USAGE
 }
 
@@ -38,7 +41,6 @@ EXECUTE=0
 SKIP_BUILD=0
 SYNC=0
 NOTES=""
-TAG=""
 declare -a TARGETS=()
 
 while [ "$#" -gt 0 ]; do
@@ -58,17 +60,11 @@ while [ "$#" -gt 0 ]; do
     echo "fleet-roll: unknown option '$1'" >&2
     exit 2
     ;;
-  *)
-    if [ -z "$TAG" ]; then TAG="$1"; else TARGETS+=("$1"); fi
-    ;;
+  *) TARGETS+=("$1") ;;
   esac
   shift
 done
 
-[ -n "$TAG" ] || {
-  usage >&2
-  exit 2
-}
 REPOS_DIR="${PKG_REPOS_DIR:?set PKG_REPOS_DIR to the directory holding the packaging-repo clones}"
 [ -d "$REPOS_DIR" ] || {
   echo "fleet-roll: PKG_REPOS_DIR '$REPOS_DIR' is not a directory" >&2
@@ -92,16 +88,14 @@ if [ "$EXECUTE" -eq 1 ]; then
     exit 2
   fi
 fi
-git -C "$STD" rev-parse -q --verify "refs/tags/$TAG" >/dev/null || {
-  echo "fleet-roll: tag '$TAG' does not exist in $STD" >&2
+git -C "$STD" fetch --quiet origin refs/heads/release:refs/remotes/origin/release || {
+  echo "fleet-roll: could not fetch the standard's release branch; publish one with scripts/release.sh" >&2
   exit 2
 }
-published=$(git -C "$STD" ls-remote --tags origin "refs/tags/$TAG") || {
-  echo "fleet-roll: could not reach the standard's remote to confirm '$TAG' is published" >&2
-  exit 2
-}
-[ -n "$published" ] || {
-  echo "fleet-roll: tag '$TAG' is not on the standard's remote, and every consumer fetches it from there; push it first: git -C $STD push origin $TAG" >&2
+RELEASE_SHA=$(git -C "$STD" rev-parse refs/remotes/origin/release)
+TAG=$(git -C "$STD" tag --points-at "$RELEASE_SHA" --list 'v*' | sort -V | tail -1)
+[ -n "$TAG" ] || {
+  echo "fleet-roll: origin/release ($RELEASE_SHA) carries no version tag, so it was not published by scripts/release.sh" >&2
   exit 2
 }
 
@@ -117,6 +111,16 @@ STALL_POLL=${STALL_POLL:-30}
 
 TRANSIENT='crates\.io|error: cannot download|unable to download|http error 5[0-9][0-9]|status code: (403|429|5[0-9][0-9])|curl: \(|couldn.t resolve host|connection reset by peer|temporary failure in name resolution|operation timed out'
 LOGDIR=$(mktemp -d -t fleet-roll-XXXXXX)
+RELEASE_TREE="$LOGDIR/std"
+mkdir -p "$RELEASE_TREE"
+git -C "$STD" archive "$RELEASE_SHA" | tar -x -C "$RELEASE_TREE" || {
+  echo "fleet-roll: could not extract $RELEASE_SHA from $STD" >&2
+  exit 2
+}
+RELEASE_URL=$(nix eval --raw --file "$RELEASE_TREE/lib.nix" releaseUrl) || {
+  echo "fleet-roll: $TAG names no releaseUrl in lib.nix, so it predates the release branch" >&2
+  exit 2
+}
 
 note() { printf '  %s\n' "$1"; }
 fail_repo() {
@@ -169,10 +173,10 @@ hook_live() {
 # the host from that same pinned standard.
 refresh_hook() {
   local dir="$1"
-  (cd "$dir" && nix develop --command true) >/dev/null 2>&1 ||
+  (cd "$dir" && nix develop --command true) >>"$steplog" 2>&1 ||
     (cd "$dir" && nix develop --impure --expr \
-      "import $STD/flake-modules/host-hooks.nix { consumer = $dir; system = builtins.currentSystem; }" \
-      --command true) >/dev/null 2>&1 || true
+      "import $RELEASE_TREE/flake-modules/host-hooks.nix { consumer = $dir; system = builtins.currentSystem; }" \
+      --command true) >>"$steplog" 2>&1
   hook_live "$dir"
 }
 
@@ -276,25 +280,27 @@ for repo in "${TARGETS[@]}"; do
     fi
   fi
 
-  current=$(grep -oE 'nix-packaging-standard\?ref=[^"]+' "$dir/flake.nix" 2>/dev/null | head -1 | cut -d= -f2)
+  current=$(grep -oE '"github:Daaboulex/nix-packaging-standard[^"]*"' "$dir/flake.nix" | head -1 | tr -d '"')
   if [ -z "$current" ]; then
-    fail_repo "$repo" "no pinned nix-packaging-standard ref found in flake.nix"
+    fail_repo "$repo" "flake.nix names no github:Daaboulex/nix-packaging-standard input"
     continue
   fi
-  if [ "$current" = "$TAG" ]; then
+  locked=$(jq -r '.nodes.std.locked.rev // empty' "$dir/flake.lock")
+  if [ "$current" = "$RELEASE_URL" ] && [ "$locked" = "$RELEASE_SHA" ] &&
+    PKG_REPOS_DIR="$REPOS_DIR" bash "$RELEASE_TREE/sync.sh" --check "$repo" >>"$steplog" 2>&1; then
     printf 'ok    %s: already at %s\n' "$repo" "$TAG"
     skipped=$((skipped + 1))
     continue
   fi
 
-  printf '\n-- %s: %s -> %s\n' "$repo" "$current" "$TAG"
+  printf '\n-- %s: %s at %s -> %s\n' "$repo" "$current" "${locked:-(not locked)}" "$TAG"
 
-  if ! sed -i -E "s#(nix-packaging-standard\?ref=)[^\"]+#\1${TAG}#" "$dir/flake.nix"; then
+  if ! sed -i -E "s#\"github:Daaboulex/nix-packaging-standard[^\"]*\"#\"${RELEASE_URL}\"#" "$dir/flake.nix"; then
     fail_repo "$repo" "could not rewrite the pin in flake.nix"
     restore "$dir"
     continue
   fi
-  if ! grep -q "nix-packaging-standard?ref=${TAG}" "$dir/flake.nix"; then
+  if ! grep -qF "\"$RELEASE_URL\"" "$dir/flake.nix"; then
     fail_repo "$repo" "pin rewrite did not take"
     restore "$dir"
     continue
@@ -305,8 +311,14 @@ for repo in "${TARGETS[@]}"; do
     restore "$dir"
     continue
   fi
+  locked=$(jq -r '.nodes.std.locked.rev // empty' "$dir/flake.lock")
+  if [ "$locked" != "$RELEASE_SHA" ]; then
+    fail_repo "$repo" "the lock resolved std to '${locked:-nothing}', not the release head $RELEASE_SHA; the release branch moved during the roll"
+    restore "$dir"
+    continue
+  fi
 
-  if ! PKG_REPOS_DIR="$REPOS_DIR" bash "$STD/sync.sh" "$repo" >>"$steplog" 2>&1; then
+  if ! PKG_REPOS_DIR="$REPOS_DIR" bash "$RELEASE_TREE/sync.sh" "$repo" >>"$steplog" 2>&1; then
     fail_repo "$repo" "sync.sh failed: $(tail -1 "$steplog")  log: $steplog"
     restore "$dir"
     continue

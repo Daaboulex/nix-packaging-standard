@@ -1,47 +1,37 @@
-# Canonical Maintenance workflow — Nix Packaging Standard.
-# Source of truth: github:Daaboulex/nix-packaging-standard. Synced into each
-# packaging repo by sync.sh; byte-identity enforced by the `std-conformance`
-# flake check. flake.lock refresh: evaluate every declared system, build the
-# checks on a runner for each declared system, push only if every one is
-# green, else open a labeled issue that closes itself on the next clean run;
-# plus stale-branch cleanup. Temporary fixes are probed and healed between the
-# update and the verification. Cadence is per-repo via the MAINTENANCE_CADENCE
-# repo variable (daily | biweekly | weekly); unset = weekly.
-name: Maintenance
+name: Package maintenance
 on:
-  schedule:
-    - cron: '0 4 * * *' # Daily 4 AM UTC; the gate job applies the per-repo cadence
-  workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: false
+  workflow_call:
+    inputs:
+      cadence:
+        description: "daily, biweekly (Wednesday and Sunday) or weekly (Sunday); a dispatched run always runs"
+        type: string
+        default: weekly
 
 permissions:
   contents: write
   issues: write
 
 jobs:
-  # Per-repo cadence gate. Set the MAINTENANCE_CADENCE repo variable to
-  # `daily` or `biweekly` (Wed+Sun) for fast-moving / closure-heavy repos;
-  # unset or any other value means `weekly` (Sun) — identical to the old
-  # Sunday-only schedule. workflow_dispatch always runs.
   gate:
     runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.c.outputs.run }}
     steps:
-      - id: c
+      - name: Apply the repository's cadence
+        id: c
         env:
-          CADENCE: ${{ vars.MAINTENANCE_CADENCE || 'weekly' }}
+          CADENCE: ${{ inputs.cadence }}
           EVENT: ${{ github.event_name }}
         run: |
-          dow=$(date -u +%u) # 1=Mon .. 7=Sun
-          run=no
+          dow=$(date -u +%u)
           case "$CADENCE" in
           daily) run=yes ;;
-          biweekly) if [ "$dow" = 3 ] || [ "$dow" = 7 ]; then run=yes; fi ;;
-          *) if [ "$dow" = 7 ]; then run=yes; fi ;; # weekly (default)
+          biweekly) if [ "$dow" = 3 ] || [ "$dow" = 7 ]; then run=yes; else run=no; fi ;;
+          weekly) if [ "$dow" = 7 ]; then run=yes; else run=no; fi ;;
+          *)
+            echo "::error::cadence '$CADENCE' is none of daily, biweekly, weekly; fix the MAINTENANCE_CADENCE repository variable"
+            exit 1
+            ;;
           esac
           if [ "$EVENT" = workflow_dispatch ]; then run=yes; fi
           echo "cadence=$CADENCE dow=$dow event=$EVENT -> run=$run"
@@ -62,6 +52,22 @@ jobs:
       stopped: ${{ steps.stopped.outputs.stage }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - &fetch-std
+        name: Fetch the standard at the commit that defines this workflow
+        env:
+          STD_REPOSITORY: ${{ job.workflow_repository }}
+          STD_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -o pipefail
+          if [ -z "$STD_REPOSITORY" ] || [ -z "$STD_SHA" ]; then
+            echo "::error::job.workflow_repository='$STD_REPOSITORY' job.workflow_sha='$STD_SHA': this runner does not name the commit of the reusable workflow, so its scripts cannot be fetched at that commit"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/std"
+          curl -fsSL --retry 5 --retry-all-errors "https://codeload.github.com/$STD_REPOSITORY/tar.gz/$STD_SHA" |
+            tar -xz --strip-components=1 -C "$RUNNER_TEMP/std"
+          echo "STD=$RUNNER_TEMP/std" >>"$GITHUB_ENV"
+          echo "running the scripts of $STD_REPOSITORY at $STD_SHA"
       - uses: DeterminateSystems/determinate-nix-action@e847f25223456b3058e12f7fc9d777b6a6f25060 # v3.23.2
         with:
           extra-conf: lazy-trees = false
@@ -76,18 +82,13 @@ jobs:
         id: app
         run: |
           set -o pipefail
-          bash scripts/after-lock-update.sh 2>&1 | tee -a "$LOG"
+          bash "$STD/after-lock-update.sh" 2>&1 | tee -a "$LOG"
 
-      # Probe the temporary fixes against the UPDATED inputs, before the
-      # verification build. Probing the committed lock instead would read a fix
-      # needed only on the NEW nixpkgs as healed, drop it, and re-break on the
-      # next bump. Removals ride the SAME verification as the lock bump, so the
-      # two land together or neither does.
-      - name: Probe and heal temporary fixes
+      - name: Probe the temporary fixes against the updated inputs and heal the ones no longer needed
         id: heal
         run: |
           set -o pipefail
-          bash scripts/heal-overlays.sh 2>&1 | tee -a "$LOG"
+          bash "$STD/heal-overlays.sh" 2>&1 | tee -a "$LOG"
 
       - name: Evaluate every declared system
         id: evaluate
@@ -99,7 +100,7 @@ jobs:
         id: candidate
         run: |
           sha=$(git rev-parse HEAD)
-          runners=$(bash scripts/declared-runners.sh)
+          runners=$(bash "$STD/declared-runners.sh")
           git add flake.lock
           git diff --cached --binary > /tmp/candidate.patch
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
@@ -164,7 +165,7 @@ jobs:
             git apply --index /tmp/candidate/candidate.patch
           fi
 
-      - name: Build every check for this system
+      - name: Build every check for this system, retrying only a transient fetch failure
         run: |
           SYS=$(nix eval --impure --raw --expr 'builtins.currentSystem')
           attempt=$(mktemp)
@@ -226,10 +227,7 @@ jobs:
           fi
           git push origin "HEAD:refs/heads/$BRANCH"
 
-      # Nothing else ever closed these, so a maintenance failure that got fixed
-      # stayed open forever and kept fleet-audit red (update.yml has always
-      # closed its own on success; this is the same contract).
-      - name: Close prior failure reports on success
+      - name: Close the maintenance issues this clean run resolves
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9 (node24)
         with:
           script: |
@@ -257,6 +255,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - *fetch-std
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: log-*
@@ -279,7 +278,7 @@ jobs:
 
       - name: Classify failure
         id: classify
-        run: bash scripts/classify-build-failure.sh /tmp/lock-build.log
+        run: bash "$STD/classify-build-failure.sh" /tmp/lock-build.log
 
       - name: Report the failure
         env:
@@ -315,20 +314,17 @@ jobs:
             fi
             printf '\n### Recovery\n\n%sbash\nnix flake update\nnix flake check --no-build --all-systems\nnix build --no-link\n%s\n' "$fence" "$fence"
           } >/tmp/issue-head.md
-          bash scripts/report-failure.sh maintenance "Maintenance: flake.lock update" "Maintenance: flake.lock update failed ($FAIL_CLASS)" /tmp/issue-head.md /tmp/lock-build.log
+          bash "$STD/report-failure.sh" maintenance "Maintenance: flake.lock update" "Maintenance: flake.lock update failed ($FAIL_CLASS)" /tmp/issue-head.md /tmp/lock-build.log
 
   cleanup:
     needs: gate
     if: needs.gate.outputs.run == 'yes'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Cleanup stale branches
+      - name: Delete update and upstream-update branches whose head is older than 30 days
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9 (node24)
         with:
           script: |
-            // Delete stale maintenance branches older than 30 days.
-            // Matches update/* and upstream-update/* (both _ and / separators).
             const { data: allRefs } = await github.rest.git.listMatchingRefs({
               owner: context.repo.owner, repo: context.repo.repo,
               ref: 'heads/'

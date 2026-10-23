@@ -1,16 +1,6 @@
-# Canonical Update workflow — Nix Packaging Standard.
-# Source of truth: github:Daaboulex/nix-packaging-standard. Bootstrapped into
-# each packaging repo by sync.sh; byte-identity enforced by the std-conformance
-# flake check (flakeModules.base) — do not edit per-repo copies.
-name: Update
+name: Package update
 on:
-  schedule:
-    - cron: "0 6 * * *"
-  workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: false
+  workflow_call:
 
 permissions:
   contents: write
@@ -35,17 +25,27 @@ jobs:
       runners: ${{ steps.runners.outputs.runners }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - &fetch-std
+        name: Fetch the standard at the commit that defines this workflow
+        env:
+          STD_REPOSITORY: ${{ job.workflow_repository }}
+          STD_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -o pipefail
+          if [ -z "$STD_REPOSITORY" ] || [ -z "$STD_SHA" ]; then
+            echo "::error::job.workflow_repository='$STD_REPOSITORY' job.workflow_sha='$STD_SHA': this runner does not name the commit of the reusable workflow, so its scripts cannot be fetched at that commit"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/std"
+          curl -fsSL --retry 5 --retry-all-errors "https://codeload.github.com/$STD_REPOSITORY/tar.gz/$STD_SHA" |
+            tar -xz --strip-components=1 -C "$RUNNER_TEMP/std"
+          echo "STD=$RUNNER_TEMP/std" >>"$GITHUB_ENV"
+          echo "running the scripts of $STD_REPOSITORY at $STD_SHA"
       - uses: DeterminateSystems/determinate-nix-action@e847f25223456b3058e12f7fc9d777b6a6f25060 # v3.23.2
         with:
           extra-conf: lazy-trees = false
 
-      # The verification runs built binaries (verify.binary, a custom smoke
-      # test), and a buildFHSEnv wrapper starts bwrap in an unprivileged user
-      # namespace. Ubuntu 24.04's AppArmor denies that by default, and 26.04
-      # adds a second knob; each is opened only where it exists, and the
-      # postcondition is proven so a runner that still refuses fails here,
-      # named, and not as a smoke-test verdict on the package.
-      - name: Allow unprivileged user namespaces
+      - name: Allow unprivileged user namespaces, which bwrap needs to run a verified binary
         run: |
           for knob in kernel.apparmor_restrict_unprivileged_userns kernel.apparmor_restrict_unprivileged_unconfined; do
             f="/proc/sys/${knob//.//}"
@@ -57,13 +57,19 @@ jobs:
             exit 1
           }
 
-      - name: Run update
+      - name: Run the updater, retrying only a transient fetch failure
         id: update
         run: |
           set +e
+          if [ "$(jq -r '.upstream.type' .github/update.json)" = custom ]; then
+            updater=scripts/update.sh
+          else
+            updater="$STD/update.sh"
+          fi
+          echo "updater: $updater"
           attempt=$(mktemp)
           run_update() {
-            bash scripts/update.sh 2>&1 | tee "$attempt"
+            bash "$updater" 2>&1 | tee "$attempt"
             local rc="${PIPESTATUS[0]}"
             cat "$attempt" >>"$LOG"
             return "$rc"
@@ -84,17 +90,13 @@ jobs:
             cat /tmp/update-outputs.env >> "$GITHUB_OUTPUT"
           fi
 
-      # Exit 2 means "transient, retry next run", and a permanent failure
-      # reported that way keeps the run green forever (eden-nix#13: a 404 for
-      # two months). The Actions cache carries the count of consecutive exit-2
-      # runs across runs; a week of them is escalated below as `stalled`.
       - name: Restore the transient-exit streak
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/update-streak
           key: update-streak-${{ github.run_id }}
           restore-keys: update-streak-
-      - name: Count consecutive transient exits
+      - name: Count consecutive transient exits, escalating a week of them as stalled
         id: streak
         env:
           EXIT_CODE: ${{ steps.update.outputs.exit_code }}
@@ -107,7 +109,7 @@ jobs:
           echo "$n" > /tmp/update-streak
           echo "streak=$n" >> "$GITHUB_OUTPUT"
           if [ "$n" -ge 7 ]; then
-            echo "::error::update.sh has exited 2 (transient, retry next run) on ${n} consecutive runs; a permanent failure is hiding behind the transient exit"
+            echo "::error::the updater has exited 2 (transient, retry next run) on ${n} consecutive runs; a permanent failure is hiding behind the transient exit"
             echo "stalled=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Save the transient-exit streak
@@ -129,7 +131,7 @@ jobs:
         if: steps.update.outputs.updated == 'true' && steps.update.outputs.exit_code == '0'
         run: |
           built=$(nix eval --impure --raw --expr 'builtins.currentSystem')
-          runners=$(bash scripts/declared-runners.sh "$built")
+          runners=$(bash "$STD/declared-runners.sh" "$built")
           echo "runners=$runners" >> "$GITHUB_OUTPUT"
       - if: steps.candidate.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -169,7 +171,7 @@ jobs:
       - name: Apply the candidate
         run: git apply --index /tmp/candidate/candidate.patch
 
-      - name: Build every check for this system
+      - name: Build every check for this system, retrying only a transient fetch failure
         run: |
           SYS=$(nix eval --impure --raw --expr 'builtins.currentSystem')
           attempt=$(mktemp)
@@ -218,11 +220,8 @@ jobs:
           name: candidate
           path: /tmp/candidate
 
-      # Silent success: commit + push
-      - name: Push update
+      - name: Push the verified update
         if: needs.update.outputs.updated == 'true'
-        # Outputs pass via env, never interpolated into the run-block shell
-        # (an upstream tag with a quote or $(...) would otherwise inject).
         env:
           OLDV: ${{ needs.update.outputs.old_version }}
           NEWV: ${{ needs.update.outputs.new_version }}
@@ -242,13 +241,8 @@ jobs:
           fi
           git push origin "HEAD:refs/heads/$BRANCH"
 
-      # Auto-close previous failure issues on success. Keyed on exit_code alone:
-      # gating on `updated` too left a repo whose update was FIXED but whose
-      # upstream had not moved unable to ever clear its own ticket.
-      - name: Close resolved issues
+      - name: Close the update-failed issues this clean run resolves
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9 (node24)
-        # Pass outputs via env, never interpolate ${{ }} into the script body
-        # (a value containing a quote/newline would break out of the JS).
         env:
           NEW_VERSION: ${{ needs.update.outputs.new_version }}
           DID_UPDATE: ${{ needs.update.outputs.updated }}
@@ -258,19 +252,20 @@ jobs:
               owner: context.repo.owner, repo: context.repo.repo,
               labels: 'update-failed', state: 'open'
             });
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const body = process.env.DID_UPDATE === 'true'
-              ? `Resolved by auto-update to ${process.env.NEW_VERSION}.`
-              : 'Resolved: the update path now completes cleanly (upstream version unchanged).';
+              ? `Resolved by the update to ${process.env.NEW_VERSION} in ${run}.`
+              : `Resolved: the update path completes cleanly in ${run} (upstream version unchanged).`;
             for (const issue of issues.data) {
-              await github.rest.issues.update({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: issue.number, state: 'closed',
-                state_reason: 'completed'
-              });
               await github.rest.issues.createComment({
                 owner: context.repo.owner, repo: context.repo.repo,
                 issue_number: issue.number,
                 body
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number, state: 'closed',
+                state_reason: 'completed'
               });
             }
 
@@ -287,6 +282,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.update.outputs.sha }}
+      - *fetch-std
       - if: needs.update.outputs.sha != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -320,7 +316,7 @@ jobs:
 
       - name: Classify the failure
         id: classify
-        run: bash scripts/classify-build-failure.sh /tmp/update.log
+        run: bash "$STD/classify-build-failure.sh" /tmp/update.log
 
       - name: Report the failure
         id: report
@@ -395,7 +391,7 @@ jobs:
               printf '\n%s\n' "$branch_note"
             fi
           } >/tmp/issue-head.md
-          bash scripts/report-failure.sh update-failed "Update " "$title" /tmp/issue-head.md /tmp/update.log
+          bash "$STD/report-failure.sh" update-failed "Update " "$title" /tmp/issue-head.md /tmp/update.log
           echo "error_type=$error_type" >>"$GITHUB_OUTPUT"
 
       - name: Fail the run
@@ -410,10 +406,7 @@ jobs:
     if: always() && needs.update.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      # Exit 2 is a transient network failure: it resolves no issue, so it retires no branch.
-      # Only the default branch retires: a run dispatched on an update/* branch is WORKING on
-      # that branch, and this job would delete the ref that same run just pushed to.
-      - name: Retire attempt branches that no longer have an open issue
+      - name: Retire attempt branches that no longer have an open issue, only from the default branch
         if: >-
           github.ref_name == github.event.repository.default_branch
           && (needs.update.outputs.exit_code == '0' || needs.update.outputs.exit_code == '1')

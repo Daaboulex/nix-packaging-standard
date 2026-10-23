@@ -3,9 +3,6 @@ set -uo pipefail
 
 # Canonical classify-build-failure — Nix Packaging Standard.
 #
-# Source of truth: github.com/Daaboulex/nix-packaging-standard, synced into
-# each packaging repo's scripts/ by sync.sh — DO NOT edit per-repo copies.
-#
 # Reads a nix / nix-fast-build log and emits a NAMED failure class plus the
 # complete failure inventory, so a red run is a one-glance diagnosis instead
 # of a raw log dig, and repeated fix-one-discover-next loops are visible as

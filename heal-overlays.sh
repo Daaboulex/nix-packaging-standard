@@ -3,10 +3,6 @@ set -uo pipefail
 
 # Canonical heal-overlays — Nix Packaging Standard.
 #
-# Source of truth: github.com/Daaboulex/nix-packaging-standard (heal-overlays.sh),
-# synced into each packaging repo's scripts/heal-overlays.sh by sync.sh — DO NOT
-# edit per-repo copies; std-conformance enforces byte-identity.
-#
 # EVERY temporary divergence from nixpkgs -- a regression bridge, a dependency
 # the packaged upstream needs but nixpkgs' package does not carry yet, or a
 # version pin -- lives in overlays/<name>.nix, one fix per file (mirrors the
