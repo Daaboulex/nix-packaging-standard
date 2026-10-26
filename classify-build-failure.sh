@@ -1,32 +1,13 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Canonical classify-build-failure — Nix Packaging Standard.
-#
-# Reads a nix / nix-fast-build log and emits a NAMED failure class plus the
-# complete failure inventory, so a red run is a one-glance diagnosis instead
-# of a raw log dig, and repeated fix-one-discover-next loops are visible as
-# a single enumerated report (builds run with --keep-going).
-#
-#   classify-build-failure.sh <logfile>
-#
-# Outputs (GITHUB_OUTPUT or stdout):
-#   class=<transient-infra|eval-error|compile-error|sandbox-download|upstream-rerelease-hash-mismatch|nixpkgs-package-drop|
-#          missing-python-dep|requirements-coverage|
-#          python-metadata-version-mismatch|substitution-pattern-drift|
-#          unclassified>
-#   failed_attrs=<nix-fast-build failed attribute list, if present>
-#   failed_drvs=<up to 12 failing derivations, deduplicated>
-#
-# Precedence: the LAST matching class wins — ordered least- to most-
-# actionable, so the report names the most specific known cause.
-
-LOG="${1:?usage: classify-build-failure.sh <logfile>}"
+LOG="${1:?usage: classify-build-failure.sh <logfile>; writes class, evidence, failed_attrs and failed_drvs}"
 OUTPUT_FILE="${GITHUB_OUTPUT:-/dev/stdout}"
 out() { echo "$1=$2" >>"$OUTPUT_FILE"; }
 
 [ -r "$LOG" ] || {
   out "class" "unclassified"
+  out "evidence" ""
   out "failed_attrs" ""
   out "failed_drvs" ""
   exit 0
@@ -44,32 +25,30 @@ failed_drvs=$(grep -oE "Cannot build '/nix/store/[^']+\.drv'" "$LOG" |
   sed "s|Cannot build '||; s|'\$||" | sort -u | head -12 | tr '\n' ' ')
 
 class=unclassified
-grep -qiE "couldn.t resolve host|temporary failure in name resolution|connection reset by peer|status code: (403|429)|operation timed out|service unavailable" "$LOG" && class=transient-infra
-# A store path the evaluator named but the store does not hold (a runner-side
-# fetch/GC race, not our code): the same revision re-runs green, so it is
-# transient -- never a repo defect to chase.
-grep -qE "path '[^']+' is not valid|does not exist in the Nix store|no such path in the store" "$LOG" && class=transient-infra
-grep -qE 'nix_fast_build:EVAL: [0-9]+ successes, [1-9]|error: Failed assertions|while evaluating (the attribute|the option|derivation)' "$LOG" && class=eval-error
-grep -qE '\.(c|cc|cpp|cxx|h|hh|hpp|hxx):[0-9]+:[0-9]+: (fatal )?error: |\[-Werror(=[a-z0-9-]+)?\]' "$LOG" && class=compile-error
-grep -q 'file DOWNLOAD cannot compute hash on failed download' "$LOG" && class=sandbox-download
-grep -q 'hash mismatch in fixed-output' "$LOG" && class=upstream-rerelease-hash-mismatch
-grep -qE 'not supported for interpreter python|is marked as broken' "$LOG" && class=nixpkgs-package-drop
-grep -q 'ModuleNotFoundError' "$LOG" && class=missing-python-dep
-# nixpkgs' pythonRuntimeDepsCheck: the packaged upstream declares a runtime
-# dependency the derivation does not carry (a git-main src that moved ahead of
-# nixpkgs' release). Same actionable class as an import failure.
-grep -qE '^ *> *- [a-zA-Z0-9_.-]+ not installed' "$LOG" && class=missing-python-dep
-grep -q 'requirements not present in the env' "$LOG" && class=requirements-coverage
-# The declared version contradicts the built wheel's METADATA -- a real
-# packaging defect with a documented remedy (pyprojectVersionPatchHook).
-grep -q 'METADATA specifies version' "$LOG" && class=python-metadata-version-mismatch
-
-# A --replace-fail target upstream has moved. The substitution is cut against
-# one release while src tracks a branch, so the pattern names text the source
-# no longer carries: the substitution is what needs fixing, not the build.
-grep -qE "ERROR: pattern .* doesn.t match anything in file" "$LOG" && class=substitution-pattern-drift
+evidence=""
+match() {
+  local line
+  if line=$(grep -m1 "$2" -- "$3" "$LOG"); then
+    class="$1"
+    evidence=$(printf '%s' "$line" | sed 's/^[[:space:]]*//' | cut -c1-300)
+  fi
+}
+match transient-infra -iE "couldn.t resolve host|temporary failure in name resolution|connection reset by peer|status code: (403|429)|operation timed out|service unavailable"
+match transient-infra -E "path '[^']+' is not valid|does not exist in the Nix store|no such path in the store"
+match eval-error -E 'nix_fast_build:EVAL: [0-9]+ successes, [1-9]|error: Failed assertions|while evaluating (the attribute|the option|derivation)'
+match compile-error -E '\.(c|cc|cpp|cxx|h|hh|hpp|hxx):[0-9]+:[0-9]+: (fatal )?error: |\[-Werror(=[a-z0-9-]+)?\]'
+match setup-hook-error -F 'Builder called die:'
+match sandbox-download -F 'file DOWNLOAD cannot compute hash on failed download'
+match upstream-rerelease-hash-mismatch -F 'hash mismatch in fixed-output'
+match nixpkgs-package-drop -E 'not supported for interpreter python|is marked as broken'
+match missing-python-dep -F 'ModuleNotFoundError'
+match missing-python-dep -E '^ *> *- [a-zA-Z0-9_.-]+ not installed'
+match requirements-coverage -F 'requirements not present in the env'
+match python-metadata-version-mismatch -F 'METADATA specifies version'
+match substitution-pattern-drift -E "ERROR: pattern .* doesn.t match anything in file"
 
 out "class" "$class"
+out "evidence" "$evidence"
 out "failed_attrs" "${failed_attrs:-}"
 out "failed_drvs" "${failed_drvs% }"
 exit 0

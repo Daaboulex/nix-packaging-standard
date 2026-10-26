@@ -684,11 +684,21 @@ if [ "$DO_REMOTE" -eq 1 ]; then
     [ -n "$other" ] && info "$repo: open bug report(s), not a plumbing failure: $other"
   done
 
+  never_started_for_billing() {
+    local jobs job ann
+    jobs="$(gh_try api "repos/$1/actions/runs/$2/jobs?per_page=100" --jq '.jobs[] | select(.conclusion == "failure") | .id')" || return 1
+    for job in $jobs; do
+      ann="$(gh_try api "repos/$1/check-runs/$job/annotations" --jq '.[].message')" || return 1
+      if grep -qF 'was not started because' <<<"$ann"; then return 0; fi
+    done
+    return 1
+  }
+
   hdr "remote: CI complete + green (latest run per required workflow on main)"
   for repo in "${CONSUMERS[@]}"; do
     has_remote "$repo" || continue
     if ! runs="$(gh_try run list -R "$(gh_slug "$repo")" --branch main -L 40 \
-      --json workflowName,conclusion,status)"; then
+      --json workflowName,conclusion,status,databaseId)"; then
       red "$repo: could not list workflow runs (gh error: $(gherr))"
       continue
     fi
@@ -717,7 +727,12 @@ if [ "$DO_REMOTE" -eq 1 ]; then
         repo_ok=0
         ;;
       completed/*)
-        red "$repo: workflow '$wf' latest run on main = ${latest#completed/}"
+        run_id="$(jq -r --arg w "$wf" 'map(select(.workflowName==$w)) | .[0].databaseId' <<<"$runs")"
+        if never_started_for_billing "$(gh_slug "$repo")" "$run_id"; then
+          red "$repo: workflow '$wf' latest run on main was never started: GitHub refused it at the Actions spending limit (a private repo past its included minutes)"
+        else
+          red "$repo: workflow '$wf' latest run on main = ${latest#completed/}"
+        fi
         repo_ok=0
         ;;
       *)

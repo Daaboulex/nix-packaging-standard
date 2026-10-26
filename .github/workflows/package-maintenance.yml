@@ -14,6 +14,7 @@ permissions:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       run: ${{ steps.c.outputs.run }}
     steps:
@@ -41,9 +42,11 @@ jobs:
     needs: gate
     if: needs.gate.outputs.run == 'yes'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       LOG: /tmp/log-evaluation.log
     outputs:
+      changed: ${{ steps.candidate.outputs.changed }}
       sha: ${{ steps.candidate.outputs.sha }}
       runners: ${{ steps.candidate.outputs.runners }}
       healed: ${{ steps.heal.outputs.healed }}
@@ -103,8 +106,17 @@ jobs:
           runners=$(bash "$STD/declared-runners.sh")
           git add flake.lock
           git diff --cached --binary > /tmp/candidate.patch
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "runners=$runners" >> "$GITHUB_OUTPUT"
+          if [ -s /tmp/candidate.patch ]; then
+            changed=true
+          else
+            changed=false
+            echo "The refresh changed no input and healed no fix: the committed lock is what was last verified, so nothing is built again."
+          fi
+          {
+            echo "changed=$changed"
+            echo "sha=$sha"
+            echo "runners=$runners"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -140,11 +152,13 @@ jobs:
 
   verify:
     needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(needs.prepare.outputs.runners) }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
     env:
       LOG: /tmp/log-${{ matrix.os }}.log
     steps:
@@ -153,17 +167,24 @@ jobs:
           ref: ${{ needs.prepare.outputs.sha }}
       - uses: DeterminateSystems/determinate-nix-action@e847f25223456b3058e12f7fc9d777b6a6f25060 # v3.23.2
         with:
-          extra-conf: lazy-trees = false
+          extra-conf: |
+            lazy-trees = false
+            keep-outputs = true
+            keep-derivations = true
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: candidate
           path: /tmp/candidate
 
       - name: Apply the candidate
-        run: |
-          if [ -s /tmp/candidate/candidate.patch ]; then
-            git apply --index /tmp/candidate/candidate.patch
-          fi
+        run: git apply --index /tmp/candidate/candidate.patch
+
+      - name: Restore the Nix store of the newest earlier run, saved again under this lock
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/flake.lock', '**/*.nix') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-${{ runner.arch }}-
+          gc-max-store-size-linux: 8G
 
       - name: Build every check for this system, retrying only a transient fetch failure
         run: |
@@ -199,6 +220,7 @@ jobs:
   publish:
     needs: [prepare, verify]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -253,6 +275,7 @@ jobs:
     needs: [prepare, verify]
     if: always() && (needs.prepare.result == 'failure' || needs.verify.result == 'failure')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - *fetch-std
@@ -284,6 +307,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FAIL_CLASS: ${{ steps.classify.outputs.class }}
+          FAIL_EVIDENCE: ${{ steps.classify.outputs.evidence }}
           FAILED_ATTRS: ${{ steps.classify.outputs.failed_attrs }}
           FAILED_DRVS: ${{ steps.classify.outputs.failed_drvs }}
           HEALED: ${{ needs.prepare.outputs.healed }}
@@ -320,6 +344,7 @@ jobs:
     needs: gate
     if: needs.gate.outputs.run == 'yes'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Delete update and upstream-update branches whose head is older than 30 days
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9 (node24)

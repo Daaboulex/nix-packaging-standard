@@ -746,6 +746,39 @@ check "class compile-error" "compile-error" "$(get "$d" class)"
 check "the coloured drv path is read" "/nix/store/eeee-eden-0.2.1.drv" "$(get "$d" failed_drvs)"
 check "both runners' attributes are listed" "3" "$(get "$d" failed_attrs | tr ' ' '\n' | grep -c checks)"
 
+echo "Test 10c: the classifier hands the report the line that named the class"
+d="$WORK/t10c"
+mkdir -p "$d"
+: >"$d/out.env"
+cat >"$d/build.log" <<'LOG'
+error: Cannot build '/nix/store/hhhh-python3.14-unsloth-2026.10.8.drv'.
+       Reason: builder failed with exit code 1.
+python3.14-unsloth> Checking runtime dependencies for unsloth-2026.10.8-py3-none-any.whl
+       >   - json5 not installed
+       > Successfully built unsloth-2026.10.8-py3-none-any.whl
+LOG
+run_classify "$d" "$d/build.log"
+check "a missing runtime dependency is named" "missing-python-dep" "$(get "$d" class)"
+check "the evidence is the dependency line, not nix's header" "> - json5 not installed" "$(get "$d" evidence | tr -s ' ')"
+d="$WORK/t10d"
+mkdir -p "$d"
+: >"$d/out.env"
+cat >"$d/build.log" <<'LOG'
+error: Cannot build '/nix/store/iiii-durdraw-0.31.1.drv'.
+smoke>        > Builder called die: makeWrapper doesn't understand the arg --prefix PATH : /nix/store/jjjj-ansilove-4.2.2/bin
+smoke>        > Backtrace:
+LOG
+run_classify "$d" "$d/build.log"
+check "a setup hook that dies is named" "setup-hook-error" "$(get "$d" class)"
+check "its evidence carries the hook's own message" "1" "$(get "$d" evidence | grep -c "makeWrapper doesn't understand the arg")"
+d="$WORK/t10e"
+mkdir -p "$d"
+: >"$d/out.env"
+printf 'error: Cannot build %s.\nsomething nobody has a pattern for\n' "'/nix/store/kkkk-x.drv'" >"$d/build.log"
+run_classify "$d" "$d/build.log"
+check "an unknown failure stays unclassified" "unclassified" "$(get "$d" class)"
+check "and carries no evidence" "" "$(get "$d" evidence)"
+
 echo "Test 20: classifier names a substitution whose pattern upstream moved"
 d="$WORK/t20"
 mkdir -p "$d"
@@ -904,7 +937,7 @@ report_fixture() { # report_fixture <dir> <open-issues-json>
 run_report() { # run_report <dir> <title>
   (cd "$1" && PATH="$GHBIN:$PATH" GH_CALLS="$1/calls" GH_BODY="$1/body.md" STUB_GH_LIST="$1/list.json" \
     STUB_GH_FAIL="${STUB_GH_FAIL:-}" STUB_GH_FAIL_TIMES="${STUB_GH_FAIL_TIMES:-}" REPORT_RETRY_DELAY=0 GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=7 GITHUB_OUTPUT="$1/out.env" \
-    FAILED_ATTRS=".#checks.x86_64-linux.package-x" \
+    FAILED_ATTRS=".#checks.x86_64-linux.package-x" FAIL_EVIDENCE="${FAIL_EVIDENCE:-}" \
     bash "$REPORT" update-failed "Update " "$2" "$1/head.md" "$1/build.log" >"$1/rlog" 2>&1)
   RC=$?
 }
@@ -921,6 +954,14 @@ check "the body names the failing target" "1" "$(grep -c '^\.#checks\.x86_64-lin
 check "the first-error block opens on the plain error line" "1" "$(sed -n '/First error/,/<\/details>/p' "$d/body.md" | grep -c '^error: builder for x failed$')"
 check "the body carries no terminal colour codes" "0" "$(grep -c $'\033' "$d/body.md")"
 check "a long log line is cut to 300 characters" "300" "$(grep -m1 '^yyy' "$d/body.md" | tr -d '\n' | wc -c)"
+check "an unclassified failure has no cause section" "0" "$(grep -c '^### Cause$' "$d/body.md")"
+
+d="$WORK/t24h"
+report_fixture "$d" '[]'
+FAIL_EVIDENCE="> - json5 not installed" run_report "$d" "Update x 1 -> 2: missing-python-dep"
+check "a classified failure opens with its cause" "1" "$(grep -c '^### Cause$' "$d/body.md")"
+check "the cause section quotes the line that named the class" "1" "$(awk '/^### Cause/ { f = 1 } f && /^<details/ { exit } f' "$d/body.md" | grep -c '^> - json5 not installed$')"
+check "the cause comes before the first error" "1" "$(awk '/^### Cause/{c=NR} /First error/{f=NR} END {print (c && f && c < f) ? 1 : 0}' "$d/body.md")"
 
 d="$WORK/t24b"
 report_fixture "$d" '[{"number":7,"title":"Update x 1 -> 2: build-error","createdAt":"2026-10-04T06:10:00Z"}]'

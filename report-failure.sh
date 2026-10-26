@@ -21,6 +21,10 @@ trap 'rm -rf "$work"' EXIT
 sed 's/\x1b\[[0-9;]*m//g' "$log_file" | cut -c1-300 >"$work/plain"
 
 log_section() {
+  if [ -n "${FAIL_EVIDENCE:-}" ]; then
+    local fence='```'
+    printf '\n### Cause\n\nThe log line that names the failure class:\n\n%s\n%s\n%s\n' "$fence" "$FAIL_EVIDENCE" "$fence"
+  fi
   if [ -n "${FAILED_ATTRS:-}" ] || [ -n "${FAILED_DRVS:-}" ]; then
     printf '\n### Failing targets\n\n```\n'
     if [ -n "${FAILED_ATTRS:-}" ]; then printf '%s\n' "$FAILED_ATTRS" | tr ' ' '\n'; fi

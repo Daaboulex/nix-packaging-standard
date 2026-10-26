@@ -188,7 +188,7 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `flake-modules/base.nix` | *(imported, not synced)* | The shared flakeModule |
 | `synced-files.json` | *(the map itself)* | Consumer path to canonical file, or `null` for a retired copy that must be absent: the one map `sync.sh` reads and `std-conformance` and `std-no-retired-copies` enforce |
 | `callers/ci.yml` | `.github/workflows/ci.yml` | Triggers, permissions and concurrency of CI; calls `package-ci.yml@release` |
-| `callers/update.yml` | `.github/workflows/update.yml` | The daily Update schedule; calls `package-update.yml@release` |
+| `callers/update.yml` | `.github/workflows/update.yml` | The daily Update trigger, passing the `UPDATE_CADENCE` repository variable (`daily` or `weekly`; unset is `daily`, anything else fails the run); calls `package-update.yml@release` |
 | `callers/maintenance.yml` | `.github/workflows/maintenance.yml` | The daily Maintenance trigger, passing the `MAINTENANCE_CADENCE` repository variable (`daily`, `biweekly` or `weekly`; unset is `weekly`, anything else fails the run) |
 | `.github/workflows/package-ci.yml` | *(reusable, not synced)* | Archetype-blind CI (build every output on a runner per declared system) |
 | `.github/workflows/package-update.yml` | *(reusable, not synced)* | The update, verified on every declared system before it pushes |
@@ -281,6 +281,18 @@ A package whose `meta.platforms` excludes a declared arch is simply not built
 there (declared == built, per system *and* per package). There
 is no per-repo build target, no archetype conditional, and no binary-cache token:
 `cache.nixos.org` substitutes every unmodified dependency for free.
+
+The lint check (`pre-commit`) runs once per repo, on `x86_64-linux` when the
+repo declares it and otherwise on its first declared system: it reads the same
+files with the same rules on any architecture, and on `aarch64-linux` its
+`rumdl` is the 16K-page build the M1 needs, which no binary cache holds, so an
+arm job spent 26 of its 27 minutes compiling it (rosemary-lineage-root,
+2026-10-23). Every job of the three
+reusable workflows carries a `timeout-minutes` at about twice the longest run
+measured on 2026-10-26 (240 for a build or verify, 180 for the updater, 60 for
+the lock refresh, 15 or less for the rest), so a hung step fails in hours at
+most instead of burning the six-hour default; `std-every-job-has-a-timeout`
+refuses a job without one.
 
 **Exception — off-CI packages.** A package whose closure is not on
 `cache.nixos.org` and cannot build on a free runner (CUDA/ROCm toolchains, very
@@ -763,7 +775,7 @@ update verification builds and the updater's check suite run with
 `--keep-going`, so one red run enumerates every failing dependency instead of
 fix-one-discover-next; every failure issue carries a machine class
 (`transient-infra`, `eval-error`, `compile-error`, `sandbox-download`,
-`upstream-rerelease-hash-mismatch`, `nixpkgs-package-drop`,
+`setup-hook-error`, `upstream-rerelease-hash-mismatch`, `nixpkgs-package-drop`,
 `missing-python-dep`, `requirements-coverage`,
 `python-metadata-version-mismatch`, `substitution-pattern-drift`, or an honest
 `unclassified`) plus the failed attributes of every runner and the failed
@@ -1043,6 +1055,24 @@ plus a `CHANGELOG.md`).
   rewrite the one open `maintenance` issue, whose class names an evaluation
   failure (`eval-error`) apart from a build one; plus stale-branch cleanup
   (>30 days).
+- A Maintenance refresh that changes no input and heals no fix builds nothing:
+  the committed lock is the one that was verified when it was pushed, so the
+  verify and publish jobs are skipped and no open issue is touched.
+- Every verify job restores the Nix store of the newest earlier run for its
+  runner and saves it again under the new lock, so CI on the pushed commit
+  starts from the store the verification built.
+- Update runs on the repo's `UPDATE_CADENCE`: on a day it does not run, the
+  update job only records that and the rest is skipped. Publishing, reporting
+  and retiring attempt branches share one `finish` job, so a quiet day bills
+  two job-minutes instead of three.
+- An issue opens with a Cause section: the log line that named its class (for
+  `missing-python-dep` the dependency the check found missing, for
+  `setup-hook-error` the hook's own `die` message), ahead of the first error
+  and the log tail.
+- A private repo past its included Actions minutes cannot report anything:
+  GitHub refuses to start every job, the report job too. `fleet-audit` names
+  such a run as refused at the spending limit; the weekly Fleet CI watch runs
+  with this repo's token and does not see private repos.
 
 ## History
 
@@ -1318,6 +1348,22 @@ cleanup fails on an error it cannot handle instead of logging it as a skip;
 CI retries a transient fetch twice. `std-action-pins` is gone: the shipped
 workflows are the ones dependabot bumps. `std-base-fixtures` evaluates `base`
 against three fixture consumers.
+
+v3.1.0 (2026-10) spends Actions minutes only where they verify something. The
+owner's private repos used 2,130 of the Free plan's 2,000 included minutes by
+2026-10-25 and GitHub stopped starting their jobs. Of that, 514 minutes were
+arm jobs compiling the 16K-page `rumdl` for the lint check and 349 were jobs
+billed at the one-minute floor. The lint check now runs once per repo
+(`std-base-fixtures` proves it on fixtures declaring both systems and only
+`aarch64-linux`); a Maintenance refresh that changes nothing builds nothing;
+verify jobs restore and save the Nix store; Update follows an
+`UPDATE_CADENCE` variable, which `callers/update.yml` passes, so this release
+needs a fleet roll; publish, report and retire share one job; every job has a
+timeout (`std-every-job-has-a-timeout`). Issues open with the log line that
+named their class, read from the classifier's new `evidence` output
+(`tests/run.sh` Tests 10c and 24h), and `setup-hook-error` names a hook that
+dies, which a nixpkgs `makeWrapper` change made of durdraw's wrapper arguments.
+`fleet-audit` names a run GitHub refused at the spending limit.
 
 ## License
 

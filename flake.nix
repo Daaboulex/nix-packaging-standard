@@ -41,7 +41,7 @@
         let
           actionlintIgnore = ''property "workflow_(repository|sha)" is not defined in object type'';
           baseOn =
-            fixture:
+            fixture: systems:
             (inputs.flake-parts.lib.mkFlake
               {
                 inputs = inputs // {
@@ -52,10 +52,10 @@
                 };
               }
               {
-                systems = [ system ];
+                inherit systems;
                 imports = [ ./flake-modules/base.nix ];
               }
-            ).checks.${system};
+            ).checks;
         in
         {
           pre-commit.settings.hooks =
@@ -99,11 +99,45 @@
                 touch "$out"
               '';
 
+          checks.std-every-job-has-a-timeout =
+            pkgs.runCommand "std-every-job-has-a-timeout"
+              {
+                nativeBuildInputs = [ pkgs.yq-go ];
+                workflows = [
+                  ./.github/workflows/package-ci.yml
+                  ./.github/workflows/package-update.yml
+                  ./.github/workflows/package-maintenance.yml
+                ];
+              }
+              ''
+                unbounded() { yq -r '.jobs | to_entries | map(select(.value["timeout-minutes"] == null)) | .[].key' "$1"; }
+                bad=0
+                for w in $workflows; do
+                  missing=$(unbounded "$w")
+                  if [ -n "$missing" ]; then
+                    echo "  FAIL ''${w#*-}: job(s) with no timeout-minutes, so a hung step runs for six hours: $missing"
+                    bad=1
+                  fi
+                done
+                printf 'jobs:\n  bounded:\n    timeout-minutes: 5\n  open:\n    runs-on: x\n' > twin.yml
+                if [ "$(unbounded twin.yml)" != open ]; then
+                  echo "  FAIL the check does not name the unbounded job of its twin, so it proves nothing"
+                  bad=1
+                fi
+                [ "$bad" = 0 ] || exit 1
+                touch "$out"
+              '';
+
           checks.std-base-fixtures =
             let
-              current = baseOn ./tests/fixtures/consumer-current;
-              stale = baseOn ./tests/fixtures/consumer-stale;
-              custom = baseOn ./tests/fixtures/consumer-custom;
+              current = (baseOn ./tests/fixtures/consumer-current [ system ]).${system};
+              stale = (baseOn ./tests/fixtures/consumer-stale [ system ]).${system};
+              custom = (baseOn ./tests/fixtures/consumer-custom [ system ]).${system};
+              both = baseOn ./tests/fixtures/consumer-current [
+                "x86_64-linux"
+                "aarch64-linux"
+              ];
+              armOnly = baseOn ./tests/fixtures/consumer-current [ "aarch64-linux" ];
               expect =
                 what: got: want:
                 if got == want then null else "${what}: got ${builtins.toJSON got}, want ${builtins.toJSON want}";
@@ -125,6 +159,13 @@
                   custom.std-no-retired-copies.present
                   [ ]
                 )
+                (expect "a consumer declaring both systems lints on x86_64-linux" (
+                  both.x86_64-linux ? pre-commit
+                ) true)
+                (expect "and does not lint again on aarch64-linux" (both.aarch64-linux ? pre-commit) false)
+                (expect "a consumer declaring only aarch64-linux lints there" (
+                  armOnly.aarch64-linux ? pre-commit
+                ) true)
               ];
             in
             pkgs.runCommand "std-base-fixtures" { } (

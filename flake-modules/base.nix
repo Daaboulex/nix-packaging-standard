@@ -13,12 +13,29 @@
 #   - `std-conformance`: a hermetic check that the synced callers and
 #     dotfiles byte-match this standard's canonicals;
 #   - `std-update-json`: validates .github/update.json against the schema.
-{ inputs, lib, ... }:
+{
+  inputs,
+  lib,
+  config,
+  ...
+}:
+let
+  lintSystem =
+    if builtins.elem "x86_64-linux" config.systems then
+      "x86_64-linux"
+    else
+      builtins.head config.systems;
+in
 {
   imports = [ inputs.git-hooks.flakeModule ];
 
   perSystem =
-    { config, pkgs, ... }:
+    {
+      config,
+      pkgs,
+      system,
+      ...
+    }:
     let
       src = inputs.self;
 
@@ -61,6 +78,7 @@
     in
     {
       pre-commit.settings.hooks = import ./hooks.nix { inherit pkgs lib ruffConfigArg; };
+      pre-commit.check.enable = system == lintSystem;
 
       formatter = pkgs.writeShellScriptBin "treefmt" ''
         exec ${pkgs.nixfmt-tree}/bin/treefmt --no-cache "$@"
