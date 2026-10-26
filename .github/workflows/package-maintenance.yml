@@ -71,7 +71,7 @@ jobs:
             tar -xz --strip-components=1 -C "$RUNNER_TEMP/std"
           echo "STD=$RUNNER_TEMP/std" >>"$GITHUB_ENV"
           echo "running the scripts of $STD_REPOSITORY at $STD_SHA"
-      - uses: DeterminateSystems/determinate-nix-action@e847f25223456b3058e12f7fc9d777b6a6f25060 # v3.23.2
+      - uses: DeterminateSystems/determinate-nix-action@f296148a827001a9a82d3685b53210c06e5d3b67 # v3.24.0
         with:
           extra-conf: lazy-trees = false
 
@@ -165,7 +165,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.sha }}
-      - uses: DeterminateSystems/determinate-nix-action@e847f25223456b3058e12f7fc9d777b6a6f25060 # v3.23.2
+      - uses: DeterminateSystems/determinate-nix-action@f296148a827001a9a82d3685b53210c06e5d3b67 # v3.24.0
         with:
           extra-conf: |
             lazy-trees = false
