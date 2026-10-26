@@ -1004,21 +1004,23 @@ rm "$d/build.log"
 run_report "$d" "Update x 1 -> 2: build-error"
 check "a missing log fails the report before any gh call" "1:0" "$RC:$(wc -l <"$d/calls")"
 
-echo "Test 25: sync.sh writes the callers and deletes retired copies, except a custom updater"
+echo "Test 25: sync.sh writes the callers and deletes retired copies, except a custom updater; a first-party repo carries no Update caller"
 SYNC="$STD/sync.sh"
 d="$WORK/t25"
-for r in plain custom; do
+for r in plain custom firstparty; do
   mkdir -p "$d/$r/.git" "$d/$r/.github/workflows" "$d/$r/scripts"
   printf 'stale\n' >"$d/$r/.github/workflows/ci.yml"
+  printf 'stale\n' >"$d/$r/.github/workflows/update.yml"
   printf '#!/usr/bin/env bash\n' >"$d/$r/scripts/heal-overlays.sh"
   printf '#!/usr/bin/env bash\n' >"$d/$r/scripts/update.sh"
 done
 printf '{"upstream":{"type":"github-release"}}\n' >"$d/plain/.github/update.json"
 printf '{"upstream":{"type":"custom"}}\n' >"$d/custom/.github/update.json"
+printf '{"upstream":{"type":"none"}}\n' >"$d/firstparty/.github/update.json"
 PKG_REPOS_DIR="$d" bash "$SYNC" --check plain >/dev/null
 check "a repo carrying stale and retired files is reported as drift" "1" "$?"
 check "--check changes nothing" "stale" "$(cat "$d/plain/.github/workflows/ci.yml")"
-PKG_REPOS_DIR="$d" bash "$SYNC" plain custom >"$d/log"
+PKG_REPOS_DIR="$d" bash "$SYNC" plain custom firstparty >"$d/log"
 check "sync exits clean" "0" "$?"
 if cmp -s "$STD/callers/ci.yml" "$d/plain/.github/workflows/ci.yml"; then same=yes; else same=no; fi
 check "the CI workflow becomes the caller" "yes" "$same"
@@ -1026,7 +1028,12 @@ check "a retired script is deleted" "absent" "$([ -e "$d/plain/scripts/heal-over
 check "the canonical updater copy is deleted" "absent" "$([ -e "$d/plain/scripts/update.sh" ] && echo present || echo absent)"
 check "a custom repo keeps its own updater" "present" "$([ -e "$d/custom/scripts/update.sh" ] && echo present || echo absent)"
 check "a custom repo still loses the other retired copies" "absent" "$([ -e "$d/custom/scripts/heal-overlays.sh" ] && echo present || echo absent)"
-PKG_REPOS_DIR="$d" bash "$SYNC" --check plain custom >/dev/null
+if cmp -s "$STD/callers/update.yml" "$d/plain/.github/workflows/update.yml"; then same=yes; else same=no; fi
+check "a repo with an upstream gets the Update caller" "yes" "$same"
+check "a first-party repo loses its Update caller" "absent" "$([ -e "$d/firstparty/.github/workflows/update.yml" ] && echo present || echo absent)"
+if cmp -s "$STD/callers/ci.yml" "$d/firstparty/.github/workflows/ci.yml"; then same=yes; else same=no; fi
+check "a first-party repo still gets the CI caller" "yes" "$same"
+PKG_REPOS_DIR="$d" bash "$SYNC" --check plain custom firstparty >/dev/null
 check "a synced repo is in sync" "0" "$?"
 printf 'not json\n' >"$d/plain/.github/update.json"
 if PKG_REPOS_DIR="$d" bash "$SYNC" --check plain >/dev/null 2>&1; then rc=passed; else rc=failed; fi

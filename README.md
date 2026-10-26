@@ -187,9 +187,9 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `flake.nix` | *(not synced)* | Exposes `flakeModules.*` |
 | `flake-modules/base.nix` | *(imported, not synced)* | The shared flakeModule |
 | `synced-files.json` | *(the map itself)* | Consumer path to canonical file, or `null` for a retired copy that must be absent: the one map `sync.sh` reads and `std-conformance` and `std-no-retired-copies` enforce |
-| `callers/ci.yml` | `.github/workflows/ci.yml` | Triggers, permissions and concurrency of CI; calls `package-ci.yml@release` |
-| `callers/update.yml` | `.github/workflows/update.yml` | The daily Update trigger, passing the `UPDATE_CADENCE` repository variable (`daily` or `weekly`; unset is `daily`, anything else fails the run); calls `package-update.yml@release` |
-| `callers/maintenance.yml` | `.github/workflows/maintenance.yml` | The daily Maintenance trigger, passing the `MAINTENANCE_CADENCE` repository variable (`daily`, `biweekly` or `weekly`; unset is `weekly`, anything else fails the run) |
+| `callers/ci.yml` | `.github/workflows/ci.yml` | Triggers, permissions and concurrency of CI, passing the `RECLAIM_DISK` repository variable (`on` or `off`; unset is `off`, anything else fails the run); calls `package-ci.yml@release` |
+| `callers/update.yml` | `.github/workflows/update.yml`, except in a first-party repo (upstream type `none`), which carries none | The Update trigger, one cron for Sunday and one for the other days; the job's condition reads the `UPDATE_CADENCE` repository variable (`daily` or `weekly`; unset is `daily`), so a day it does not run starts no runner, and passes it on (anything else fails the Sunday run); calls `package-update.yml@release` |
+| `callers/maintenance.yml` | `.github/workflows/maintenance.yml` | The Maintenance trigger, one cron for Sunday, one for Wednesday and one for the other days; the job's condition reads the `MAINTENANCE_CADENCE` repository variable (`daily`, `biweekly` or `weekly`; unset is `weekly`), so a day it does not run starts no runner, and passes it on (anything else fails the Sunday run) |
 | `.github/workflows/package-ci.yml` | *(reusable, not synced)* | Archetype-blind CI (build every output on a runner per declared system) |
 | `.github/workflows/package-update.yml` | *(reusable, not synced)* | The update, verified on every declared system before it pushes |
 | `.github/workflows/package-maintenance.yml` | *(reusable, not synced)* | `flake.lock` refresh on the repo's cadence: heal probe, every declared system evaluated, the checks built on a runner per declared system, pushed only if all are green |
@@ -269,8 +269,10 @@ in its own `perSystem`, never by patching the standard:
 ## CI model
 
 One archetype-blind `package-ci.yml`, called by every consumer. It runs the AI-artifact
-guard, reclaims ~20 GB of preinstalled toolchains nix never uses (large source
-builds otherwise exhaust the runner's ~14 GB default disk), then builds every
+guard, reclaims ~20 GB of preinstalled toolchains nix never uses when the repository
+variable `RECLAIM_DISK` is `on` (a large source build otherwise exhausts the runner's
+~14 GB default disk; the step takes one to five minutes on an x86_64 runner, longer
+than many repos' whole build, so it is opt-in), then builds every
 output the flake declares for each runner's system via `nix-fast-build
 --skip-cached`. The matrix is not fixed: a plan job runs
 `declared-runners.sh`, which names `ubuntu-latest` for `x86_64-linux`
@@ -1061,10 +1063,16 @@ plus a `CHANGELOG.md`).
 - Every verify job restores the Nix store of the newest earlier run for its
   runner and saves it again under the new lock, so CI on the pushed commit
   starts from the store the verification built.
-- Update runs on the repo's `UPDATE_CADENCE`: on a day it does not run, the
-  update job only records that and the rest is skipped. Publishing, reporting
-  and retiring attempt branches share one `finish` job, so a quiet day bills
-  two job-minutes instead of three.
+- Update runs on the repo's `UPDATE_CADENCE` and Maintenance on its
+  `MAINTENANCE_CADENCE`: each caller schedules one cron per kind of day and its
+  job's condition compares `github.event.schedule` with the cadence, so a day
+  it does not run starts no runner and bills nothing. The reusable workflows
+  still check the cadence, which keeps a caller from before v3.2.0 correct
+  until its roll. Publishing, reporting and retiring attempt branches share
+  one `finish` job.
+- A first-party repo (upstream type `none`) has nothing for Update to follow,
+  so it carries no Update caller: `sync.sh` deletes it and
+  `std-no-retired-copies` refuses one.
 - An issue opens with a Cause section: the log line that named its class (for
   `missing-python-dep` the dependency the check found missing, for
   `setup-hook-error` the hook's own `die` message), ahead of the first error
@@ -1363,6 +1371,20 @@ timeout (`std-every-job-has-a-timeout`). Issues open with the log line that
 named their class, read from the classifier's new `evidence` output
 (`tests/run.sh` Tests 10c and 24h), and `setup-hook-error` names a hook that
 dies, which a nixpkgs `makeWrapper` change made of durdraw's wrapper arguments.
+
+v3.2.0 (2026-10) stops starting runners that decide to do nothing. Measured
+from the jobs API for 2026-10-01 to 2026-10-26, the daily Update of the three
+first-party private repos billed 221 minutes to log that they have no
+upstream, the cadence gates billed a minute on every skipped day, and the disk
+reclaim took 62 to 282 seconds of every x86_64 build job, against 40 seconds
+for all of playstation-tools' checks. The Update and Maintenance callers now
+skip a day in the job's condition, before any runner starts; a first-party
+repo carries no Update caller (`sync.sh`, `std-no-retired-copies`,
+`std-base-fixtures`, `tests/run.sh` Test 25); the reclaim runs only where
+`RECLAIM_DISK` is `on`, and a caller that passes nothing keeps it on, so a repo
+is never without it before its roll. The callers changed, so this release
+needs a fleet roll, and a repo whose x86_64 build needs the disk sets
+`RECLAIM_DISK=on` before it rolls.
 `fleet-audit` names a run GitHub refused at the spending limit.
 
 ## License

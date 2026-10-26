@@ -51,9 +51,12 @@ for repo in "${targets[@]}"; do
     echo "skip   $repo (no update.json)"
     continue
   }
-  rtype=$(jq -r '.upstream.type // "none"' "$dir/.github/update.json")
+  rtype=$(jq -r '.upstream.type // ""' "$dir/.github/update.json")
   for src in "${!FILES[@]}"; do
     if [ "$src" = "update-readme-options.sh" ] && [ ! -f "$dir/${FILES[$src]}" ]; then
+      continue
+    fi
+    if [ "$src" = "callers/update.yml" ] && [ "$rtype" = none ]; then
       continue
     fi
     dst="$dir/${FILES[$src]}"
@@ -70,7 +73,11 @@ for repo in "${targets[@]}"; do
     fi
   done
 
-  for dst in "${RETIRED[@]}"; do
+  retire=("${RETIRED[@]}")
+  if [ "$rtype" = none ]; then
+    retire+=(".github/workflows/update.yml")
+  fi
+  for dst in "${retire[@]}"; do
     if [ "$dst" = scripts/update.sh ] && [ "$rtype" = custom ]; then
       echo "keep   $repo/scripts/update.sh (custom updater)"
       continue

@@ -133,6 +133,8 @@
               current = (baseOn ./tests/fixtures/consumer-current [ system ]).${system};
               stale = (baseOn ./tests/fixtures/consumer-stale [ system ]).${system};
               custom = (baseOn ./tests/fixtures/consumer-custom [ system ]).${system};
+              firstParty = (baseOn ./tests/fixtures/consumer-firstparty [ system ]).${system};
+              updateCaller = ".github/workflows/update.yml";
               both = baseOn ./tests/fixtures/consumer-current [
                 "x86_64-linux"
                 "aarch64-linux"
@@ -158,6 +160,18 @@
                 (expect "a custom updater's own scripts/update.sh is not a retired copy"
                   custom.std-no-retired-copies.present
                   [ ]
+                )
+                (expect "a consumer with an upstream must carry the Update caller"
+                  (lib.elem updateCaller current.std-conformance.required)
+                  true
+                )
+                (expect "a first-party consumer is not asked for the Update caller"
+                  (lib.elem updateCaller firstParty.std-conformance.required)
+                  false
+                )
+                (expect "a first-party consumer carrying the Update caller has it named"
+                  firstParty.std-no-retired-copies.present
+                  [ updateCaller ]
                 )
                 (expect "a consumer declaring both systems lints on x86_64-linux" (
                   both.x86_64-linux ? pre-commit

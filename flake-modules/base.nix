@@ -45,6 +45,8 @@ in
         else
           { };
       isCustom = (updateJson.upstream.type or "") == "custom";
+      isFirstParty = (updateJson.upstream.type or "") == "none";
+      updateCaller = ".github/workflows/update.yml";
 
       hasOwnRuffConfig =
         builtins.pathExists (src + "/pyproject.toml")
@@ -56,13 +58,22 @@ in
       synced = lib.mapAttrs (_: canon: ../. + "/${canon}") (
         builtins.removeAttrs (lib.filterAttrs (_: canon: canon != null) syncMap) (
           lib.optional (!hasReadmeOptions) "scripts/update-readme-options.sh"
+          ++ lib.optional isFirstParty updateCaller
         )
       );
-      retired = builtins.attrNames (
-        builtins.removeAttrs (lib.filterAttrs (_: canon: canon == null) syncMap) (
-          lib.optional isCustom "scripts/update.sh"
+      retired =
+        builtins.attrNames (
+          builtins.removeAttrs (lib.filterAttrs (_: canon: canon == null) syncMap) (
+            lib.optional isCustom "scripts/update.sh"
+          )
         )
-      );
+        ++ lib.optional isFirstParty updateCaller;
+      retiredReason =
+        dst:
+        if dst == updateCaller then
+          "${dst} is an Update caller in a first-party repo: upstream type none gives Update nothing to follow, so every scheduled run only spends runner minutes; delete it"
+        else
+          "${dst} is a retired copy: the workflows run the standard's own script at the commit that defines them, so this file is never read; delete it";
       retiredPresent = builtins.filter (dst: builtins.pathExists (src + "/${dst}")) retired;
 
       inherit (import ../lib.nix) releaseUrl;
@@ -99,18 +110,20 @@ in
       };
 
       checks = (lib.mapAttrs' (n: v: lib.nameValuePair "package-${n}" v) buildable) // {
-        std-conformance = pkgs.runCommand "std-conformance" { } (
-          (lib.concatStringsSep "\n" (
-            lib.mapAttrsToList (dst: canon: ''
-              if ! diff -u ${canon} ${src + "/${dst}"}; then
-                echo "::error::${dst} drifted from the canonical nix-packaging-standard"
-                exit 1
-              fi
-              echo "ok  ${dst}"
-            '') synced
-          ))
-          + "\ntouch \"$out\"\n"
-        );
+        std-conformance =
+          pkgs.runCommand "std-conformance" { passthru.required = builtins.attrNames synced; }
+            (
+              (lib.concatStringsSep "\n" (
+                lib.mapAttrsToList (dst: canon: ''
+                  if ! diff -u ${canon} ${src + "/${dst}"}; then
+                    echo "::error::${dst} drifted from the canonical nix-packaging-standard"
+                    exit 1
+                  fi
+                  echo "ok  ${dst}"
+                '') synced
+              ))
+              + "\ntouch \"$out\"\n"
+            );
 
         std-no-retired-copies =
           pkgs.runCommand "std-no-retired-copies" { passthru.present = retiredPresent; }
@@ -119,8 +132,7 @@ in
                 ''touch "$out"''
               else
                 lib.concatMapStringsSep "\n" (
-                  dst:
-                  "echo ${lib.escapeShellArg "::error::${dst} is a retired copy: the workflows run the standard's own script at the commit that defines them, so this file is never read; delete it"}"
+                  dst: "echo ${lib.escapeShellArg "::error::${retiredReason dst}"}"
                 ) retiredPresent
                 + "\nexit 1\n"
             );

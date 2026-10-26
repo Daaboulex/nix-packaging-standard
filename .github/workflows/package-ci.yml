@@ -1,6 +1,11 @@
 name: Package CI
 on:
   workflow_call:
+    inputs:
+      reclaim-disk:
+        description: "on frees about 20 GB of preinstalled toolchains before the build, for a repo whose build outgrows the runner's default disk; off skips it. A caller that passes nothing gets on"
+        type: string
+        default: "on"
 
 permissions:
   contents: read
@@ -47,6 +52,17 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@e847f25223456b3058e12f7fc9d777b6a6f25060 # v3.23.2
         with:
           extra-conf: lazy-trees = false
+      - name: Refuse an unknown reclaim-disk value
+        env:
+          RECLAIM: ${{ inputs.reclaim-disk }}
+        run: |
+          case "$RECLAIM" in
+          on | off) echo "reclaim-disk=$RECLAIM" ;;
+          *)
+            echo "::error::reclaim-disk '$RECLAIM' is neither on nor off; fix the RECLAIM_DISK repository variable"
+            exit 1
+            ;;
+          esac
       - name: Name a runner for every system the flake declares checks on
         id: declared
         run: |
@@ -83,6 +99,7 @@ jobs:
           purge-primary-key: never
 
       - name: Reclaim runner disk for large source builds
+        if: inputs.reclaim-disk == 'on'
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
