@@ -18,6 +18,9 @@ fleet-roll - adopt the standard's release branch head across every consumer repo
                  changes is the author's to state; the script will not invent it.
   --skip-build   skip the local canonical build. Refused with --execute, since
                  pushing unverified is the thing this exists to prevent.
+  --build-on-ci  evaluate every declared system here and leave the build to
+                 each repo's CI on push, the path a repo with no output for
+                 this host always takes; for a roll left to run unattended.
   --sync         fast-forward a clone that is clean and strictly behind its
                  remote. A clone that is ahead, diverged or dirty is still a
                  failure; only a provably lossless fast-forward is taken.
@@ -39,6 +42,7 @@ USAGE
 STD="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXECUTE=0
 SKIP_BUILD=0
+BUILD_ON_CI=0
 SYNC=0
 NOTES=""
 declare -a TARGETS=()
@@ -51,6 +55,7 @@ while [ "$#" -gt 0 ]; do
     ;;
   --execute) EXECUTE=1 ;;
   --skip-build) SKIP_BUILD=1 ;;
+  --build-on-ci) BUILD_ON_CI=1 ;;
   --sync) SYNC=1 ;;
   --notes)
     shift
@@ -78,6 +83,10 @@ for tool in git nix jq; do
   }
 done
 
+if [ "$BUILD_ON_CI" -eq 1 ] && [ "$SKIP_BUILD" -eq 1 ]; then
+  echo "fleet-roll: --build-on-ci with --skip-build is refused; --build-on-ci still evaluates every system before a push" >&2
+  exit 2
+fi
 if [ "$EXECUTE" -eq 1 ] && [ "$SKIP_BUILD" -eq 1 ]; then
   echo "fleet-roll: --execute with --skip-build is refused; a push must be verified" >&2
   exit 2
@@ -339,11 +348,12 @@ for repo in "${TARGETS[@]}"; do
 
   sys=$(nix eval --impure --raw --expr 'builtins.currentSystem' 2>/dev/null)
   FOREIGN=0
-  if [ "$SKIP_BUILD" -eq 0 ] && foreign_flake "$dir" "$sys"; then
+  if [ "$SKIP_BUILD" -eq 0 ] && { [ "$BUILD_ON_CI" -eq 1 ] || foreign_flake "$dir" "$sys"; }; then
     FOREIGN=1
+    if [ "$BUILD_ON_CI" -eq 1 ]; then why="--build-on-ci"; else why="no output for $sys here"; fi
     evallog="$LOGDIR/$repo.eval.log"
     if (cd "$dir" && nix flake check --no-eval-cache --no-build --all-systems) >"$evallog" 2>&1; then
-      note "verify: no output for $sys here; every declared system evaluates, the build is CI's on push"
+      note "verify: $why; every declared system evaluates, the build is CI's on push"
     else
       fail_repo "$repo" "eval over every system failed: $(tail -1 "$evallog")  log: $evallog"
       restore "$dir"
@@ -415,7 +425,9 @@ for repo in "${TARGETS[@]}"; do
     {
       printf 'chore(std): adopt nix-packaging-standard %s\n\n' "$TAG"
       cat "$NOTES"
-      if [ "$FOREIGN" -eq 1 ]; then
+      if [ "$FOREIGN" -eq 1 ] && [ "$BUILD_ON_CI" -eq 1 ]; then
+        printf '\nTest: nix flake check --no-eval-cache --no-build --all-systems, rolled with --build-on-ci; the build is CI'"'"'s on push\n'
+      elif [ "$FOREIGN" -eq 1 ]; then
         printf '\nTest: nix flake check --no-eval-cache --no-build --all-systems on a host with no output for this flake; the build is CI'"'"'s on push\n'
       else
         printf '\nTest: the canonical build, run locally before this push\n'

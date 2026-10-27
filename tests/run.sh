@@ -1039,6 +1039,15 @@ printf 'not json\n' >"$d/plain/.github/update.json"
 if PKG_REPOS_DIR="$d" bash "$SYNC" --check plain >/dev/null 2>&1; then rc=passed; else rc=failed; fi
 check "a malformed update.json fails the sync instead of guessing its type" "failed" "$rc"
 
+echo "Test 25b: fleet-roll --build-on-ci is an option, and refuses --skip-build, which would skip its evaluation too"
+d="$WORK/t25b"
+mkdir -p "$d"
+PKG_REPOS_DIR="$d" bash "$STD/scripts/fleet-roll.sh" --help >"$d/help"
+check "--help names --build-on-ci" "yes" "$(grep -q -- '--build-on-ci' "$d/help" && echo yes || echo no)"
+PKG_REPOS_DIR="$d" bash "$STD/scripts/fleet-roll.sh" --build-on-ci --skip-build >"$d/out" 2>&1
+check "--build-on-ci with --skip-build exits 2" "2" "$?"
+check "and says why" "yes" "$(grep -q 'build-on-ci still evaluates every system' "$d/out" && echo yes || echo no)"
+
 echo "Test 26: release.sh builds only what the candidate changed, on the systems this host builds"
 d="$WORK/t26"
 mkdir -p "$d/bin"

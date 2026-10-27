@@ -207,7 +207,7 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `sync-meta.sh` | *(run from here)* | Apply repo description + topics from `update.json` to GitHub |
 | `scripts/release.sh` | *(run from here)* | The only way `release` moves: CI on the commit, then the fleet check, then the tag and the fast-forward |
 | `scripts/fleet-audit.sh` | *(run from here)* | The fleet's green/red oracle: conformance + metadata + archetype + branches + issues + CI, local and remote |
-| `scripts/fleet-roll.sh` | *(run from here)* | Adopt the `release` head across every consumer: pin, lock, sync from that commit, build, commit, push, each repo restored on any failure |
+| `scripts/fleet-roll.sh` | *(run from here)* | Adopt the `release` head across every consumer: pin, lock, sync from that commit, build, commit, push, each repo restored on any failure; `--build-on-ci` evaluates every declared system and leaves the build to each repo's CI on push |
 | `scripts/check-shell-pipelines.sh`, `scripts/check-readme-sections.sh` | *(hooks, not synced)* | The pre-commit hooks `base` wires into every consumer |
 
 "Run from here" means a job fetches the file from the standard at the commit
@@ -412,7 +412,10 @@ names, the map itself, or the baseline `.gitignore`), each consumer's next lock
 refresh fails `std-conformance` or `std-devstate` until it is rolled, so
 `release.sh` names the roll to run: `scripts/fleet-roll.sh --execute --notes
 <file>`. Everything else, every workflow and script change, reaches the fleet
-on its next run.
+on its next run. A roll left to run unattended adds `--build-on-ci`: each repo
+is still evaluated on every declared system before its push, and its own CI
+builds it on that push, instead of this host compiling every consumer's checks
+for its own system first.
 
 Two of the three workflows run before a release reaches anyone: this repo's CI
 calls `package-ci.yml` from the same commit on every push, and its own
