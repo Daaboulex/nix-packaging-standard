@@ -100,6 +100,14 @@ Every consumer repo follows these. Metadata (description + topics) is declared i
 - **Architecture**: the flake's `systems` is the supported arch set; every arch
   dropped from the fleet canonical set carries a reason in `platforms` — see
   [Architecture and platforms](#architecture-and-platforms).
+- **Commit message**: `check-commit-message` runs on every commit's message.
+  The subject reads `type(scope): summary`, lowercase after the prefix, at most
+  72 characters, no full stop; a blank line; a body saying why; one `Test:`
+  line (`Test: none, <why>` when nothing ran); a `fix` commit also has a
+  `Cause:` line. No email address, no path under `/home`, no AI trailer. A
+  consumer lists the host and person names that stay out of its messages as
+  the hook's `args`: `pre-commit.settings.hooks.check-commit-message.args =
+  [ "buildhost" ];`, matched whole and ignoring case.
 
 ### Git-tracked / overlay packages (`*-git`)
 
@@ -147,7 +155,7 @@ against the tree:
 
 | Module | Provides |
 | --- | --- |
-| `base` | git-hooks gate (`nixfmt`, `typos`, `rumdl`, `check-readme-sections`, `check-shell-pipelines`, and `std-home-proof` at push time), `formatter`, `devShells.default`, every declared package aliased into `checks` on the systems its `meta.platforms` supports (so `nix flake check` BUILDS it), and these checks: `std-conformance` (synced files byte-match the canonical), `std-no-retired-copies` (no script copy the workflows no longer read), `std-follows-release` (`inputs.std.url` is the `release` branch, `releaseUrl`), `std-update-json` (`.github/update.json` satisfies the schema), `std-devstate` (the baseline `.gitignore` entries are present), `std-devshell-order` (every dev shell pins `PRE_COMMIT_HOME` before it installs the hooks), `std-homestate` (no `home.file` in the home root), `std-meta-maintainers` (maintainers carry the nixpkgs shape), `std-no-fail-open` (no shell shape that reports success while doing nothing), `std-no-deprecated-system` (no `pkgs.system` read), `std-no-host-profile` (no path under the host's profile) |
+| `base` | git-hooks gate (`nixfmt`, `typos`, `rumdl`, `check-readme-sections`, `check-shell-pipelines`, `check-commit-message` on the message, and `std-home-proof` at push time), `formatter`, `devShells.default`, every declared package aliased into `checks` on the systems its `meta.platforms` supports (so `nix flake check` BUILDS it), and these checks: `std-conformance` (synced files byte-match the canonical), `std-no-retired-copies` (no script copy the workflows no longer read), `std-follows-release` (`inputs.std.url` is the `release` branch, `releaseUrl`), `std-update-json` (`.github/update.json` satisfies the schema), `std-devstate` (the baseline `.gitignore` entries are present), `std-devshell-order` (every dev shell pins `PRE_COMMIT_HOME` before it installs the hooks), `std-homestate` (no `home.file` in the home root), `std-meta-maintainers` (maintainers carry the nixpkgs shape), `std-no-fail-open` (no shell shape that reports success while doing nothing), `std-no-deprecated-system` (no `pkgs.system` read), `std-no-host-profile` (no path under the host's profile) |
 
 ## `lib`
 
@@ -208,7 +216,7 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `scripts/release.sh` | *(run from here)* | The only way `release` moves: CI on the commit, then the fleet check, then the tag and the fast-forward |
 | `scripts/fleet-audit.sh` | *(run from here)* | The fleet's green/red oracle: conformance + metadata + archetype + branches + issues + CI, local and remote |
 | `scripts/fleet-roll.sh` | *(run from here)* | Adopt the `release` head across every consumer: pin, lock, sync from that commit, build, commit, push, each repo restored on any failure; `--build-on-ci` evaluates every declared system and leaves the build to each repo's CI on push |
-| `scripts/check-shell-pipelines.sh`, `scripts/check-readme-sections.sh` | *(hooks, not synced)* | The pre-commit hooks `base` wires into every consumer |
+| `scripts/check-shell-pipelines.sh`, `scripts/check-readme-sections.sh`, `scripts/check-commit-message.sh` | *(hooks, not synced)* | The pre-commit hooks `base` wires into every consumer |
 
 "Run from here" means a job fetches the file from the standard at the commit
 of the reusable workflow it runs (`job.workflow_repository` at

@@ -79,6 +79,13 @@ in
     files = "README\\.md$";
     language = "system";
   };
+  check-commit-message = {
+    enable = true;
+    name = "check-commit-message";
+    entry = "bash ${../scripts/check-commit-message.sh}";
+    language = "system";
+    stages = [ "commit-msg" ];
+  };
   deadnix = {
     enable = true;
     settings.noLambdaPatternNames = true;

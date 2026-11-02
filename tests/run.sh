@@ -1048,6 +1048,40 @@ PKG_REPOS_DIR="$d" bash "$STD/scripts/fleet-roll.sh" --build-on-ci --skip-build 
 check "--build-on-ci with --skip-build exits 2" "2" "$?"
 check "and says why" "yes" "$(grep -q 'build-on-ci still evaluates every system' "$d/out" && echo yes || echo no)"
 
+echo "Test 27: check-commit-message refuses each shape the standard names and accepts a conforming message"
+CHECKER="$STD/scripts/check-commit-message.sh"
+d="$WORK/t27"
+mkdir -p "$d"
+message() {
+  printf '%b' "$2" >"$d/$1"
+  bash "$CHECKER" buildhost "$d/$1" >"$d/$1.log" 2>&1
+}
+good='feat(std): check the commit message\n\nA terminal commit obeyed no shape.\n\nTest: tests/run.sh, all pass\n'
+message good "$good"
+check "a conforming message passes" "0" "$?"
+message fix 'fix(std): keep the lock when a fetch fails\n\nbody\n\nCause: the retry never re-read it\nTest: tests/run.sh\n'
+check "a fix commit with a Cause: line passes" "0" "$?"
+message editor "$good# a comment git strips\n# ------------------------ >8 ------------------------\nsee /home/me, someone@example.com\n"
+check "the editor's comments and the diff below the scissors line are not read" "0" "$?"
+refused() {
+  local rc=0
+  message "$2" "$3" || rc=$?
+  check "$1 is refused" "1" "$rc"
+  check "$1 is named" "1" "$(grep -c -- "$4" "$d/$2.log")"
+}
+refused "a subject without type(scope)" shape 'Add stuff\n\nbody\n\nTest: none, docs\n' 'type(scope): summary'
+refused "a capital after the prefix" capital 'feat(std): Add stuff\n\nbody\n\nTest: none, docs\n' 'capital letter'
+refused "a full stop on the subject" stop 'feat(std): add stuff.\n\nbody\n\nTest: none, docs\n' 'full stop'
+refused "a subject over 72 characters" long "feat(std): $(printf 'x%.0s' $(seq 70))\n\nbody\n\nTest: none, docs\n" '81 characters'
+refused "no blank line after the subject" noblank 'feat(std): add stuff\nbody\n\nTest: none, docs\n' 'second line'
+refused "no body beyond the Test: line" nobody 'feat(std): add stuff\n\nTest: none, docs\n' 'body is missing'
+refused "no Test: line" notest 'feat(std): add stuff\n\nbody\n' 'no Test: line'
+refused "a fix commit without a Cause: line" nocause 'fix(std): add stuff\n\nbody\n\nTest: none, docs\n' 'Cause: line'
+refused "an email address" email 'feat(std): add stuff\n\nmail someone@example.com\n\nTest: none, docs\n' 'someone@example.com'
+refused "a path under /home" home 'feat(std): add stuff\n\nsee /home/me/x\n\nTest: none, docs\n' 'under /home'
+refused "an AI trailer" trailer 'feat(std): add stuff\n\nbody\n\nTest: none, docs\n\nCo-Authored-By: Bot\n' 'AI trailer'
+refused "a word from the consumer's list" word 'feat(std): add stuff\n\nbuilt on Buildhost today\n\nTest: none, docs\n' 'names buildhost'
+
 echo "Test 26: release.sh builds only what the candidate changed, on the systems this host builds"
 d="$WORK/t26"
 mkdir -p "$d/bin"
