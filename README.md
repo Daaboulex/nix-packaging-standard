@@ -217,6 +217,7 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `scripts/fleet-audit.sh` | *(run from here)* | The fleet's green/red oracle: conformance + metadata + archetype + branches + issues + CI, local and remote |
 | `scripts/fleet-roll.sh` | *(run from here)* | Adopt the `release` head across every consumer: pin, lock, sync from that commit, build, commit, push, each repo restored on any failure; `--build-on-ci` evaluates every declared system and leaves the build to each repo's CI on push |
 | `scripts/check-shell-pipelines.sh`, `scripts/check-readme-sections.sh`, `scripts/check-commit-message.sh` | *(hooks, not synced)* | The pre-commit hooks `base` wires into every consumer |
+| `scripts/check-commit-range.sh` | *(app, not synced)* | Runs the commit-message hook over a commit range; `base` wires it as `apps.std-check-commit-messages`, which CI runs on every push |
 
 "Run from here" means a job fetches the file from the standard at the commit
 of the reusable workflow it runs (`job.workflow_repository` at
@@ -303,6 +304,13 @@ measured on 2026-10-26 (240 for a build or verify, 180 for the updater, 60 for
 the lock refresh, 15 or less for the rest), so a hung step fails in hours at
 most instead of burning the six-hour default; `std-every-job-has-a-timeout`
 refuses a job without one.
+
+The commit-message hook can be skipped locally, so the build job on the lint
+system runs it again over every commit of the push or pull request through
+the `std-check-commit-messages` app, with the consumer's own `args`; by hand
+that is `nix run .#std-check-commit-messages -- <base> <head>`. A base the
+checkout does not know, such as a new branch, checks the head commit alone,
+and `check-commit-range.sh` is proven by `tests/run.sh` Test 28.
 
 **Exception — off-CI packages.** A package whose closure is not on
 `cache.nixos.org` and cannot build on a free runner (CUDA/ROCm toolchains, very

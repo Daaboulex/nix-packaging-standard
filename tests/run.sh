@@ -1082,6 +1082,28 @@ refused "a path under /home" home 'feat(std): add stuff\n\nsee /home/me/x\n\nTes
 refused "an AI trailer" trailer 'feat(std): add stuff\n\nbody\n\nTest: none, docs\n\nCo-Authored-By: Bot\n' 'AI trailer'
 refused "a word from the consumer's list" word 'feat(std): add stuff\n\nbuilt on Buildhost today\n\nTest: none, docs\n' 'names buildhost'
 
+echo "Test 28: check-commit-range refuses a bad message anywhere in the pushed range and names its commit"
+RANGE="$STD/scripts/check-commit-range.sh"
+d="$WORK/t28"
+mkdir -p "$d"
+g() { git -C "$d" -c user.name=t -c user.email=t@t "$@"; }
+g init -q
+g commit -q --allow-empty -F "$WORK/t27/good"
+first=$(g rev-parse HEAD)
+g commit -q --allow-empty -F "$WORK/t27/shape"
+g commit -q --allow-empty -F "$WORK/t27/fix"
+range() { (cd "$d" && bash "$RANGE" "$1" "$2" bash "$CHECKER" buildhost >"$d/log" 2>&1); }
+range "$first" HEAD
+check "a bad message in the range is refused" "1" "$?"
+check "the bad commit is named" "1" "$(grep -c '^FAIL .* Add stuff' "$d/log")"
+check "the good commit after the base is not" "1" "$(grep -c '^ok ' "$d/log")"
+range "$first" "$first"
+check "an empty range checks the head commit alone, and a good one passes" "0" "$?"
+range 0000000000000000000000000000000000000000 HEAD~1
+check "an unknown base checks the head commit alone, and a bad one fails" "1" "$?"
+range "$first" nosuchcommit
+check "a head that is no commit fails" "1" "$?"
+
 echo "Test 26: release.sh builds only what the candidate changed, on the systems this host builds"
 d="$WORK/t26"
 mkdir -p "$d/bin"

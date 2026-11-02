@@ -79,6 +79,8 @@ jobs:
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - uses: DeterminateSystems/determinate-nix-action@92957199488000b908fdad19f63711000965d8f3 # v3.24.1
         with:
           extra-conf: |
@@ -107,6 +109,19 @@ jobs:
             sudo docker image prune --all --force >/dev/null
           fi
           df -h /
+
+      - name: Check every commit message in the range, where the lint check runs
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          SYS=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+          lints=$(nix eval ".#apps.$SYS" --apply 'apps: apps ? std-check-commit-messages')
+          if [ "$lints" != true ]; then
+            echo "the lint check runs on another system, and the messages are checked there"
+            exit 0
+          fi
+          nix run ".#std-check-commit-messages" -- "$BASE" "$HEAD"
 
       - name: Flag a build-the-world bump
         if: steps.nix-cache.outputs.restored-key != ''

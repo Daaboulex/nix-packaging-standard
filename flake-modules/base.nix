@@ -91,6 +91,28 @@ in
       pre-commit.settings.hooks = import ./hooks.nix { inherit pkgs lib ruffConfigArg; };
       pre-commit.check.enable = system == lintSystem;
 
+      apps = lib.optionalAttrs (system == lintSystem) {
+        std-check-commit-messages = {
+          type = "app";
+          program = lib.getExe (
+            pkgs.writeShellApplication {
+              name = "std-check-commit-messages";
+              runtimeInputs = [
+                pkgs.git
+                config.pre-commit.settings.package
+              ];
+              text = ''
+                PRE_COMMIT_HOME="$(git rev-parse --show-toplevel)/.devshell/pre-commit"
+                export PRE_COMMIT_HOME
+                set -- "$@" ${lib.getExe config.pre-commit.settings.package} run -c ${config.pre-commit.settings.configFile} --hook-stage commit-msg --commit-msg-filename
+              ''
+              + builtins.readFile ../scripts/check-commit-range.sh;
+            }
+          );
+          meta.description = "Run the commit-message hook over every commit after the first argument up to the second, as CI does on a push";
+        };
+      };
+
       formatter = pkgs.writeShellScriptBin "treefmt" ''
         exec ${pkgs.nixfmt-tree}/bin/treefmt --no-cache "$@"
       '';
