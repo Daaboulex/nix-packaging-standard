@@ -346,6 +346,7 @@ check "loguru not duplicated" "1" "$(grep -c 'loguru' "$d/env.nix")"
 # ---- Tests 10-11: classify-build-failure.sh ---------------------------------
 CLASSIFY="$STD/classify-build-failure.sh"
 RETRY="$STD/retry-transient.sh"
+LATEST_RUN="$STD/scripts/latest-worked-run.jq"
 run_classify() {
   (GITHUB_OUTPUT="$1/out.env" bash "$CLASSIFY" "$2" >"$1/clog" 2>&1)
   RC=$?
@@ -1247,6 +1248,24 @@ sed -i 's|echo "curl: (6) Could not resolve host: upstream.example"|echo "error:
 retry 600 --reset-tree
 check "a real failure is not retried" "1" "$(wc -l <"$d/count" | tr -d ' ')"
 check "and keeps its exit code" "1" "$RC"
+
+echo "Test 30: the run judged is the newest own run that did work, and a stopped schedule is named"
+pick() {
+  jq -r --argjson now 1793800000 --argjson scheduled "$1" -f "$LATEST_RUN" <<<"$2"
+}
+recent=2026-11-04T10:00:00Z
+old=2026-10-30T10:00:00Z
+check "a cadence-skipped day does not hide the run that did work" "completed/success" \
+  "$(pick true "[{\"event\":\"schedule\",\"status\":\"completed\",\"conclusion\":\"skipped\",\"createdAt\":\"$recent\"},{\"event\":\"schedule\",\"status\":\"completed\",\"conclusion\":\"success\",\"createdAt\":\"$old\"}]")"
+check "a fork pull request on main is not the repo's own run" "completed/failure" \
+  "$(pick false "[{\"event\":\"pull_request\",\"status\":\"completed\",\"conclusion\":\"success\",\"createdAt\":\"$recent\"},{\"event\":\"push\",\"status\":\"completed\",\"conclusion\":\"failure\",\"createdAt\":\"$old\"}]")"
+check "a workflow that only skipped is named with its count" "cadence-only/2" \
+  "$(pick true "[{\"event\":\"schedule\",\"status\":\"completed\",\"conclusion\":\"skipped\",\"createdAt\":\"$recent\"},{\"event\":\"schedule\",\"status\":\"completed\",\"conclusion\":\"skipped\",\"createdAt\":\"$recent\"}]")"
+check "a schedule with no run for days reads stopped, not green" "stopped/5" \
+  "$(pick true "[{\"event\":\"schedule\",\"status\":\"completed\",\"conclusion\":\"success\",\"createdAt\":\"$old\"}]")"
+check "a push-only workflow is never read as a stopped schedule" "completed/success" \
+  "$(pick false "[{\"event\":\"push\",\"status\":\"completed\",\"conclusion\":\"success\",\"createdAt\":\"$old\"}]")"
+check "no run at all is none" "none" "$(pick true '[]')"
 
 echo
 echo "------------------------------------------"

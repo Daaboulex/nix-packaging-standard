@@ -1,8 +1,9 @@
 # Fleet CI watch -- nix-packaging-standard repo ONLY (never synced to
 # consumers). A consumer's red CI can otherwise sit silent between fleet-audit
-# runs; this weekly sweep reads every consumer's latest run per required
-# workflow on its default branch and its open failure issues, and keeps exactly ONE open issue here naming
-# the red or missing ones, closing it when the fleet is clean.
+# runs; this weekly sweep reads every consumer's latest run that did work per
+# required workflow on its default branch, whether its schedule still fires, and
+# its open failure issues, and keeps exactly ONE open issue here naming the red
+# or missing ones, closing it when the fleet is clean.
 name: Fleet CI watch
 on:
   schedule:
@@ -27,8 +28,10 @@ jobs:
             for (const r of repos) {
               if (r.archived) continue;
               // A consumer carries .github/update.json on its default branch.
+              let updateJson;
               try {
-                await github.rest.repos.getContent({ owner, repo: r.name, path: '.github/update.json' });
+                const { data } = await github.rest.repos.getContent({ owner, repo: r.name, path: '.github/update.json' });
+                updateJson = JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
               } catch (e) {
                 if (e.status === 404) continue;
                 throw e;
@@ -54,17 +57,24 @@ jobs:
               } else if (std.original.ref !== 'release') {
                 bad.push(`${r.name}: std follows ${std.original.ref ? `ref ${std.original.ref}` : 'no ref'}, not the release branch, so no lock refresh moves it`);
               }
-              for (const wf of ['ci.yml', 'maintenance.yml', 'update.yml']) {
+              const required = updateJson.upstream.type === 'none'
+                ? ['ci.yml', 'maintenance.yml']
+                : ['ci.yml', 'maintenance.yml', 'update.yml'];
+              for (const wf of required) {
                 let verdict = 'missing';
                 try {
                   const runs = await github.rest.actions.listWorkflowRuns({
                     owner, repo: r.name, workflow_id: wf,
                     branch: r.default_branch, per_page: 30
                   });
-                  const run = runs.data.workflow_runs.find(x =>
+                  const own = runs.data.workflow_runs.filter(x =>
                     x.event !== 'pull_request'
                     && x.head_repository && x.head_repository.full_name === r.full_name);
-                  if (run) verdict = run.conclusion || run.status;
+                  const run = own.find(x => x.conclusion !== 'skipped');
+                  const days = own.length > 0 ? (Date.now() - Date.parse(own[0].created_at)) / 86400000 : 0;
+                  if (wf !== 'ci.yml' && days > 3) verdict = `no run for ${Math.floor(days)} days, so its daily schedule no longer fires`;
+                  else if (run) verdict = run.conclusion || run.status;
+                  else if (own.length > 0) verdict = `skipped on each of its last ${own.length} runs, so it did no work in that window`;
                 } catch (e) {
                   if (e.status !== 404) throw e;
                 }
@@ -93,7 +103,7 @@ jobs:
               return;
             }
             const body = [
-              'Open failure issues, and the latest run per required workflow on the default branch that is not green:',
+              'Open failure issues, and each required workflow on the default branch whose latest run that did work is not green or whose schedule stopped:',
               '',
               ...bad.map(b => `- ${b}`),
               '',

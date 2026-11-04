@@ -571,7 +571,6 @@ fi
 # ============================================================================
 if [ "$DO_REMOTE" -eq 1 ]; then
   need gh
-  REQUIRED_WF=("CI" "Maintenance" "Update")
 
   # gh, with ONE retry on a transient failure (token/keyring races, secondary
   # rate-limits, a network blip). On success: stdout on stdout, exit 0. On a
@@ -694,27 +693,37 @@ if [ "$DO_REMOTE" -eq 1 ]; then
     return 1
   }
 
-  hdr "remote: CI complete + green (latest run per required workflow on main)"
+  hdr "remote: CI complete + green (latest run that did work, per required workflow on main)"
   for repo in "${CONSUMERS[@]}"; do
     has_remote "$repo" || continue
-    if ! runs="$(gh_try run list -R "$(gh_slug "$repo")" --branch main -L 40 \
-      --json workflowName,conclusion,status,databaseId)"; then
-      red "$repo: could not list workflow runs (gh error: $(gherr))"
-      continue
-    fi
-    if [ -z "$runs" ]; then
-      red "$repo: no workflow runs returned (unexpected empty result)"
-      continue
+    required=(ci.yml maintenance.yml update.yml)
+    if [ "$(jq -r '.upstream.type' "$REPOS_DIR/$repo/.github/update.json")" = none ]; then
+      required=(ci.yml maintenance.yml)
     fi
     repo_ok=1
-    for wf in "${REQUIRED_WF[@]}"; do
-      latest="$(jq -r --arg w "$wf" \
-        '(map(select(.workflowName==$w)) | .[0]) as $r
-         | if $r == null then "none" else ($r.status + "/" + ($r.conclusion // "null")) end' <<<"$runs")"
+    for wf in "${required[@]}"; do
+      if ! runs="$(gh_try run list -R "$(gh_slug "$repo")" --branch main --workflow "$wf" -L 30 \
+        --json event,conclusion,status,databaseId,createdAt)"; then
+        red "$repo: could not list the runs of '$wf' (gh error: $(gherr))"
+        repo_ok=0
+        continue
+      fi
+      scheduled=true
+      [ "$wf" != ci.yml ] || scheduled=false
+      latest="$(jq -r --argjson now "$(date +%s)" --argjson scheduled "$scheduled" \
+        -f "$STD/scripts/latest-worked-run.jq" <<<"$runs")"
       case "$latest" in
       completed/success) ;;
       none | "")
         red "$repo: required workflow '$wf' has no run on main"
+        repo_ok=0
+        ;;
+      stopped/*)
+        red "$repo: workflow '$wf' has no run on main for ${latest#stopped/} days, so its daily schedule no longer fires"
+        repo_ok=0
+        ;;
+      cadence-only/*)
+        red "$repo: workflow '$wf' skipped each of its last ${latest#cadence-only/} runs on main, so it did no work in that window"
         repo_ok=0
         ;;
       queued/* | in_progress/* | requested/* | waiting/* | pending/*)
@@ -727,7 +736,7 @@ if [ "$DO_REMOTE" -eq 1 ]; then
         repo_ok=0
         ;;
       completed/*)
-        run_id="$(jq -r --arg w "$wf" 'map(select(.workflowName==$w)) | .[0].databaseId' <<<"$runs")"
+        run_id="$(jq -r 'map(select(.event != "pull_request" and .conclusion != "skipped")) | .[0].databaseId' <<<"$runs")"
         if never_started_for_billing "$(gh_slug "$repo")" "$run_id"; then
           red "$repo: workflow '$wf' latest run on main was never started: GitHub refused it at the Actions spending limit (a private repo past its included minutes)"
         else
