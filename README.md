@@ -1437,7 +1437,10 @@ Test 30), name a schedule that stopped firing, and leave Update out for a
 first-party repo. `heal-overlays.sh` probes each fix with every other fix
 applied, so one still-needed fix no longer keeps every other fix from healing
 (mesa-git-nix carries three; Test 8b). No caller and no consumer flake changed,
-so this release needs no fleet roll.
+so this release needs no fleet roll. `report-failure.sh` creates its label
+when a repo lacks it: 16 consumers had no `update-failed` label, so their
+first failed update could not file its issue, as rosemary-lineage-root's
+Magisk v31.1 update did on 2026-11-03 (Test 24).
 
 ## License
 

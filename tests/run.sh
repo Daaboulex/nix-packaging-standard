@@ -997,6 +997,7 @@ for a in "$@"; do
   prev="$a"
 done
 case "$1 $2" in
+"label list") cat "${STUB_GH_LABELS:-/dev/null}" ;;
 "issue list") cat "$STUB_GH_LIST" ;;
 "issue create") echo "https://github.com/o/r/issues/42" ;;
 esac
@@ -1008,11 +1009,12 @@ report_fixture() { # report_fixture <dir> <open-issues-json>
   : >"$1/out.env"
   : >"$1/calls"
   printf '%s\n' "$2" >"$1/list.json"
+  printf 'update-failed\nmaintenance\n' >"$1/labels"
   printf '## Update failed: x 1 -> 2\n' >"$1/head.md"
   printf '%s\n' 'building x' "$(printf '\033[31m')error:$(printf '\033[0m') builder for x failed" "$(printf 'y%.0s' $(seq 1 500))" >"$1/build.log"
 }
 run_report() { # run_report <dir> <title>
-  (cd "$1" && PATH="$GHBIN:$PATH" GH_CALLS="$1/calls" GH_BODY="$1/body.md" STUB_GH_LIST="$1/list.json" \
+  (cd "$1" && PATH="$GHBIN:$PATH" GH_CALLS="$1/calls" GH_BODY="$1/body.md" STUB_GH_LIST="$1/list.json" STUB_GH_LABELS="$1/labels" \
     STUB_GH_FAIL="${STUB_GH_FAIL:-}" STUB_GH_FAIL_TIMES="${STUB_GH_FAIL_TIMES:-}" REPORT_RETRY_DELAY=0 GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=7 GITHUB_OUTPUT="$1/out.env" \
     FAILED_ATTRS=".#checks.x86_64-linux.package-x" FAIL_EVIDENCE="${FAIL_EVIDENCE:-}" \
     bash "$REPORT" update-failed "Update " "$2" "$1/head.md" "$1/build.log" >"$1/rlog" 2>&1)
@@ -1032,6 +1034,16 @@ check "the first-error block opens on the plain error line" "1" "$(sed -n '/Firs
 check "the body carries no terminal colour codes" "0" "$(grep -c $'\033' "$d/body.md")"
 check "a long log line is cut to 300 characters" "300" "$(grep -m1 '^yyy' "$d/body.md" | tr -d '\n' | wc -c)"
 check "an unclassified failure has no cause section" "0" "$(grep -c '^### Cause$' "$d/body.md")"
+
+check "a repo that has the label gets no new one" "0" "$(grep -c '^label create' "$d/calls")"
+
+d="$WORK/t24l"
+report_fixture "$d" '[]'
+printf 'bug\n' >"$d/labels"
+run_report "$d" "Update x 1 -> 2: build-error"
+check "a repo without the label still gets its issue" "0" "$RC"
+check "the missing label is created first" "label create update-failed" "$(grep -m1 -E '^(label create|issue create)' "$d/calls" | cut -d' ' -f1-3)"
+check "the issue is then filed under it" "1" "$(grep -c '^issue create --label update-failed' "$d/calls")"
 
 d="$WORK/t24h"
 report_fixture "$d" '[]'

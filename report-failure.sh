@@ -56,6 +56,11 @@ gh_retry() {
   return 1
 }
 
+labels=$(gh_retry label list --limit 200 --json name --jq '.[].name')
+if ! grep -qxF -- "$label" <<<"$labels"; then
+  gh_retry label create "$label" --color B60205 --description "Filed by the packaging standard's automation when a scheduled run fails" >/dev/null
+fi
+
 open=$(gh_retry issue list --label "$label" --state open --limit 100 --json number,title,createdAt)
 mapfile -t same < <(jq -r --arg p "$prefix" \
   '[.[] | select(.title | startswith($p))] | sort_by(.number)[] | [.number, .createdAt[0:10], .title] | @tsv' <<<"$open")
