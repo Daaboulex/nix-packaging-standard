@@ -205,6 +205,7 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `heal-overlays.sh` | *(run from here; retired copy `scripts/heal-overlays.sh`)* | Probe every temporary divergence against the updated inputs and drop the healed ones |
 | `after-lock-update.sh` | *(run from here; retired copy `scripts/after-lock-update.sh`)* | Run the flake's `apps.<system>.after-lock-update` after the lock update, when it declares one, and stage the tracked files it rewrote |
 | `classify-build-failure.sh` | *(run from here; retired copy `scripts/classify-build-failure.sh`)* | Name a red run's failure class and enumerate its failed targets |
+| `retry-transient.sh` | *(run from here)* | Run an updater or a build, retrying only a `transient-infra` failure within a time budget, optionally from the checked-out tree, and leave the final attempt as the log |
 | `declared-runners.sh` | *(run from here; retired copy `scripts/declared-runners.sh`)* | Name a GitHub runner for every system the flake declares checks on, refusing an unknown system or a flake that does not evaluate |
 | `report-failure.sh` | *(run from here; retired copy `scripts/report-failure.sh`)* | Keep one open issue per failure: file it the first day, then rewrite it each failing run with the days since it opened, commenting only when the failure changes |
 | `update-readme-options.sh` | `scripts/update-readme-options.sh` | Only where a repo already carries it: splice an options reference into the README |
@@ -504,8 +505,9 @@ It checks, per consumer (every dir with a `.github/update.json`):
   clone under `PKG_REPOS_DIR` (a full sweep only: the fleet is what GitHub holds,
   not what happens to be cloned, and a consumer nobody cloned is reached by no
   sync, no roll and no audit), a single `main` branch (no stale `update/*`),
-  zero open automation issues, and a green latest run of CI / Maintenance /
-  Update on `main`.
+  zero open automation issues, and a green latest run that did work of CI /
+  Maintenance / Update on `main` (a day its cadence skipped is not a run, and a
+  first-party repo has no Update to judge).
 
 A repo with no git remote (an unpushed WIP) is audited locally and skipped
 remotely. The standard itself, the private `site` registry, and the owner's
@@ -804,8 +806,8 @@ derivations (`classify-build-failure.sh`); temporary divergences
 bridge nixpkgs regressions, missing dependencies, and pins, and remove
 themselves once they stop doing any work; and the weekly Fleet CI watch
 (standard repo only) keeps one open issue naming any consumer with an open
-`update-failed` or `maintenance` issue or a required workflow that is red or
-missing, closing it when the fleet is clean.
+`update-failed` or `maintenance` issue or a required workflow whose latest run
+that did work is red, or that is missing, closing it when the fleet is clean.
 
 Each job uploads its log under its own file name and the report downloads them
 with `merge-multiple`, so the log reaches the issue whether one job failed or
@@ -816,7 +818,16 @@ changes, so a failure that has lasted three weeks reads as three weeks old.
 
 `transient-infra` covers a runner-side store/fetch race as well as a network
 one (`path '...' is not valid`): the same revision re-runs green, so it is never
-a repo defect to chase.
+a repo defect to chase. It is read only from lines of the derivations that
+failed and from Nix's own lines, never from a warning Nix retried past, so a
+mirror that refused before another served the file, or a substituter that
+recovered, cannot make a real failure transient. It is the one thing every retry
+retries on: CI, Maintenance, Update and its verify build all run through
+`retry-transient.sh` (`tests/run.sh` Test 29). The Update retry starts again from
+the checked-out tree with empty step outputs, so a retry never reads a failed
+attempt's rewrite as already up to date, and no retry starts unless it fits the
+job's time budget, so retrying cannot run a job past its timeout and lose its
+report.
 
 ## Temporary divergences from nixpkgs (self-healing)
 
@@ -1405,6 +1416,20 @@ is never without it before its roll. The callers changed, so this release
 needs a fleet roll, and a repo whose x86_64 build needs the disk sets
 `RECLAIM_DISK=on` before it rolls.
 `fleet-audit` names a run GitHub refused at the spending limit.
+
+v3.3.0 (2026-11) checks every commit message, at the commit-msg hook and again
+in CI over the commits of a push or pull request (`tests/run.sh` Tests 27 and
+28), and stops a retry from losing a failed update. Four workflows each kept a
+copy of one retry regex that matched `crates.io`, which every Rust-vendoring
+build prints on success, and the Update retry reran the updater on the tree the
+failed attempt had rewritten; the rerun read "Already up to date", exited 0 and
+closed the open issue, so mesa-git-nix kept a broken pin for 26 days. Every
+retry now runs through `retry-transient.sh` and the classifier, which reads the
+failing derivations only (`tests/run.sh` Tests 11d and 29). The Fleet CI watch
+and `fleet-audit` read a cadence-skipped run as red, which listed 25 healthy
+repos; both now judge the latest run that did work (`scripts/latest-worked-run.jq`,
+Test 30), name a schedule that stopped firing, and leave Update out for a
+first-party repo. No caller changed, so this release needs no fleet roll.
 
 ## License
 
