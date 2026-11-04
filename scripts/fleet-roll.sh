@@ -118,7 +118,12 @@ FAST_BUILD_JOBS=${FAST_BUILD_JOBS:-8}
 STALL_TIMEOUT=${STALL_TIMEOUT:-900}
 STALL_POLL=${STALL_POLL:-30}
 
-TRANSIENT='crates\.io|error: cannot download|unable to download|http error 5[0-9][0-9]|status code: (403|429|5[0-9][0-9])|curl: \(|couldn.t resolve host|connection reset by peer|temporary failure in name resolution|operation timed out'
+transient() {
+  local cls
+  cls=$(mktemp)
+  GITHUB_OUTPUT="$cls" bash "$STD/classify-build-failure.sh" "$1"
+  grep -qx 'class=transient-infra' "$cls"
+}
 LOGDIR=$(mktemp -d -t fleet-roll-XXXXXX)
 RELEASE_TREE="$LOGDIR/std"
 mkdir -p "$RELEASE_TREE"
@@ -394,7 +399,7 @@ for repo in "${TARGETS[@]}"; do
       restore "$dir"
       continue
     fi
-    if [ "$brc" -ne 0 ] && grep -qiE "$TRANSIENT" "$buildlog"; then
+    if [ "$brc" -ne 0 ] && transient "$buildlog"; then
       note "build: transient fetch failure, retrying once in 60s"
       sleep 60
       build_one
@@ -402,7 +407,7 @@ for repo in "${TARGETS[@]}"; do
     fi
     if [ "$brc" -ne 0 ]; then
       why=$(grep -oiE 'HTTP error [0-9]{3}|error: [0-9]{3}|Too Many Requests|cannot download|unable to download|hash mismatch|Failed attributes: [^ ]*|builder for .* failed' "$buildlog" | sort -u | head -2 | tr '\n' ';')
-      if grep -qiE "$TRANSIENT" "$buildlog"; then
+      if transient "$buildlog"; then
         fail_repo "$repo" "TRANSIENT fetch failure, still failing after one retry: ${why:-see log}  log: $buildlog"
       else
         fail_repo "$repo" "build failed: ${why:-see log}  log: $buildlog"

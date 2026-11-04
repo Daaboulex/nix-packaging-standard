@@ -34,7 +34,8 @@ jobs:
       runners: ${{ steps.declared.outputs.runners }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Fetch the standard at the commit that defines this workflow
+      - &fetch-std
+        name: Fetch the standard at the commit that defines this workflow
         env:
           STD_REPOSITORY: ${{ job.workflow_repository }}
           STD_SHA: ${{ job.workflow_sha }}
@@ -81,6 +82,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - *fetch-std
       - uses: DeterminateSystems/determinate-nix-action@92957199488000b908fdad19f63711000965d8f3 # v3.24.1
         with:
           extra-conf: |
@@ -144,24 +146,5 @@ jobs:
       - name: Build every check declared for this system, retrying only a transient fetch failure
         run: |
           SYS=$(nix eval --impure --raw --expr 'builtins.currentSystem')
-          attempt=$(mktemp)
-          build() {
-            nix run --inputs-from . nixpkgs#nix-fast-build -- --skip-cached --no-nom --flake ".#checks.$SYS" 2>&1 | tee "$attempt"
-            return "${PIPESTATUS[0]}"
-          }
-          set +e
-          build
-          code=$?
-          transient='crates\.io|error: cannot download|unable to download|http error 5[0-9][0-9]|status code: (403|429|5[0-9][0-9])|curl: \(|couldn.t resolve host|connection reset by peer|temporary failure in name resolution|operation timed out'
-          for backoff in 60 300; do
-            [ "$code" -eq 0 ] && break
-            if ! grep -qiE "$transient" "$attempt"; then
-              echo "::error::the build failed with no transient-fetch marker in its log, so it is not retried"
-              break
-            fi
-            echo "::warning::Transient external-fetch failure; retrying in ${backoff}s."
-            sleep "$backoff"
-            build
-            code=$?
-          done
-          exit "$code"
+          RETRY_BACKOFFS="60 300" bash "$STD/retry-transient.sh" "$RUNNER_TEMP/build.log" 13200 -- \
+            nix run --inputs-from . nixpkgs#nix-fast-build -- --skip-cached --no-nom --flake ".#checks.$SYS"

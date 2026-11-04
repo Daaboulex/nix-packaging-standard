@@ -345,6 +345,7 @@ check "loguru not duplicated" "1" "$(grep -c 'loguru' "$d/env.nix")"
 
 # ---- Tests 10-11: classify-build-failure.sh ---------------------------------
 CLASSIFY="$STD/classify-build-failure.sh"
+RETRY="$STD/retry-transient.sh"
 run_classify() {
   (GITHUB_OUTPUT="$1/out.env" bash "$CLASSIFY" "$2" >"$1/clog" 2>&1)
   RC=$?
@@ -404,6 +405,47 @@ eden>   file DOWNLOAD cannot compute hash on failed download
 LOG
 run_classify "$d" "$d/build.log"
 check "class sandbox-download" "sandbox-download" "$(get "$d" class)"
+
+echo "Test 11d: a build that fetched its crates and then failed is not transient; a refused fetch is"
+d="$WORK/t11d"
+mkdir -p "$d"
+: >"$d/out.env"
+cat >"$d/build.log" <<'LOG'
+libc> trying https://static.crates.io/crates/libc/libc-0.2.177.crate
+libc> curl: (22) The requested URL returned error: 403
+libc> trying https://crates.io/api/v1/crates/libc/0.2.177/download
+warning: unable to download 'https://cache.nixos.org/aaaa.narinfo': HTTP error 503 (curl error: HTTP response code said error); retrying in 266 ms
+mesa> meson.build:21:0: ERROR: Value "true" for option "amd-options" is not in allowed choices: "use-llvm, virtio"
+error: Cannot build '/nix/store/llll-mesa-27.0.0-devel-e6d7ecc.drv'.
+LOG
+run_classify "$d" "$d/build.log"
+check "a refusal a working mirror or a retry recovered from does not make a real failure transient" "unclassified" "$(get "$d" class)"
+: >"$d/out.env"
+cat >"$d/build.log" <<'LOG'
+libc> trying https://static.crates.io/crates/libc/libc-0.2.177.crate
+libc>   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+libc> curl: (22) The requested URL returned error: 403
+libc> error: cannot download libc-0.2.177.tar.gz from any mirror
+error: Cannot build '/nix/store/mmmm-libc-0.2.177.tar.gz.drv'.
+LOG
+run_classify "$d" "$d/build.log"
+check "a crate fetch crates.io refused is transient" "transient-infra" "$(get "$d" class)"
+: >"$d/out.env"
+printf '%s\n' "error: unable to download 'https://static.crates.io/crates/libc/libc-0.2.177.crate': HTTP error 429" >"$d/build.log"
+run_classify "$d" "$d/build.log"
+check "nix's own crates.io 429 is transient" "transient-infra" "$(get "$d" class)"
+: >"$d/out.env"
+printf '%s\n' "error: unable to download 'https://example.org/x.tar.gz': Timeout was reached (28)" >"$d/build.log"
+run_classify "$d" "$d/build.log"
+check "nix's own network timeout is transient" "transient-infra" "$(get "$d" class)"
+: >"$d/out.env"
+printf '%s\n' "error: unable to download 'https://example.org/x.tar.gz': HTTP error 503" >"$d/build.log"
+run_classify "$d" "$d/build.log"
+check "an HTTP 503 is transient" "transient-infra" "$(get "$d" class)"
+: >"$d/out.env"
+printf '%s\n' "error: unable to download 'https://example.org/x.tar.gz': HTTP error 404" >"$d/build.log"
+run_classify "$d" "$d/build.log"
+check "an HTTP 404 is not transient" "unclassified" "$(get "$d" class)"
 
 echo "Test 12: two source hashes are unattributable -> config-error before any fetch"
 d="$WORK/t12"
@@ -1164,6 +1206,47 @@ SH
   printf '%s %s\n' "$pass" "$fail" >"$d/counts"
 )
 read -r pass fail <"$d/counts"
+
+echo "Test 29: retry-transient retries only a transient failure, from the checked-out tree, within its budget"
+d="$WORK/t29"
+mkdir -p "$d/tree"
+git -C "$d/tree" init -q
+printf 'pin=old\n' >"$d/tree/version.txt"
+git -C "$d/tree" add version.txt
+git -C "$d/tree" -c user.name=t -c user.email=t@localhost commit -qm base
+cat >"$d/updater.sh" <<'UPD'
+echo "attempt" >>"$COUNT"
+echo "seen=$(cat version.txt)" >>"$GITHUB_OUTPUT"
+if grep -q 'pin=new' version.txt; then
+  echo "Already up to date"
+  exit 0
+fi
+printf 'pin=new\n' >version.txt
+touch stray-file
+echo "curl: (6) Could not resolve host: upstream.example"
+exit 1
+UPD
+retry() {
+  : >"$d/count"
+  : >"$d/out"
+  (cd "$d/tree" && git checkout -q -- . && git clean -qfd &&
+    COUNT="$d/count" GITHUB_OUTPUT="$d/out" RETRY_BACKOFFS="${BACKOFFS:-0 0}" \
+      bash "$RETRY" "$d/log" "$@" -- bash "$d/updater.sh" >/dev/null 2>&1)
+  RC=$?
+}
+retry 600 --reset-tree
+check "a retry from the checked-out tree still sees the failure" "1" "$RC"
+check "it retried each backoff" "3" "$(wc -l <"$d/count" | tr -d ' ')"
+check "the outputs of a failed attempt do not survive the retry" "1" "$(wc -l <"$d/out" | tr -d ' ')"
+check "the log holds the final attempt" "1" "$(grep -c 'Could not resolve host' "$d/log")"
+retry 600
+check "without the reset the failed attempt's rewrite reads as up to date" "0" "$RC"
+BACKOFFS=30 retry 10 --reset-tree
+check "no retry starts past the budget" "1" "$(wc -l <"$d/count" | tr -d ' ')"
+sed -i 's|echo "curl: (6) Could not resolve host: upstream.example"|echo "error: builder failed with exit code 2"|' "$d/updater.sh"
+retry 600 --reset-tree
+check "a real failure is not retried" "1" "$(wc -l <"$d/count" | tr -d ' ')"
+check "and keeps its exit code" "1" "$RC"
 
 echo
 echo "------------------------------------------"

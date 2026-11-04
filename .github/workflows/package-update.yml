@@ -95,24 +95,8 @@ jobs:
             updater="$STD/update.sh"
           fi
           echo "updater: $updater"
-          attempt=$(mktemp)
-          run_update() {
-            bash "$updater" 2>&1 | tee "$attempt"
-            local rc="${PIPESTATUS[0]}"
-            cat "$attempt" >>"$LOG"
-            return "$rc"
-          }
-          transient_fetch_failure='crates\.io|error: cannot download|unable to download|http error 5[0-9][0-9]|status code: (403|429|5[0-9][0-9])|curl: \(|couldn.t resolve host|connection reset by peer|temporary failure in name resolution|operation timed out'
-          run_update
+          bash "$STD/retry-transient.sh" "$LOG" 9000 --reset-tree -- bash "$updater"
           EXIT_CODE=$?
-          for backoff in 60 300 900; do
-            [ "$EXIT_CODE" -eq 0 ] && break
-            grep -qiE "$transient_fetch_failure" "$attempt" || break
-            echo "::warning::Transient external-fetch failure during update; retrying in ${backoff}s."
-            sleep "$backoff"
-            run_update
-            EXIT_CODE=$?
-          done
           echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
           if [ -f /tmp/update-outputs.env ]; then
             cat /tmp/update-outputs.env >> "$GITHUB_OUTPUT"
@@ -192,6 +176,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.update.outputs.sha }}
+      - *fetch-std
       - uses: DeterminateSystems/determinate-nix-action@92957199488000b908fdad19f63711000965d8f3 # v3.24.1
         with:
           extra-conf: |
@@ -216,26 +201,8 @@ jobs:
       - name: Build every check for this system, retrying only a transient fetch failure
         run: |
           SYS=$(nix eval --impure --raw --expr 'builtins.currentSystem')
-          attempt=$(mktemp)
-          build() {
-            nix run --inputs-from . nixpkgs#nix-fast-build -- --skip-cached --no-nom --flake ".#checks.$SYS" 2>&1 | tee "$attempt"
-            local rc="${PIPESTATUS[0]}"
-            cat "$attempt" >>"$LOG"
-            return "$rc"
-          }
-          set +e
-          build
-          code=$?
-          transient='crates\.io|error: cannot download|unable to download|http error 5[0-9][0-9]|status code: (403|429|5[0-9][0-9])|curl: \(|couldn.t resolve host|connection reset by peer|temporary failure in name resolution|operation timed out'
-          for backoff in 60 300 900; do
-            [ "$code" -eq 0 ] && break
-            grep -qiE "$transient" "$attempt" || break
-            echo "::warning::Transient external-fetch failure during the update build; retrying in ${backoff}s."
-            sleep "$backoff"
-            build
-            code=$?
-          done
-          exit "$code"
+          bash "$STD/retry-transient.sh" "$LOG" 13200 -- \
+            nix run --inputs-from . nixpkgs#nix-fast-build -- --skip-cached --no-nom --flake ".#checks.$SYS"
 
       - name: Keep the build log for the report
         if: failure()
