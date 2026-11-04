@@ -308,6 +308,40 @@ if command -v nix >/dev/null 2>&1; then
   echo '{ overlay = final: prev: { }; }' >"$d/overlays/broken.nix"
   run_heal "$d"
   check "malformed exits 1" "1" "$RC"
+
+  echo "Test 8b: each fix is probed with every other fix applied, and never with itself"
+  d="$WORK/t8b"
+  mkdir -p "$d/overlays"
+  NPH=$(nix eval --impure --raw --expr "(builtins.getFlake \"$STD\").inputs.nixpkgs.outPath")
+  cat >"$d/flake.nix" <<NIX
+{
+  inputs.nixpkgs.url = "path:$NPH";
+  outputs = { self, nixpkgs }: {
+    overlays.probe = _final: _prev: { marker = "glue"; };
+  };
+}
+NIX
+  cat >"$d/overlays/a.nix" <<'NIX'
+{
+  meta = { reason = "a is still needed; it would read healed only if it were applied to its own probe"; added = "2026-11-04"; };
+  dropWhen = pkgs: builtins.match ".*[+]a.*" pkgs.marker != null;
+  overlay = _final: prev: { marker = prev.marker + "+a"; };
+}
+NIX
+  cat >"$d/overlays/b.nix" <<'NIX'
+{
+  meta = { reason = "b is healed once the other fixes stand, which a probe without them cannot see"; added = "2026-11-04"; };
+  dropWhen = pkgs: builtins.match ".*[+]a.*" pkgs.marker != null;
+  overlay = _final: prev: { marker = prev.marker + "+b"; };
+}
+NIX
+  git -C "$d" init -q
+  git -C "$d" add -A
+  git -C "$d" -c user.name=t -c user.email=t@localhost commit -qm fixture
+  run_heal "$d"
+  check "the probe runs" "0" "$RC"
+  check "a fix healed beside the others is dropped" "b" "$(geth "$d" healed)"
+  check "a fix is never judged with itself applied" "a" "$(geth "$d" kept)"
 else
   echo "Test 8 skipped (nix unavailable)"
 fi

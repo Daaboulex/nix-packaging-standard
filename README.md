@@ -852,8 +852,8 @@ One fix per file under `overlays/`, mirroring the main config's
     added = "2026-07-13";
     upstream = "https://github.com/NixOS/nixpkgs/...";   # optional
   };
-  # Probed against pkgs WITHOUT the fixes (overlays.probe): true means
-  # nixpkgs works normally again and CI removes this file.
+  # Probed against pkgs WITHOUT this fix (overlays.probe plus every other
+  # fix): true means nixpkgs works normally again and CI removes this file.
   dropWhen = pkgs: (builtins.tryEval pkgs.python3Packages.torchao.drvPath).success;
   overlay = final: prev: { ... };
 }
@@ -899,8 +899,13 @@ the moment nixpkgs' own package carries the dependency:
 
 The repo composes `overlays.default` = its permanent glue + every fix, and
 exports `overlays.probe` = the glue alone. `heal-overlays.sh`, run by the
-Maintenance workflow, probes every fix against the probe pkgs -- evaluating a `dropWhen`, **building**
-a `dropWhenBuilds` -- and deletes the ones that fire.
+Maintenance workflow, probes every fix against the glue plus every OTHER fix,
+composed in the same `readDir` order as `overlays.default` -- evaluating a
+`dropWhen`, **building** a `dropWhenBuilds` -- and deletes the ones that fire.
+Leaving only the fix under test out is what "without the fix" means: with every
+fix removed, one fix that is still needed (a meson flag nixpkgs passes and the
+package refuses) breaks the probe of every other fix before it reaches its own
+condition, so none of them could ever heal (`tests/run.sh` Test 8b).
 
 **Where it runs is load-bearing.** Maintenance runs the probe INSIDE the
 lock-update job, immediately after `nix flake update` and before the
@@ -1429,7 +1434,10 @@ failing derivations only (`tests/run.sh` Tests 11d and 29). The Fleet CI watch
 and `fleet-audit` read a cadence-skipped run as red, which listed 25 healthy
 repos; both now judge the latest run that did work (`scripts/latest-worked-run.jq`,
 Test 30), name a schedule that stopped firing, and leave Update out for a
-first-party repo. No caller changed, so this release needs no fleet roll.
+first-party repo. `heal-overlays.sh` probes each fix with every other fix
+applied, so one still-needed fix no longer keeps every other fix from healing
+(mesa-git-nix carries three; Test 8b). No caller and no consumer flake changed,
+so this release needs no fleet roll.
 
 ## License
 

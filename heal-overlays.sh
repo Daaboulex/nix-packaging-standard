@@ -23,7 +23,9 @@ set -uo pipefail
 #
 # The repo composes overlays.default = glue + fixes and exports overlays.probe
 # = the glue WITHOUT fixes. This script probes each fix against a probe pkgs
-# (the repo's locked nixpkgs + overlays.probe, allowUnfree): dropWhen is
+# (the repo's locked nixpkgs + overlays.probe + every OTHER fix, in readDir
+# order like overlays.default, allowUnfree), so a fix still needed elsewhere
+# cannot break the probe of one that healed: dropWhen is
 # evaluated, dropWhenBuilds is BUILT (a build-phase failure -- a broken test
 # suite, a pkg-config version reject -- is not eval-visible, so guessing from
 # eval would be the version-proxy mistake in another form). A fix that fires is
@@ -91,10 +93,13 @@ for f in "${files[@]}"; do
   probePkgs="
     let
       flake = builtins.getFlake (toString ./.);
+      others = builtins.filter (n: n != \"${name}.nix\" && builtins.match \".*[.]nix\" n != null) (
+        builtins.attrNames (builtins.readDir ./overlays)
+      );
       pkgs = import flake.inputs.nixpkgs {
         system = builtins.currentSystem;
         config.allowUnfree = true;
-        overlays = [ flake.overlays.probe ];
+        overlays = [ flake.overlays.probe ] ++ map (n: (import (./overlays + \"/\${n}\")).overlay) others;
       };
     in"
   if jq -e '.hasBuildDrop' /tmp/heal-meta.json >/dev/null; then
