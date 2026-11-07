@@ -218,7 +218,8 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `scripts/fleet-audit.sh` | *(run from here)* | The fleet's green/red oracle: conformance + metadata + archetype + branches + issues + CI, local and remote |
 | `scripts/fleet-roll.sh` | *(run from here)* | Adopt the `release` head across every consumer: pin, lock, sync from that commit, build, commit, push, each repo restored on any failure; `--build-on-ci` evaluates every declared system and leaves the build to each repo's CI on push |
 | `scripts/check-shell-pipelines.sh`, `scripts/check-readme-sections.sh`, `scripts/check-commit-message.sh` | *(hooks, not synced)* | The pre-commit hooks `base` wires into every consumer |
-| `scripts/check-commit-range.sh` | *(app, not synced)* | Runs the commit-message hook over a commit range; `base` wires it as `apps.std-check-commit-messages`, which CI runs on every push |
+| `scripts/check-commit-range.sh` | *(app, not synced)* | Runs the commit-message hook over a commit range; `base` wires it as `apps.std-check-commit-messages` |
+| `scripts/check-commit-messages-ci.sh` | *(run from here)* | CI's commit-message check on every push and pull request: the consumer's app where this runner's system has it, nothing where another system has it, and the standard's own checker where the consumer's locked standard has no app |
 
 "Run from here" means a job fetches the file from the standard at the commit
 of the reusable workflow it runs (`job.workflow_repository` at
@@ -306,10 +307,13 @@ the lock refresh, 15 or less for the rest), so a hung step fails in hours at
 most instead of burning the six-hour default; `std-every-job-has-a-timeout`
 refuses a job without one.
 
-The commit-message hook can be skipped locally, so the build job on the lint
-system runs it again over every commit of the push or pull request through
-the `std-check-commit-messages` app, with the consumer's own `args`; by hand
-that is `nix run .#std-check-commit-messages -- <base> <head>`. A base the
+The commit-message hook can be skipped locally, so the build job runs it
+again over every commit of the push or pull request
+(`scripts/check-commit-messages-ci.sh`): through the `std-check-commit-messages`
+app, with the consumer's own `args`, on the system that has the app, and
+through the standard's own checker, without those `args`, when the consumer's
+locked standard is older than the app, so a stale lock never skips the check
+(Test 28b); by hand that is `nix run .#std-check-commit-messages -- <base> <head>`. A base the
 checkout does not know, such as a new branch, checks the head commit alone,
 and `check-commit-range.sh` is proven by `tests/run.sh` Test 28.
 
@@ -1441,6 +1445,13 @@ so this release needs no fleet roll. `report-failure.sh` creates its label
 when a repo lacks it: 16 consumers had no `update-failed` label, so their
 first failed update could not file its issue, as rosemary-lineage-root's
 Magisk v31.1 update did on 2026-11-03 (Test 24).
+
+v3.3.1 (2026-11) runs the commit-message check even where the consumer's
+locked standard predates its app. v3.3.0's step took a missing app for "the
+check runs on another system" and passed, so 28 of the 29 consumers, still
+locked to e36d745, checked no message at all: steam-arm64-nix PR #6 carried
+three commits without a `Test:` line, none flagged (2026-11-07). Without the
+app the workflow now runs the standard's checker it already fetched (Test 28b).
 
 ## License
 

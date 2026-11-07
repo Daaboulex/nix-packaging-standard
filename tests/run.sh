@@ -1193,6 +1193,34 @@ check "an unknown base checks the head commit alone, and a bad one fails" "1" "$
 range "$first" nosuchcommit
 check "a head that is no commit fails" "1" "$?"
 
+echo "Test 28b: CI checks the messages even when the consumer's locked standard has no app"
+CIMSG="$STD/scripts/check-commit-messages-ci.sh"
+mkdir -p "$d/bin"
+cat >"$d/bin/nix" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+*currentSystem*) echo x86_64-linux ;;
+*"--json .#apps"*)
+  [ "$APPS" = fail ] && exit 1
+  echo "$APPS"
+  ;;
+run*) echo "app ran: $*" ;;
+esac
+SH
+chmod +x "$d/bin/nix"
+ci() { (cd "$d" && APPS=$1 PATH="$d/bin:$PATH" bash "$CIMSG" "$2" "$3" >"$d/ci.log" 2>&1); }
+ci '["x86_64-linux"]' "$first" HEAD
+check "the app runs where this system has it" "0 1" "$? $(grep -c '^app ran: run .#std-check-commit-messages' "$d/ci.log")"
+ci '["aarch64-linux"]' "$first" HEAD
+check "another system with the app checks, this one does not" "0 1" "$? $(grep -cF 'checked on ["aarch64-linux"]' "$d/ci.log")"
+ci '[]' "$first" HEAD
+check "no app anywhere runs the standard's checker, which refuses the bad commit" "1 1" "$? $(grep -c '^FAIL .* Add stuff' "$d/ci.log")"
+ci '[]' "$first" "$first"
+check "no app anywhere and a good head passes" "0" "$?"
+ci fail "$first" HEAD
+st=$?
+check "a flake whose apps do not evaluate fails, never skips" "failed" "$(if [ "$st" -ne 0 ]; then echo failed; else echo passed; fi)"
+
 echo "Test 26: release.sh builds only what the candidate changed, on the systems this host builds"
 d="$WORK/t26"
 mkdir -p "$d/bin"
