@@ -10,8 +10,19 @@ while IFS= read -r line || [ -n "$line" ]; do
   [[ $line == \#* ]] && continue
   lines+=("$line")
 done <"$file"
-message=$(printf '%s\n' "${lines[@]}")
 subject=${lines[0]:-}
+
+coauthor='^[Cc]o-[Aa]uthored-[Bb]y: (.+) <[0-9]+\+([A-Za-z0-9-]+)@users\.noreply\.github\.com>$'
+rest=()
+coauthors=()
+for line in "${lines[@]}"; do
+  if [[ $line =~ $coauthor ]]; then
+    coauthors+=("${BASH_REMATCH[1]} ${BASH_REMATCH[2]}")
+  else
+    rest+=("$line")
+  fi
+done
+message=$(printf '%s\n' "${rest[@]}")
 
 bad=0
 refuse() {
@@ -42,7 +53,7 @@ fi
 has_body=0
 has_test=0
 has_cause=0
-for line in "${lines[@]:2}"; do
+for line in "${rest[@]:2}"; do
   case $line in
   "Test: "?*) has_test=1 ;;
   "Cause: "?*) has_cause=1 ;;
@@ -69,8 +80,13 @@ if [[ $message == */home/* ]]; then
   refuse "names a path under /home; say it relative to the repo or the home folder"
 fi
 if [[ $message =~ $trailer ]]; then
-  refuse "carries an AI trailer: ${BASH_REMATCH[0]}"
+  refuse "carries an AI trailer: ${BASH_REMATCH[0]}; a person is credited only as Co-authored-by: Name <id+login@users.noreply.github.com>"
 fi
+for credited in "${coauthors[@]}"; do
+  if [[ $credited =~ claude|anthropic|copilot|bot ]]; then
+    refuse "credits a tool or a bot as a co-author: $credited"
+  fi
+done
 for word in "${words[@]}"; do
   if [[ $message =~ (^|[^[:alnum:]])"$word"([^[:alnum:]]|$) ]]; then
     refuse "names $word, which stays out of every commit message"

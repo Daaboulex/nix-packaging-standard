@@ -105,7 +105,10 @@ Every consumer repo follows these. Metadata (description + topics) is declared i
   72 characters, no full stop; a blank line; a body saying why; one `Test:`
   line (`Test: none, <why>` when nothing ran); a `fix` commit also has a
   `Cause:` line. No email address, no path under `/home`, no AI trailer. A
-  consumer lists the host and person names that stay out of its messages as
+  person whose work a commit carries is credited with one line per person,
+  `Co-authored-by: Name <id+login@users.noreply.github.com>`, the GitHub
+  noreply form; any other address, a bot login, or a tool's name there is
+  refused, and the line does not count as the body. A consumer lists the host and person names that stay out of its messages as
   the hook's `args`: `pre-commit.settings.hooks.check-commit-message.args =
   [ "buildhost" ];`, matched whole and ignoring case.
 
@@ -1452,6 +1455,13 @@ check runs on another system" and passed, so 28 of the 29 consumers, still
 locked to e36d745, checked no message at all: steam-arm64-nix PR #6 carried
 three commits without a `Test:` line, none flagged (2026-11-07). Without the
 app the workflow now runs the standard's checker it already fetched (Test 28b).
+
+v3.4.0 (2026-11) lets a commit credit a person. The checker refused every
+`Co-Authored-By` as an AI trailer and every email address, so porting
+sinavarasina's steam-arm64-nix PR #6 by hand could not credit him the way
+GitHub records a co-author. A `Co-authored-by:` line with a GitHub noreply
+address now passes; a personal address, a bot login and a tool's name stay
+refused (Test 27).
 
 ## License
 

@@ -1158,6 +1158,12 @@ refused() {
   check "$1 is refused" "1" "$rc"
   check "$1 is named" "1" "$(grep -c -- "$4" "$d/$2.log")"
 }
+message coauthor 'feat(std): add stuff\n\nbody\n\nTest: none, docs\n\nCo-authored-by: Some One <12345+some-one@users.noreply.github.com>\n'
+check "a human co-author through a GitHub noreply address passes" "0" "$?"
+refused "a co-author with a personal address" coauthormail 'feat(std): add stuff\n\nbody\n\nTest: none, docs\n\nCo-authored-by: Some One <some.one@example.com>\n' 'noreply'
+refused "a bot co-author" coauthorbot 'feat(std): add stuff\n\nbody\n\nTest: none, docs\n\nCo-authored-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>\n' 'noreply'
+refused "a tool co-author" coauthortool 'feat(std): add stuff\n\nbody\n\nTest: none, docs\n\nCo-authored-by: Claude <12345+claude@users.noreply.github.com>\n' 'tool or a bot'
+refused "a co-author line alone as the body" coauthoronly 'feat(std): add stuff\n\nTest: none, docs\n\nCo-authored-by: Some One <12345+some-one@users.noreply.github.com>\n' 'body is missing'
 refused "a subject without type(scope)" shape 'Add stuff\n\nbody\n\nTest: none, docs\n' 'type(scope): summary'
 refused "a capital after the prefix" capital 'feat(std): Add stuff\n\nbody\n\nTest: none, docs\n' 'capital letter'
 refused "a full stop on the subject" stop 'feat(std): add stuff.\n\nbody\n\nTest: none, docs\n' 'full stop'
