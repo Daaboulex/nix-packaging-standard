@@ -519,6 +519,22 @@ printf '%s\n' "error: unable to download 'https://example.org/x.tar.gz': HTTP er
 run_classify "$d" "$d/build.log"
 check "an HTTP 404 is not transient" "unclassified" "$(get "$d" class)"
 
+echo "Test 11e: an evaluation that needed a derivation built is import-from-derivation, not a transient store race"
+d="$WORK/t11e"
+mkdir -p "$d"
+: >"$d/out.env"
+cat >"$d/build.log" <<'LOG'
+error:
+       error: path 'kppsfygrz2j6arlffj8dq6jx0zgprs36-written.drv' is not valid
+evaluate-every-system: import from derivation: path 'kppsfygrz2j6arlffj8dq6jx0zgprs36-written.drv' is not valid. Something reads a derivation output while evaluating
+LOG
+run_classify "$d" "$d/build.log"
+check "class import-from-derivation" "import-from-derivation" "$(get "$d" class)"
+: >"$d/out.env"
+printf '%s\n' "error: path '/nix/store/aaaa-foo' is not valid" >"$d/build.log"
+run_classify "$d" "$d/build.log"
+check "a store path missing during a build stays transient-infra" "transient-infra" "$(get "$d" class)"
+
 echo "Test 12: two source hashes are unattributable -> config-error before any fetch"
 d="$WORK/t12"
 mkdir -p "$d/.github"

@@ -65,6 +65,7 @@ match missing-python-dep -E '^ *> *- [a-zA-Z0-9_.-]+ not installed'
 match requirements-coverage -F 'requirements not present in the env'
 match python-metadata-version-mismatch -F 'METADATA specifies version'
 match substitution-pattern-drift -E "ERROR: pattern .* doesn.t match anything in file"
+match import-from-derivation -F 'evaluate-every-system: import from derivation:'
 
 out "class" "$class"
 out "evidence" "$evidence"

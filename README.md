@@ -845,7 +845,8 @@ fix-one-discover-next; every failure issue carries a machine class
 (`transient-infra`, `eval-error`, `compile-error`, `sandbox-download`,
 `setup-hook-error`, `upstream-rerelease-hash-mismatch`, `nixpkgs-package-drop`,
 `missing-python-dep`, `requirements-coverage`,
-`python-metadata-version-mismatch`, `substitution-pattern-drift`, or an honest
+`python-metadata-version-mismatch`, `substitution-pattern-drift`,
+`import-from-derivation`, or an honest
 `unclassified`) plus the failed attributes of every runner and the failed
 derivations (`classify-build-failure.sh`); temporary divergences
 bridge nixpkgs regressions, missing dependencies, and pins, and remove
