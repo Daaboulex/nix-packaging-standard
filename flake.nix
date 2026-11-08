@@ -247,8 +247,8 @@
                 suffix = "";
                 qualifier = null;
               };
-              ge = steamCompatTool {
-                inherit pkgs fetch;
+              geTool = steamCompatTool (_: {
+                inherit fetch;
                 attribute = "proton-ge";
                 brand = "GE-Proton";
                 homepage = "https://example.invalid/ge";
@@ -274,9 +274,10 @@
                     qualifier = null;
                   };
                 };
-              };
-              cachyos = steamCompatTool {
-                inherit pkgs fetch;
+              });
+              ge = geTool.forPkgs pkgs;
+              cachyosTool = steamCompatTool (_: {
+                inherit fetch;
                 attribute = "proton-cachyos";
                 brand = "Proton-CachyOS";
                 homepage = "https://example.invalid/cachyos";
@@ -319,7 +320,8 @@
                     qualifier = null;
                   };
                 };
-              };
+              });
+              cachyos = cachyosTool.forPkgs pkgs;
               onArm = system == "aarch64-linux";
               want = label: cond: lib.optional (!cond) label;
               problems =
@@ -370,6 +372,10 @@
                 )
                 ++ want "the plain x86_64 variant has no suffix in its attribute" (
                   cachyos.tools ? proton-cachyos-x86_64 && !(cachyos.tools ? proton-cachyos-x86_64-)
+                )
+                ++ want "the overlay builds its tools from prev alone and adds exactly the host's tool attributes" (
+                  lib.attrNames (geTool.overlay null pkgs) == lib.attrNames ge.tools
+                  && lib.attrNames (cachyosTool.overlay null pkgs) == lib.attrNames cachyos.tools
                 );
             in
             pkgs.runCommand "std-steam-compat-tool"
@@ -377,6 +383,8 @@
                 shapes = [
                   ge.checks.compat-tool-shape
                   cachyos.checks.compat-tool-shape
+                  ge.checks.overlay-applies
+                  cachyos.checks.overlay-applies
                 ];
               }
               (
@@ -384,7 +392,7 @@
                 + lib.optionalString (problems != [ ]) "\nexit 1\n"
                 + ''
                   for s in $shapes; do cat "$s"; done
-                  echo "std-steam-compat-tool: two fixtures, keys stable per channel, displays in the fleet's format"
+                  echo "std-steam-compat-tool: two fixtures, keys stable per channel, displays in the fleet's format, overlays yielding the flake's own derivations"
                   touch "$out"
                 ''
               );

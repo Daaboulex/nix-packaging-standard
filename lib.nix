@@ -378,197 +378,237 @@ rec {
     );
 
   steamCompatTool =
-    {
-      pkgs,
-      attribute,
-      brand,
-      homepage,
-      description,
-      license,
-      sources,
-      majorPattern,
-      buildOf,
-      assetUrl,
-      variantsOf,
-      tokens,
-      fetch ? ({ url, hash, ... }: pkgs.fetchzip { inherit url hash; }),
-    }:
+    spec:
     let
-      inherit (pkgs) lib;
-      hostSystem = pkgs.stdenv.hostPlatform.system;
-      archOf = system: lib.head (lib.splitString "-" system);
-      majorOf =
-        tag:
+      build =
+        pkgs:
+        {
+          attribute,
+          brand,
+          homepage,
+          description,
+          license,
+          sources,
+          majorPattern,
+          buildOf,
+          assetUrl,
+          variantsOf,
+          tokens,
+          fetch ? ({ url, hash, ... }: pkgs.fetchzip { inherit url hash; }),
+        }:
         let
-          m = builtins.match majorPattern tag;
-        in
-        if m == null then
-          throw "${attribute}: '${tag}' does not match majorPattern '${majorPattern}'"
-        else
-          lib.head m;
-      releases = {
-        ${sources.version} = sources;
-      }
-      // sources.pins;
-      majorChannel = tag: "v${lib.head (lib.splitString "." (majorOf tag))}";
-      hasToken = token: tag: variantsOf releases.${tag} ? ${token};
-      qualifiers =
-        token: tag: channel:
-        lib.optional (tokens.${token}.qualifier != null) tokens.${token}.qualifier
-        ++ [ (buildOf tag) ]
-        ++ lib.optional (channel == "latest") "latest";
-      display =
-        token: tag: channel:
-        "${brand} ${majorOf tag} (${lib.concatStringsSep ", " (qualifiers token tag channel)})";
-      key = token: channel: "${attribute}${tokens.${token}.suffix}-${channel}";
-      tool =
-        token: tag: channel:
-        let
-          t = tokens.${token};
-          foreign = t.system != hostSystem;
-        in
-        pkgs.stdenvNoCC.mkDerivation {
-          pname = "${attribute}${lib.optionalString foreign "-${archOf t.system}"}${t.suffix}";
-          version = tag;
-          src = fetch {
-            inherit tag token;
-            url = assetUrl tag token;
-            hash = (variantsOf releases.${tag}).${token};
-          };
-          dontUnpack = true;
-          dontConfigure = true;
-          dontBuild = true;
-          outputs = [
-            "out"
-            "steamcompattool"
-          ];
-          passthru = {
-            inherit tag token channel;
-            key = key token channel;
-            display = display token tag channel;
-          };
-          installPhase = ''
-            runHook preInstall
-            test -e "$src/proton" || {
-              echo "${attribute}: ${tag} (${token}) has no proton entry point" >&2
-              exit 1
-            }
-            test -f "$src/toolmanifest.vdf" || {
-              echo "${attribute}: ${tag} (${token}) has no toolmanifest.vdf" >&2
-              exit 1
-            }
-            echo "${attribute} is a Steam compatibility tool; consume its steamcompattool output through programs.steam.extraCompatPackages" > "$out"
-            mkdir "$steamcompattool"
-            ln -s "$src"/* "$steamcompattool"
-            rm -f "$steamcompattool/compatibilitytool.vdf"
-            cat > "$steamcompattool/compatibilitytool.vdf" <<'VDF'
-            "compatibilitytools"
-            {
-              "compat_tools"
-              {
-                "${key token channel}"
-                {
-                  "install_path" "."
-                  "display_name" "${display token tag channel}"
-                  "from_oslist" "windows"
-                  "to_oslist" "linux"
-                }
-              }
-            }
-            VDF
-            runHook postInstall
-          '';
-          meta = {
-            inherit homepage description license;
-            platforms = [ t.system ] ++ lib.optional foreign hostSystem;
-            sourceProvenance = [ lib.sourceTypes.binaryNativeCode ];
-          };
-        };
-      channels =
-        token:
-        let
-          pinned = lib.filter (hasToken token) (lib.attrNames sources.pins);
-          names = map majorChannel pinned;
-          rolling = majorChannel sources.version;
-        in
-        if lib.elem rolling names then
-          throw "${attribute}: a pin shares the rolling release's major (${rolling}); the rollover pins that line when upstream closes it"
-        else if lib.length (lib.unique names) != lib.length names then
-          throw "${attribute}: two pins share one major among ${lib.concatStringsSep ", " names}; one pin per major"
-        else
-          lib.listToAttrs (
-            map (tag: lib.nameValuePair (majorChannel tag) (tool token tag (majorChannel tag))) pinned
-          )
-          // {
-            latest = tool token sources.version "latest";
-            ${rolling} = tool token sources.version rolling;
-          };
-      withChannels =
-        token:
-        let
-          c = channels token;
-        in
-        c.latest.overrideAttrs (old: {
-          passthru = old.passthru // c;
-        });
-      offered = lib.filterAttrs (token: _: hasToken token sources.version) tokens;
-      native = lib.filterAttrs (_: t: t.system == hostSystem) offered;
-      x86 = lib.filterAttrs (_: t: t.system == "x86_64-linux") offered;
-      tools =
-        lib.mapAttrs' (token: t: lib.nameValuePair "${attribute}${t.suffix}" (withChannels token)) native
-        // lib.mapAttrs' (
-          token: t: lib.nameValuePair "${attribute}-x86_64${t.suffix}" (withChannels token)
-        ) x86;
-      every = lib.unique (
-        lib.concatMap (token: lib.attrValues (channels token)) (lib.attrNames (native // x86))
-      );
-      qualifierWords = lib.unique (
-        lib.filter (q: q != null) (lib.mapAttrsToList (_: t: t.qualifier) tokens)
-      );
-      displayFormat =
-        "^${brand} [0-9]+(\\.[0-9]+)? \\(("
-        + lib.concatMapStringsSep "|" (q: "${q}, ") qualifierWords
-        + ")?[0-9A-Za-z-]+(, latest)?\\)$";
-      shape = pkgs.runCommand "${attribute}-compat-tool-shape" { } (
-        ''
-          refuse() {
-            echo "$1"
-            exit 1
+          inherit (pkgs) lib;
+          hostSystem = pkgs.stdenv.hostPlatform.system;
+          archOf = system: lib.head (lib.splitString "-" system);
+          majorOf =
+            tag:
+            let
+              m = builtins.match majorPattern tag;
+            in
+            if m == null then
+              throw "${attribute}: '${tag}' does not match majorPattern '${majorPattern}'"
+            else
+              lib.head m;
+          releases = {
+            ${sources.version} = sources;
           }
-          shopt -s nullglob
-        ''
-        + lib.concatMapStringsSep "\n" (d: ''
-          dir=${d.steamcompattool}
-          test -e "$dir/proton" || refuse "${d.name}: no proton entry point"
-          test -f "$dir/toolmanifest.vdf" || refuse "${d.name}: no toolmanifest.vdf"
-          test -f "$dir/compatibilitytool.vdf" || refuse "${d.name}: no compatibilitytool.vdf"
-          key=$(sed -nE 's/^[[:space:]]*"([^"]+)"[[:space:]]*$/\1/p' "$dir/compatibilitytool.vdf" | sed -n 3p)
-          shown=$(sed -nE 's/^[[:space:]]*"display_name"[[:space:]]+"(.*)"[[:space:]]*$/\1/p' "$dir/compatibilitytool.vdf")
-          [ "$key" = ${lib.escapeShellArg d.passthru.key} ] || refuse "${d.name}: the vdf key is '$key', wanted '${d.passthru.key}'"
-          grep -qE '^[a-z0-9-]+$' <<<"$key" || refuse "${d.name}: the key '$key' is not lowercase letters, digits and hyphens"
-          [ "$shown" = ${lib.escapeShellArg d.passthru.display} ] || refuse "${d.name}: the display name is '$shown', wanted '${d.passthru.display}'"
-          grep -qE ${lib.escapeShellArg displayFormat} <<<"$shown" || refuse "${d.name}: '$shown' is not <Brand> <major> (<qualifiers>)"
-          if grep -qiE 'arm64|aarch64|x86_64|slr' <<<"$key $shown"; then
-            refuse "${d.name}: an arch or build-type word leaked into '$key' or '$shown'"
-          fi
-          ${lib.optionalString (d.passthru.channel != "latest") ''
-            case "$shown" in
-            *latest*) refuse "${d.name}: a pinned channel shows 'latest'" ;;
-            esac
-          ''}
-          echo "$key" >> "keys.${tokens.${d.passthru.token}.system}"
-        '') every
-        + ''
-          for f in keys.*; do
-            dup=$(sort "$f" | uniq -d)
-            [ -z "$dup" ] || refuse "one key names two tools a ''${f#keys.} client would both list: $dup"
-          done
-          echo "${attribute}: ${toString (lib.length every)} tools, every vdf in shape" > "$out"
-        ''
-      );
+          // sources.pins;
+          majorChannel = tag: "v${lib.head (lib.splitString "." (majorOf tag))}";
+          hasToken = token: tag: variantsOf releases.${tag} ? ${token};
+          qualifiers =
+            token: tag: channel:
+            lib.optional (tokens.${token}.qualifier != null) tokens.${token}.qualifier
+            ++ [ (buildOf tag) ]
+            ++ lib.optional (channel == "latest") "latest";
+          display =
+            token: tag: channel:
+            "${brand} ${majorOf tag} (${lib.concatStringsSep ", " (qualifiers token tag channel)})";
+          key = token: channel: "${attribute}${tokens.${token}.suffix}-${channel}";
+          tool =
+            token: tag: channel:
+            let
+              t = tokens.${token};
+              foreign = t.system != hostSystem;
+            in
+            pkgs.stdenvNoCC.mkDerivation {
+              pname = "${attribute}${lib.optionalString foreign "-${archOf t.system}"}${t.suffix}";
+              version = tag;
+              src = fetch {
+                inherit tag token;
+                url = assetUrl tag token;
+                hash = (variantsOf releases.${tag}).${token};
+              };
+              dontUnpack = true;
+              dontConfigure = true;
+              dontBuild = true;
+              outputs = [
+                "out"
+                "steamcompattool"
+              ];
+              passthru = {
+                inherit tag token channel;
+                key = key token channel;
+                display = display token tag channel;
+              };
+              installPhase = ''
+                runHook preInstall
+                test -e "$src/proton" || {
+                  echo "${attribute}: ${tag} (${token}) has no proton entry point" >&2
+                  exit 1
+                }
+                test -f "$src/toolmanifest.vdf" || {
+                  echo "${attribute}: ${tag} (${token}) has no toolmanifest.vdf" >&2
+                  exit 1
+                }
+                echo "${attribute} is a Steam compatibility tool; consume its steamcompattool output through programs.steam.extraCompatPackages" > "$out"
+                mkdir "$steamcompattool"
+                ln -s "$src"/* "$steamcompattool"
+                rm -f "$steamcompattool/compatibilitytool.vdf"
+                cat > "$steamcompattool/compatibilitytool.vdf" <<'VDF'
+                "compatibilitytools"
+                {
+                  "compat_tools"
+                  {
+                    "${key token channel}"
+                    {
+                      "install_path" "."
+                      "display_name" "${display token tag channel}"
+                      "from_oslist" "windows"
+                      "to_oslist" "linux"
+                    }
+                  }
+                }
+                VDF
+                runHook postInstall
+              '';
+              meta = {
+                inherit homepage description license;
+                platforms = [ t.system ] ++ lib.optional foreign hostSystem;
+                sourceProvenance = [ lib.sourceTypes.binaryNativeCode ];
+              };
+            };
+          channels =
+            token:
+            let
+              pinned = lib.filter (hasToken token) (lib.attrNames sources.pins);
+              names = map majorChannel pinned;
+              rolling = majorChannel sources.version;
+            in
+            if lib.elem rolling names then
+              throw "${attribute}: a pin shares the rolling release's major (${rolling}); the rollover pins that line when upstream closes it"
+            else if lib.length (lib.unique names) != lib.length names then
+              throw "${attribute}: two pins share one major among ${lib.concatStringsSep ", " names}; one pin per major"
+            else
+              lib.listToAttrs (
+                map (tag: lib.nameValuePair (majorChannel tag) (tool token tag (majorChannel tag))) pinned
+              )
+              // {
+                latest = tool token sources.version "latest";
+                ${rolling} = tool token sources.version rolling;
+              };
+          withChannels =
+            token:
+            let
+              c = channels token;
+            in
+            c.latest.overrideAttrs (old: {
+              passthru = old.passthru // c;
+            });
+          offered = lib.filterAttrs (token: _: hasToken token sources.version) tokens;
+          native = lib.filterAttrs (_: t: t.system == hostSystem) offered;
+          x86 = lib.filterAttrs (_: t: t.system == "x86_64-linux") offered;
+          tools =
+            lib.mapAttrs' (token: t: lib.nameValuePair "${attribute}${t.suffix}" (withChannels token)) native
+            // lib.mapAttrs' (
+              token: t: lib.nameValuePair "${attribute}-x86_64${t.suffix}" (withChannels token)
+            ) x86;
+          every = lib.unique (
+            lib.concatMap (token: lib.attrValues (channels token)) (lib.attrNames (native // x86))
+          );
+          qualifierWords = lib.unique (
+            lib.filter (q: q != null) (lib.mapAttrsToList (_: t: t.qualifier) tokens)
+          );
+          displayFormat =
+            "^${brand} [0-9]+(\\.[0-9]+)? \\(("
+            + lib.concatMapStringsSep "|" (q: "${q}, ") qualifierWords
+            + ")?[0-9A-Za-z-]+(, latest)?\\)$";
+          shape = pkgs.runCommand "${attribute}-compat-tool-shape" { } (
+            ''
+              refuse() {
+                echo "$1"
+                exit 1
+              }
+              shopt -s nullglob
+            ''
+            + lib.concatMapStringsSep "\n" (d: ''
+              dir=${d.steamcompattool}
+              test -e "$dir/proton" || refuse "${d.name}: no proton entry point"
+              test -f "$dir/toolmanifest.vdf" || refuse "${d.name}: no toolmanifest.vdf"
+              test -f "$dir/compatibilitytool.vdf" || refuse "${d.name}: no compatibilitytool.vdf"
+              key=$(sed -nE 's/^[[:space:]]*"([^"]+)"[[:space:]]*$/\1/p' "$dir/compatibilitytool.vdf" | sed -n 3p)
+              shown=$(sed -nE 's/^[[:space:]]*"display_name"[[:space:]]+"(.*)"[[:space:]]*$/\1/p' "$dir/compatibilitytool.vdf")
+              [ "$key" = ${lib.escapeShellArg d.passthru.key} ] || refuse "${d.name}: the vdf key is '$key', wanted '${d.passthru.key}'"
+              grep -qE '^[a-z0-9-]+$' <<<"$key" || refuse "${d.name}: the key '$key' is not lowercase letters, digits and hyphens"
+              [ "$shown" = ${lib.escapeShellArg d.passthru.display} ] || refuse "${d.name}: the display name is '$shown', wanted '${d.passthru.display}'"
+              grep -qE ${lib.escapeShellArg displayFormat} <<<"$shown" || refuse "${d.name}: '$shown' is not <Brand> <major> (<qualifiers>)"
+              if grep -qiE 'arm64|aarch64|x86_64|slr' <<<"$key $shown"; then
+                refuse "${d.name}: an arch or build-type word leaked into '$key' or '$shown'"
+              fi
+              ${lib.optionalString (d.passthru.channel != "latest") ''
+                case "$shown" in
+                *latest*) refuse "${d.name}: a pinned channel shows 'latest'" ;;
+                esac
+              ''}
+              echo "$key" >> "keys.${tokens.${d.passthru.token}.system}"
+            '') every
+            + ''
+              for f in keys.*; do
+                dup=$(sort "$f" | uniq -d)
+                [ -z "$dup" ] || refuse "one key names two tools a ''${f#keys.} client would both list: $dup"
+              done
+              echo "${attribute}: ${toString (lib.length every)} tools, every vdf in shape" > "$out"
+            ''
+          );
+          drvPaths =
+            set:
+            lib.mapAttrs (
+              _: tool:
+              [ tool.drvPath ]
+              ++ lib.mapAttrsToList (_: channel: channel.drvPath) (
+                lib.filterAttrs (_: lib.isDerivation) tool.passthru
+              )
+            ) set;
+          wanted = drvPaths tools;
+          throughOverlay = drvPaths (lib.getAttrs (lib.attrNames tools) (pkgs.extend overlay));
+          differing = lib.filter (name: throughOverlay.${name} != wanted.${name}) (lib.attrNames tools);
+          overlayApplies = pkgs.runCommand "${attribute}-overlay-applies" { } (
+            if differing == [ ] then
+              ''echo "${attribute}: the overlay yields the ${toString (lib.length (lib.attrNames tools))} tool attributes of this host, each with its channels" > "$out"''
+            else
+              ''
+                echo "${attribute}: through the overlay, ${lib.concatStringsSep ", " differing} differ from the flake's own packages"
+                exit 1
+              ''
+          );
+        in
+        {
+          inherit tools shape overlayApplies;
+        };
+      overlay = _final: prev: (build prev (spec prev)).tools;
     in
     {
-      inherit tools;
-      checks.compat-tool-shape = shape;
+      inherit overlay;
+      forPkgs =
+        pkgs:
+        let
+          host = build pkgs (spec pkgs);
+        in
+        {
+          inherit (host) tools;
+          checks = {
+            compat-tool-shape = host.shape;
+            overlay-applies = host.overlayApplies;
+          };
+        };
     };
 }

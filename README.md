@@ -173,7 +173,7 @@ without building the closure — eval-only and cheap, even in CI.
 | `drvEvalCheck { pkgs, name?, drv }` | Packages whose closure is not on `cache.nixos.org` and cannot build on a free CI runner (CUDA/ROCm, very large builds). Forces `drv`'s full build-graph evaluation without realizing it; skips with a trivial pass on a system the drv's `meta.platforms` excludes. See the off-CI exception below. |
 | `pythonSitePackagesCheck { pkgs, drv, package, name? }` | First-party python application repos. Proves the BUILT output ships exactly one top-level import package (plus its dist-info) in `site-packages` -- a flat top-level module (`cli.py`, `utils.py`) collides with any other application in a merged environment. See "Python apps: one top-level package" below. |
 | `pristineBinaryCheck { pkgs, package, binaryPath, name? }` | Prebuilt self-reading binaries (embedded resources / appended payloads). Asserts the installed binary is byte-identical to `package.src`, so no fixup phase can silently corrupt it. See "Prebuilt self-reading binaries" below. |
-| `steamCompatTool { pkgs, attribute, brand, homepage, description, license, sources, majorPattern, buildOf, assetUrl, variantsOf, tokens, fetch? }` | Prebuilt Steam compatibility tools (GE-Proton, Proton-CachyOS, UMU-Proton). Builds every channel of every variant as a two-output derivation with a stable vdf key and a display name in the fleet's format, returns the host's tool attributes with their channel passthrus and the x86_64 payload, and a `compat-tool-shape` check that builds every pin. See "Steam compatibility tools" below. |
+| `steamCompatTool (pkgs: { attribute, brand, homepage, description, license, sources, majorPattern, buildOf, assetUrl, variantsOf, tokens, fetch? })` | Prebuilt Steam compatibility tools (GE-Proton, Proton-CachyOS, UMU-Proton). Takes the tool's facts as a function of the nixpkgs they are built against and returns `overlay`, the flake's `overlays.default`, written from `prev` because the helper decides its attribute names from the pkgs it is given, and `forPkgs pkgs`: the host's tool attributes with their channel passthrus and the x86_64 payload, every channel of every variant a two-output derivation with a stable vdf key and a display name in the fleet's format, plus `checks.compat-tool-shape`, which builds every pin, and `checks.overlay-applies`, which proves the overlay yields the flake's own derivations. See "Steam compatibility tools" below. |
 | `patchAssertions` (a shell string, not a function) | Any `postPatch` that rewrites upstream source with `sed`/`awk` rather than `substituteInPlace --replace-fail`. Prepend it, then assert after every edit with `landed` / `gone` / `present` / `exactly_one` / `landed_soft`. Without it a renamed upstream anchor makes the edit apply to nothing and the package still builds green. See "Patching upstream source" below. |
 | `devStateHook` (a shell string) | The exports that keep every tool's cache and home under the project's `.devshell/`; `base` wires it into the default shell. See "Self-contained dev state" below. |
 | `mkDevShell { pkgs, config } args` | A custom dev shell that cannot get the pin order wrong: the pins, then the hook install, then the caller's own hook. |
@@ -786,26 +786,36 @@ jobs:
   `Proton-CachyOS 11.0 (v3, 2026-10-15, latest)`, `UMU-Proton 9.0 (4e)`. No arch
   word anywhere.
 
-The repo passes `sources` (the rolling release's facts at the top, one entry per
-pinned release under `pins`, between the `# std:rolling` and `# std:pins`
-markers the updater's `majorPattern` rollover writes), `majorPattern` read from
-`.github/update.json` so the helper and the updater share one regex,
-`variantsOf` (how a release names its per-variant hashes), `assetUrl`, and
-`tokens`: upstream's asset token (`x86_64`, `x86_64_v3`, `arm64`, `aarch64`) to
-the system it runs on, the attribute suffix (`-v3`) and the qualifier word
-(`v3`). It returns `tools`, the attributes a flake exposes: `<attribute>` is the
-host's own build, `<attribute><suffix>` an ISA variant of it, and
-`<attribute>-x86_64<suffix>` the x86_64 payload on every host (for an x86 client
-under FEX on aarch64; on x86_64 it is the same derivation), each with its
-channels as **passthru** (`.latest`, `.v<major>`), never as top-level packages.
+The repo hands the helper a function from the nixpkgs the tools are built
+against to the tool's facts: `sources` (the rolling release's facts at the top,
+one entry per pinned release under `pins`, between the `# std:rolling` and
+`# std:pins` markers the updater's `majorPattern` rollover writes),
+`majorPattern` read from `.github/update.json` so the helper and the updater
+share one regex, `variantsOf` (how a release names its per-variant hashes),
+`assetUrl`, and `tokens`: upstream's asset token (`x86_64`, `x86_64_v3`,
+`arm64`, `aarch64`) to the system it runs on, the attribute suffix (`-v3`) and
+the qualifier word (`v3`). The helper returns `overlay`, which the repo exports
+as `flake.overlays.default`, and `forPkgs`, which `perSystem` calls with its
+`pkgs`. The overlay is written by the standard, from `prev` and never from
+`final`: the helper decides its attribute names from the pkgs it is given, so
+an overlay that reached for them through `final` recurses forever, and no repo
+writes that line itself. `forPkgs pkgs` returns `tools`, the attributes a flake
+exposes: `<attribute>` is the host's own build, `<attribute><suffix>` an ISA
+variant of it, and `<attribute>-x86_64<suffix>` the x86_64 payload on every
+host (for an x86 client under FEX on aarch64; on x86_64 it is the same
+derivation), each with its channels as **passthru** (`.latest`, `.v<major>`),
+never as top-level packages.
 The rolling release carries two channels: `latest`, and its own line's
 `v<major>` shown as a pin (`GE-Proton 11 (12)`), so a consumer that names `v11`
 follows the newest 11 until upstream closes the line and the rollover freezes
 it; a pin inside the rolling major is refused, since the rollover owns that line.
-`checks.compat-tool-shape` references every channel of every exposed token, so
-`declared == built` holds for the pins through the check, and asserts the
-`proton` entry point, both vdf files, the key and display formats, no arch or
-build-type word in either name, no `latest` on a pin, and unique keys.
+`forPkgs pkgs` also returns two `checks`. `compat-tool-shape` references every
+channel of every exposed token, so `declared == built` holds for the pins
+through the check, and asserts the `proton` entry point, both vdf files, the
+key and display formats, no arch or build-type word in either name, no `latest`
+on a pin, and unique keys. `overlay-applies` extends the host's nixpkgs with
+the overlay and proves that every tool attribute, and every channel under it,
+is the very derivation the flake exposes as a package.
 
 ## Short-circuiting pipelines under `pipefail`
 
