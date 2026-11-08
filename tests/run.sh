@@ -80,6 +80,11 @@ cat "$STUB_CURL_FILE"
 SH
 cat >"$BIN/git" <<'SH'
 #!/usr/bin/env bash
+if [ "${1:-}" = "ls-remote" ] && [ -n "${STUB_GIT_FAIL_ONCE:-}" ] && [ -f "$STUB_GIT_FAIL_ONCE" ]; then
+  rm -f "$STUB_GIT_FAIL_ONCE"
+  echo "stub: ls-remote failed once" >&2
+  exit 128
+fi
 if [ "${1:-}" = "ls-remote" ]; then
   case "$*" in
     *--tags*) printf '%s' "${STUB_GIT_TAGS:-}"; exit 0 ;;
@@ -136,6 +141,7 @@ run_update() { # run_update <repodir>  -> sets RC; outputs in <repodir>/out.env
       STUB_NIX_MISMATCH="${STUB_NIX_MISMATCH:-}" STUB_NIX_FLAG="$dir/.nixflag" \
       STUB_CHECKS_FAIL="${STUB_CHECKS_FAIL:-}" \
       STUB_GIT_TAGS="${STUB_GIT_TAGS:-}" \
+      STUB_GIT_FAIL_ONCE="${STUB_GIT_FAIL_ONCE:-}" \
       bash "$UPDATE" >"$dir/log" 2>&1
   )
   RC=$?
@@ -183,6 +189,25 @@ printf '{ "commit": "bbbbbbbb", "date": "x" }\n' >"$d/upstream-version.json"
 STUB_CURL_FILE="$WORK/commit.json" run_update "$d"
 check "up-to-date exits 0" "0" "$RC"
 check "updated=false" "false" "$(get "$d" updated)"
+
+# ---- Test 2c: a retried ls-remote leaves the captured commit clean ---------
+echo "Test 2c: one failed ls-remote, then the retry -> clean commit, clean outputs"
+d="$WORK/t2c"
+mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "git-ls-remote", "url": "u", "branch": "main" },
+  "trackOnly": true, "trackFile": "upstream-version.json", "trackKey": "commit",
+  "packageFile": null, "hashes": [], "verify": { "check": "eval" } }
+JSON
+printf '{ "commit": "aaaaaaa", "date": "x" }\n' >"$d/upstream-version.json"
+: >"$d/.git-fail-once"
+STUB_GIT_REV="0bc68ab1962d62e66251a43a5b076f3c470b4189" STUB_GIT_FAIL_ONCE="$d/.git-fail-once" run_update "$d"
+check "the stubbed ls-remote failure was consumed" "no" "$([ -e "$d/.git-fail-once" ] && echo yes || echo no)"
+check "drift exits 1" "1" "$RC"
+check "new_version is the commit, not a log line" "0bc68ab" "$(get "$d" new_version)"
+check "every output line is key=value" "0" "$(grep -cvE '^[a-z_]+=' "$d/out.env")"
+check "the retry is still in the log" "1" "$(grep -c 'Retry 1/3' "$d/log")"
 
 # ---- Test 3: rev-only keeps version, bumps rev + JSON-resident hash --------
 echo "Test 3: rev-only preserves version, writes rev + version.json hash"

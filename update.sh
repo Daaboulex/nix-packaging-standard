@@ -10,10 +10,18 @@ set -euo pipefail
 OUTPUT_FILE="${GITHUB_OUTPUT:-/tmp/update-outputs.env}"
 : >"$OUTPUT_FILE"
 
-output() { echo "$1=$2" >>"$OUTPUT_FILE"; }
-log() { echo "==> $*"; }
-warn() { echo "::warning::$*"; }
-err() { echo "::error::$*"; }
+output() {
+  case "$2" in
+  *$'\n'*)
+    echo "::error::output $1 would carry a line break, which breaks the step's outputs: $2" >&2
+    exit 1
+    ;;
+  esac
+  echo "$1=$2" >>"$OUTPUT_FILE"
+}
+log() { echo "==> $*" >&2; }
+warn() { echo "::warning::$*" >&2; }
+err() { echo "::error::$*" >&2; }
 
 # check_suite — run the flake check the way the build step is run, and report
 # what actually failed. A flake check BUILDS its check derivations, so a
@@ -324,7 +332,7 @@ fi
 fetch_latest() {
   local retries=3 delay=2 i
   for i in $(seq 1 $retries); do
-    if RESULT=$(eval "$1" 2>/dev/null) && [ -n "$RESULT" ] && [ "$RESULT" != "null" ]; then
+    if RESULT=$(eval "$1") && [ -n "$RESULT" ] && [ "$RESULT" != "null" ]; then
       echo "$RESULT"
       return 0
     fi
