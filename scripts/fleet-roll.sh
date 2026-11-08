@@ -187,6 +187,7 @@ hook_live() {
 # the host from that same pinned standard.
 refresh_hook() {
   local dir="$1"
+  [ -L "$dir/.pre-commit-config.yaml" ] && unlink "$dir/.pre-commit-config.yaml"
   (cd "$dir" && nix develop --command true) >>"$steplog" 2>&1 ||
     (cd "$dir" && nix develop --impure --expr \
       "import $RELEASE_TREE/flake-modules/host-hooks.nix { consumer = $dir; system = builtins.currentSystem; }" \

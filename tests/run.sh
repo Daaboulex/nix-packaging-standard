@@ -416,6 +416,7 @@ check "loguru not duplicated" "1" "$(grep -c 'loguru' "$d/env.nix")"
 CLASSIFY="$STD/classify-build-failure.sh"
 RETRY="$STD/retry-transient.sh"
 LATEST_RUN="$STD/scripts/latest-worked-run.jq"
+ROLL="$STD/scripts/fleet-roll.sh"
 run_classify() {
   (GITHUB_OUTPUT="$1/out.env" bash "$CLASSIFY" "$2" >"$1/clog" 2>&1)
   RC=$?
@@ -1526,6 +1527,32 @@ STUB_CURL_FILE="$FIXTURES/ge-releases.json" run_update "$d"
 check "missing markers exit 1" "1" "$RC"
 check "error_type config-error" "config-error" "$(get "$d" error_type)"
 check "sources.nix was not rewritten" "GE-Proton10-34" "$(sed -nE 's/^  version = "(.*)";$/\1/p' "$d/sources.nix")"
+
+echo "Test 33: fleet-roll reinstalls a missing pre-commit hook whose config link is already current"
+d="$WORK/t33"
+mkdir -p "$d/bin" "$d/repo/.git/hooks"
+printf 'hooks: []\n' >"$d/config.yaml"
+ln -s "$d/config.yaml" "$d/repo/.pre-commit-config.yaml"
+cat >"$d/bin/nix" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = develop ] || exit 0
+if [ "$(readlink .pre-commit-config.yaml 2>/dev/null)" != "$STUB_CONFIG" ]; then
+  [ -L .pre-commit-config.yaml ] && unlink .pre-commit-config.yaml
+  ln -s "$STUB_CONFIG" .pre-commit-config.yaml
+  printf '#!/usr/bin/env bash\nexec /nix/store/00000000000000000000000000000000-pre-commit/bin/pre-commit "$@"\n' >.git/hooks/pre-commit
+  chmod +x .git/hooks/pre-commit
+fi
+SH
+chmod +x "$d/bin/nix"
+(
+  eval "$(sed -n '/^hook_live() {$/,/^}$/p; /^refresh_hook() {$/,/^}$/p' "$ROLL")"
+  export steplog="$d/steps.log" RELEASE_TREE="$d/std"
+  PATH="$d/bin:$PATH" STUB_CONFIG="$d/config.yaml" refresh_hook "$d/repo"
+  check "the hook is installed although the config link already pointed at the current config, where git-hooks.nix installs nothing" "present" "$([ -x "$d/repo/.git/hooks/pre-commit" ] && echo present || echo absent)"
+  check "the config link points at the current config again" "$d/config.yaml" "$(readlink "$d/repo/.pre-commit-config.yaml")"
+  printf '%s %s\n' "$pass" "$fail" >"$d/counts"
+)
+read -r pass fail <"$d/counts"
 
 echo
 echo "------------------------------------------"
