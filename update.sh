@@ -767,16 +767,19 @@ for entry in "${HASH_ENTRIES[@]}"; do
 done
 
 # set_hash <field> <file> <value> — replaces the field's sha256 value,
-# preserving whichever operator (`=` or `?`) was used.
+# preserving whichever operator (`=` or `?`) was used. Only the FIRST literal
+# of that field in the file is rewritten: the rolling release's facts come
+# first, and a pinned release below it may carry the same field name (the
+# shape the major rollover writes) without being clobbered.
 set_hash() {
   local field_re
   field_re=$(re_esc "$1")
   if [[ "$2" == *.json ]]; then
     # JSON-resident hash (e.g. version.json `"hash": "sha256-..."`): swap the
     # value via the `"key":` form, leaving the file's formatting intact.
-    sed -i -E "s|(\"${field_re}\"[[:space:]]*:[[:space:]]*)\"sha256-[^\"]*\"|\1\"${3}\"|" "$2"
+    sed -i -E "0,/\"${field_re}\"[[:space:]]*:[[:space:]]*\"sha256-[^\"]*\"/{s|(\"${field_re}\"[[:space:]]*:[[:space:]]*)\"sha256-[^\"]*\"|\1\"${3}\"|}" "$2"
   else
-    sed -i "s|\(${field_re}[[:space:]]*[?=][[:space:]]*\)\"sha256-[^\"]*\"|\1\"${3}\"|" "$2"
+    sed -i -E "0,/${field_re}[[:space:]]*[?=][[:space:]]*\"sha256-[^\"]*\"/{s|(${field_re}[[:space:]]*[?=][[:space:]]*)\"sha256-[^\"]*\"|\1\"${3}\"|}" "$2"
   fi
 }
 

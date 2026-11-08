@@ -972,11 +972,15 @@ doing any work.
 - **`revFile`** scopes the `rev` literal bump for commit-tracked upstreams.
 - **`hashes`** entries list SRI hash fields in evaluation-dependency order
   (source first), each a bare field name or `{"field","file"}` to disambiguate.
-  The updater rewrites a field **by name**, so each hash needs a **distinct**
-  attribute name (`hash`, `cargoHash`, `vendorHash`, `npmDepsHash`, ...): two
-  `hash = "..."` literals in one file collide and the updater clobbers both with
-  one value. Bind the extra hash to a named literal (`cargoHash = "sha256-...";`
-  then `hash = cargoHash;`) so it is uniquely targetable.
+  The updater rewrites a field **by name**, and only the **first** literal of
+  that name in its file: the rolling release's facts come first, and a pinned
+  release below them may repeat the field name untouched (the shape the major
+  rollover writes). Two hashes of one release still need **distinct** attribute
+  names (`hash`, `cargoHash`, `vendorHash`, `npmDepsHash`, ...): a second
+  `hash = "..."` literal of the same release is never reached and the build
+  keeps failing on it. Bind the extra hash to a named literal
+  (`cargoHash = "sha256-...";` then `hash = cargoHash;`) so it is uniquely
+  targetable.
   Exactly **one** of them may be a *source* hash. A failing source FOD reports no
   field identity, so the updater can only route its mismatch to the single
   declared non-vendor field; a second source hash absorbs nothing, stays dummied,

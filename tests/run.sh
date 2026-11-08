@@ -9,6 +9,7 @@ set -uo pipefail
 
 STD="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UPDATE="$STD/update.sh"
+FIXTURES="$STD/tests/fixtures"
 # /tmp is often mounted noexec (e.g. NixOS); the PATH stubs must be executable,
 # so probe candidate bases and create WORK in the first exec-capable one.
 mkexecdir() {
@@ -1346,6 +1347,44 @@ check "a schedule with no run for days reads stopped, not green" "stopped/5" \
 check "a push-only workflow is never read as a stopped schedule" "completed/success" \
   "$(pick false "[{\"event\":\"push\",\"status\":\"completed\",\"conclusion\":\"success\",\"createdAt\":\"$old\"}]")"
 check "no run at all is none" "none" "$(pick true '[]')"
+
+# ---- Test 31: a hash field is rewritten once --------------------------------
+# A repo with one channel per major keeps the pinned releases under the same
+# field names as the rolling one (umu-proton-nix: hashX64 at the top and in
+# each pin). set_hash used to rewrite every line that named the field, so the
+# first update would have dummied and then overwritten every pin's hash with
+# the rolling release's.
+echo "Test 31: a hash field is rewritten once, the pinned release below keeps its own"
+d="$WORK/t31"
+mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "umu",
+  "upstream": { "type": "github-release", "owner": "o", "repo": "r", "tagFilter": "^GE-Proton" },
+  "packageFile": "sources.nix", "hashes": [ "hashX64" ], "verify": { "check": "eval" } }
+JSON
+cat >"$d/sources.nix" <<'NIX'
+{
+  version = "GE-Proton11-1";
+  hashX64 = "sha256-OLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDA=";
+  pins = {
+    "GE-Proton10-34" = {
+      hashX64 = "sha256-PINPINPINPINPINPINPINPINPINPINPINPINPINPINA=";
+    };
+  };
+}
+NIX
+NEWHASH="sha256-NEWNEWNEWNEWNEWNEWNEWNEWNEWNEWNEWNEWNEWNEWA="
+cat >"$WORK/mismatch31.txt" <<EOF
+error: hash mismatch in fixed-output derivation '/nix/store/zzz-source.drv':
+         specified: sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+            got:    $NEWHASH
+EOF
+STUB_CURL_FILE="$FIXTURES/ge-releases.json" STUB_NIX_MISMATCH="$WORK/mismatch31.txt" run_update "$d"
+check "update exits 0" "0" "$RC"
+check "version bumped" "GE-Proton11-2" "$(get "$d" new_version)"
+check "the rolling hash took the new value" "1" "$(grep -c "^  hashX64 = \"$NEWHASH\";" "$d/sources.nix")"
+check "the pinned hash kept its own" "1" "$(grep -c 'sha256-PINPIN' "$d/sources.nix")"
+check "no dummy hash was left behind" "0" "$(grep -c 'sha256-AAAA' "$d/sources.nix")"
 
 echo
 echo "------------------------------------------"
