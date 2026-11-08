@@ -364,6 +364,10 @@
                 ++ want "the host's CachyOS tool shows no arch" (
                   cachyos.tools.proton-cachyos.display == "Proton-CachyOS 11.0 (2026-10-15, latest)"
                 )
+                ++ want "a foreign variant's pname reads like its attribute" (
+                  cachyos.tools.proton-cachyos-x86_64-v3.pname
+                  == (if onArm then "proton-cachyos-x86_64-v3" else "proton-cachyos-v3")
+                )
                 ++ want "the plain x86_64 variant has no suffix in its attribute" (
                   cachyos.tools ? proton-cachyos-x86_64 && !(cachyos.tools ? proton-cachyos-x86_64-)
                 );

@@ -428,7 +428,7 @@ rec {
           foreign = t.system != hostSystem;
         in
         pkgs.stdenvNoCC.mkDerivation {
-          pname = "${attribute}${t.suffix}${lib.optionalString foreign "-${archOf t.system}"}";
+          pname = "${attribute}${lib.optionalString foreign "-${archOf t.system}"}${t.suffix}";
           version = tag;
           src = fetch {
             inherit tag token;
