@@ -200,8 +200,8 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `flake-modules/base.nix` | *(imported, not synced)* | The shared flakeModule |
 | `synced-files.json` | *(the map itself)* | Consumer path to canonical file, or `null` for a retired copy that must be absent: the one map `sync.sh` reads and `std-conformance` and `std-no-retired-copies` enforce |
 | `callers/ci.yml` | `.github/workflows/ci.yml` | Triggers, permissions and concurrency of CI, passing the `RECLAIM_DISK` repository variable (`on` or `off`; unset is `off`, anything else fails the run); calls `package-ci.yml@release` |
-| `callers/update.yml` | `.github/workflows/update.yml`, except in a first-party repo (upstream type `none`), which carries none | The Update trigger, one cron for Sunday and one for the other days; the job's condition reads the `UPDATE_CADENCE` repository variable (`daily` or `weekly`; unset is `daily`), so a day it does not run starts no runner, and passes it on (anything else fails the Sunday run); calls `package-update.yml@release` |
-| `callers/maintenance.yml` | `.github/workflows/maintenance.yml` | The Maintenance trigger, one cron for Sunday, one for Wednesday and one for the other days; the job's condition reads the `MAINTENANCE_CADENCE` repository variable (`daily`, `biweekly` or `weekly`; unset is `weekly`), so a day it does not run starts no runner, and passes it on (anything else fails the Sunday run) |
+| `callers/update.yml` | `.github/workflows/update.yml`, except in a first-party repo (upstream type `none`), which carries none | The Update trigger, one cron for Sunday and one for the other days, queued with Maintenance in the `writes-default-branch` concurrency group so the two writers of the default branch never push over each other; the job's condition reads the `UPDATE_CADENCE` repository variable (`daily` or `weekly`; unset is `daily`), so a day it does not run starts no runner, and passes it on (anything else fails the Sunday run); calls `package-update.yml@release` |
+| `callers/maintenance.yml` | `.github/workflows/maintenance.yml` | The Maintenance trigger, one cron for Sunday, one for Wednesday and one for the other days, in the `writes-default-branch` group it shares with Update; the job's condition reads the `MAINTENANCE_CADENCE` repository variable (`daily`, `biweekly` or `weekly`; unset is `weekly`), so a day it does not run starts no runner, and passes it on (anything else fails the Sunday run) |
 | `.github/workflows/package-ci.yml` | *(reusable, not synced)* | Archetype-blind CI (build every output on a runner per declared system) |
 | `.github/workflows/package-update.yml` | *(reusable, not synced)* | The update, verified on every declared system before it pushes |
 | `.github/workflows/package-maintenance.yml` | *(reusable, not synced)* | `flake.lock` refresh on the repo's cadence: heal probe, every declared system evaluated, the checks built on a runner per declared system, pushed only if all are green |
@@ -1526,6 +1526,17 @@ beside `latest`. v3.5.0's helper built channels from the pins alone, so
 tree's hosts name it; the old per-repo assembly had given the rolling major
 that channel, and the dropdown lists the line and the rolling entry side by
 side (`GE-Proton 11 (12)` and `GE-Proton 11 (12, latest)`).
+
+v3.5.2 (2026-11) stops the two writers of the default branch racing and keeps
+the updater's log out of its data. Update and Maintenance each queued only
+behind themselves, so a Maintenance lock refresh pushed while an Update ran,
+and the Update's verified bump was refused (steam-arm64-nix, 2026-11-08); both
+callers now share the `writes-default-branch` group and wait for each other.
+The updater's log, warnings and errors went to stdout, so a retried fetch put
+`==> Retry 1/3` inside the captured commit and the step's outputs rejected the
+line (cachyos-settings-nix, the same day); they go to stderr, a fetch's own
+error is no longer discarded, and an output carrying a line break fails the
+run by name.
 
 ## License
 

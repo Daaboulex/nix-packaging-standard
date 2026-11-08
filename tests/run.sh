@@ -209,6 +209,15 @@ check "new_version is the commit, not a log line" "0bc68ab" "$(get "$d" new_vers
 check "every output line is key=value" "0" "$(grep -cvE '^[a-z_]+=' "$d/out.env")"
 check "the retry is still in the log" "1" "$(grep -c 'Retry 1/3' "$d/log")"
 
+# ---- Test 2d: the two writers of the default branch share one queue --------
+echo "Test 2d: callers/update.yml and callers/maintenance.yml name one concurrency group"
+group_of() { sed -n '/^concurrency:/,/^[^ ]/s/^  group: //p' "$1"; }
+ugroup=$(group_of "$STD/callers/update.yml")
+mgroup=$(group_of "$STD/callers/maintenance.yml")
+check "update.yml names a concurrency group" "yes" "$([ -n "$ugroup" ] && echo yes || echo no)"
+check "maintenance.yml queues behind update.yml's group" "$ugroup" "$mgroup"
+check "the group is not per workflow" "no" "$(grep -qF 'github.workflow' <<<"$ugroup" && echo yes || echo no)"
+
 # ---- Test 3: rev-only keeps version, bumps rev + JSON-resident hash --------
 echo "Test 3: rev-only preserves version, writes rev + version.json hash"
 d="$WORK/t3"
