@@ -614,6 +614,52 @@ fi
 log "Update found: $CURRENT_VERSION -> $LATEST_VERSION"
 output "updated" "true"
 
+# --- Major rollover: keep the outgoing line reachable as a pin -----------
+# A repo that offers one channel per major (v10, v11) beside a rolling latest
+# loses the old line the day upstream opens a new one: latest moves on and no
+# pin names the last release of the old major. With majorPattern set, the
+# release leaving the rolling block is copied into the pins block first, so
+# the v<major> channel keeps resolving with no hand edit. Both blocks are
+# marker-delimited in versionFile, the way the variants block is.
+MAJOR_PATTERN=$(echo "$CONFIG" | jq -r '.majorPattern // empty')
+if [ -n "$MAJOR_PATTERN" ] && [ "$WRITE_VERSION" -eq 1 ]; then
+  major_of() { printf '%s\n' "$1" | sed -nE "s|^${MAJOR_PATTERN}\$|\\1|p"; }
+  CUR_MAJOR=$(major_of "$CURRENT_VERSION")
+  NEW_MAJOR=$(major_of "$LATEST_VERSION")
+  if [ -z "$CUR_MAJOR" ] || [ -z "$NEW_MAJOR" ]; then
+    err "majorPattern '$MAJOR_PATTERN' must match the whole version with one group; it did not match '$CURRENT_VERSION' or '$LATEST_VERSION'"
+    output "error_type" "config-error"
+    exit 1
+  fi
+  if [ "$CUR_MAJOR" != "$NEW_MAJOR" ]; then
+    for marker in rolling-begin rolling-end pins-begin pins-end; do
+      if ! grep -q "# std:$marker" "$VERSION_FILE"; then
+        err "majorPattern needs the '# std:$marker' marker in $VERSION_FILE"
+        output "error_type" "config-error"
+        exit 1
+      fi
+    done
+    if grep -qF "\"$CURRENT_VERSION\" = {" "$VERSION_FILE"; then
+      log "major $CUR_MAJOR -> $NEW_MAJOR: $CURRENT_VERSION is pinned already"
+    else
+      awk -v old="$CURRENT_VERSION" -v attr="$VERSION_ATTR" '
+        /# std:rolling-begin/ { rolling = 1 }
+        /# std:rolling-end/ { rolling = 0 }
+        rolling && $0 !~ ("^[[:space:]]*" attr "[[:space:]]*=") && !/# std:/ { body = body "    " $0 "\n" }
+        { lines[++n] = $0 }
+        END {
+          for (i = 1; i <= n; i++) {
+            print lines[i]
+            if (lines[i] ~ /# std:pins-begin/) printf "    \"%s\" = {\n%s    };\n", old, body
+          }
+        }
+      ' "$VERSION_FILE" >"$VERSION_FILE.tmp" && mv "$VERSION_FILE.tmp" "$VERSION_FILE"
+      log "major $CUR_MAJOR -> $NEW_MAJOR: pinned $CURRENT_VERSION before moving on"
+      output "pinned" "$CURRENT_VERSION"
+    fi
+  fi
+fi
+
 # --- Write the new version ----------------------------------------------
 # regex-escape the current version so dots etc. are literal in the sed match.
 esc() { printf '%s' "$1" | sed 's/[][\\.^$*/]/\\&/g'; }

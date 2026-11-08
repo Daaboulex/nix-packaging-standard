@@ -1386,6 +1386,113 @@ check "the rolling hash took the new value" "1" "$(grep -c "^  hashX64 = \"$NEWH
 check "the pinned hash kept its own" "1" "$(grep -c 'sha256-PINPIN' "$d/sources.nix")"
 check "no dummy hash was left behind" "0" "$(grep -c 'sha256-AAAA' "$d/sources.nix")"
 
+# ---- Test 32: majorPattern pins the outgoing major ---------------------------
+# A repo with one channel per major builds v10 from pins and latest from the
+# rolling block. The day upstream opens major 11, latest moves on; without a
+# pin for the last 10 the v10 channel vanishes and every consumer naming it
+# breaks. With majorPattern the updater freezes the outgoing release first.
+echo "Test 32: majorPattern pins the outgoing major before latest moves on"
+d="$WORK/t32"
+mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "ge",
+  "upstream": { "type": "github-release", "owner": "o", "repo": "r", "tagFilter": "^GE-Proton" },
+  "packageFile": "package.nix", "versionFile": "sources.nix",
+  "majorPattern": "GE-Proton([0-9]+)-.*",
+  "variantAssets": { "sourceFile": "sources.nix", "assetPrefix": "",
+                     "assetSuffix": ".tar.gz", "defaultVariant": "x86_64" },
+  "hashes": [], "verify": { "check": "eval" } }
+JSON
+cat >"$d/sources.nix" <<'NIX'
+{
+  # std:rolling-begin
+  version = "GE-Proton10-34";
+  # std:variants-begin
+  variants = {
+    x86_64 = "sha256-OLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDA=";
+  };
+  # std:variants-end
+  # std:rolling-end
+  pins = {
+    # std:pins-begin
+    "GE-Proton9-27" = {
+      variants = {
+        x86_64 = "sha256-PINPINPINPINPINPINPINPINPINPINPINPINPINPINA=";
+      };
+    };
+    # std:pins-end
+  };
+}
+NIX
+: >"$d/package.nix"
+: >"$d/.nixflag"
+STUB_CURL_FILE="$FIXTURES/ge-releases.json" run_update "$d"
+check "rollover exits 0" "0" "$RC"
+check "latest moved to the new major" "GE-Proton11-2" "$(get "$d" new_version)"
+check "the outgoing release is reported pinned" "GE-Proton10-34" "$(get "$d" pinned)"
+check "the new pin sits first in the pins block" "1" "$(grep -A1 'std:pins-begin' "$d/sources.nix" | grep -c '^    "GE-Proton10-34" = {$')"
+check "the new pin carries the outgoing hash at pin depth" "1" "$(grep -c '^        x86_64 = "sha256-OLDOLD' "$d/sources.nix")"
+check "the rolling variants no longer hold the outgoing hash" "0" "$(grep -c '^    x86_64 = "sha256-OLDOLD' "$d/sources.nix")"
+check "the older pin is untouched" "1" "$(grep -c 'sha256-PINPIN' "$d/sources.nix")"
+check "no marker was copied into the pin" "1" "$(grep -c 'std:variants-begin' "$d/sources.nix")"
+check "the rolling version line is the only version line" "1" "$(grep -c '^  version = ' "$d/sources.nix")"
+
+rolling_fixture() { # rolling_fixture <version> <with-markers: 1|0>
+  local v=$1 begin="  # std:rolling-begin" end="  # std:rolling-end" pb="    # std:pins-begin" pe="    # std:pins-end"
+  if [ "$2" != 1 ]; then
+    begin=''
+    end=''
+    pb=''
+    pe=''
+  fi
+  cat <<NIX | sed '/^$/d'
+{
+$begin
+  version = "$v";
+  # std:variants-begin
+  variants = {
+    x86_64 = "sha256-OLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDA=";
+  };
+  # std:variants-end
+$end
+  pins = {
+$pb
+    "GE-Proton9-27" = {
+      variants = {
+        x86_64 = "sha256-PINPINPINPINPINPINPINPINPINPINPINPINPINPINA=";
+      };
+    };
+$pe
+  };
+}
+NIX
+}
+
+echo "Test 32b: a release inside the same major pins nothing"
+d="$WORK/t32b"
+mkdir -p "$d/.github"
+cp "$WORK/t32/.github/update.json" "$d/.github/update.json"
+rolling_fixture GE-Proton11-1 1 >"$d/sources.nix"
+: >"$d/package.nix"
+: >"$d/.nixflag"
+STUB_CURL_FILE="$FIXTURES/ge-releases.json" run_update "$d"
+check "same-major update exits 0" "0" "$RC"
+check "the update was applied" "true" "$(get "$d" updated)"
+check "version bumped within the major" "GE-Proton11-2" "$(get "$d" new_version)"
+check "nothing reported pinned" "" "$(get "$d" pinned)"
+check "the pins block still holds the one pin" "1" "$(grep -c '^    "GE-Proton[0-9-]*" = {$' "$d/sources.nix")"
+
+echo "Test 32c: majorPattern without the markers fails closed"
+d="$WORK/t32c"
+mkdir -p "$d/.github"
+cp "$WORK/t32/.github/update.json" "$d/.github/update.json"
+rolling_fixture GE-Proton10-34 0 >"$d/sources.nix"
+: >"$d/package.nix"
+STUB_CURL_FILE="$FIXTURES/ge-releases.json" run_update "$d"
+check "missing markers exit 1" "1" "$RC"
+check "error_type config-error" "config-error" "$(get "$d" error_type)"
+check "sources.nix was not rewritten" "GE-Proton10-34" "$(sed -nE 's/^  version = "(.*)";$/\1/p' "$d/sources.nix")"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

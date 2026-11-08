@@ -195,6 +195,10 @@
       "type": "string",
       "description": "File holding the package src `rev` literal for commit-tracked upstreams (default: versionFile). Set it when several `rev = \"...\"` literals exist so the package src rev is bumped, not a dependency's."
     },
+    "majorPattern": {
+      "type": "string",
+      "description": "ERE matching the whole version with one group, the major line (e.g. \"GE-Proton([0-9]+)-.*\"). When the newest tag's group differs from the current version's, the updater copies the rolling block of versionFile (between `# std:rolling-begin` and `# std:rolling-end`, minus the version line and the markers) into the pins block right after `# std:pins-begin`, under the outgoing version, before it writes the new one, so a channel per major keeps resolving the day a new major lands. Needs both marker pairs in versionFile; the pattern may not contain `|`."
+    },
     "versionScheme": {
       "enum": [
         "literal",

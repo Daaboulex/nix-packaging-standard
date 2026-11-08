@@ -952,6 +952,8 @@ doing any work.
                                       //   (the latter two: commit-tracked)
   "versionBase": "2.0.0",             // "unstable-date" FALLBACK base, read
                                       //   only when upstream has no tag
+  "majorPattern": "GE-Proton([0-9]+)-.*", // optional; pins the outgoing
+                                      //   major when a new one lands
   "hashes": [                         // SRI hash fields, dependency order:
     "hash",                           //   bare name -> auto-located, or
     { "field": "vendorHash",          //   {field,file} to disambiguate when
@@ -1003,6 +1005,17 @@ doing any work.
   up with no config change. `defaultVariant` names the variant whose asset carries
   no `-<variant>` token (GE-Proton ships `<tag>.tar.gz` for x86_64 next to
   `<tag>-aarch64.tar.gz`). Pins outside the markers are never rewritten.
+- **`majorPattern`** (an ERE matching the whole version with one group, the
+  major line) turns a new upstream major into a pin instead of a loss. When the
+  newest tag's group differs from the current version's, the updater copies the
+  rolling block of `versionFile` (`# std:rolling-begin` to `# std:rolling-end`,
+  minus the version line and the markers) into the pins block right after
+  `# std:pins-begin`, under the outgoing version, then writes the new version
+  and regenerates the rolling block as usual. A repo that builds its `v<major>`
+  channels from `pins` keeps every line resolving the day a 12-1 lands, with no
+  hand edit; a release inside the same major pins nothing, and a version already
+  pinned is left alone. Both marker pairs are required and the pattern may not
+  contain `|`.
 - For commit-tracked packages prefer **`versionFile: "version.json"`**.
 - **`versionScheme`** controls the written version literal (commit-tracked types
   only). `literal` (default) writes the upstream string verbatim (a bare 7-char
