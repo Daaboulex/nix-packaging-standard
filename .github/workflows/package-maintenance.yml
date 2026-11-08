@@ -93,11 +93,11 @@ jobs:
           set -o pipefail
           bash "$STD/heal-overlays.sh" 2>&1 | tee -a "$LOG"
 
-      - name: Evaluate every declared system
+      - name: Evaluate every declared system with import from derivation forbidden
         id: evaluate
         run: |
           set -o pipefail
-          nix flake check --no-build --all-systems 2>&1 | tee -a "$LOG"
+          bash "$STD/evaluate-every-system.sh" 2>&1 | tee -a "$LOG"
 
       - name: Record the candidate
         id: candidate

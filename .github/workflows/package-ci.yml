@@ -69,6 +69,8 @@ jobs:
         run: |
           runners=$(bash "$STD/declared-runners.sh")
           echo "runners=$runners" >> "$GITHUB_OUTPUT"
+      - name: Evaluate every declared system with import from derivation forbidden
+        run: bash "$STD/evaluate-every-system.sh"
 
   build:
     needs: [no-tracked-ignored-files, plan]

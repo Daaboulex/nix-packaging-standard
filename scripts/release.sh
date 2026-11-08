@@ -63,7 +63,7 @@ consumers_need_roll() {
 eval_checks() {
   local flake="$1"
   shift
-  nix eval --json "$flake#checks" "$@" \
+  nix eval --json "$flake#checks" "$@" --option allow-import-from-derivation false \
     --apply 'builtins.mapAttrs (_: builtins.mapAttrs (_: c: c.drvPath))'
 }
 

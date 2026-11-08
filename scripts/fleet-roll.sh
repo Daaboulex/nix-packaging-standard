@@ -358,7 +358,7 @@ for repo in "${TARGETS[@]}"; do
     FOREIGN=1
     if [ "$BUILD_ON_CI" -eq 1 ]; then why="--build-on-ci"; else why="no output for $sys here"; fi
     evallog="$LOGDIR/$repo.eval.log"
-    if (cd "$dir" && nix flake check --no-eval-cache --no-build --all-systems) >"$evallog" 2>&1; then
+    if (cd "$dir" && bash "$STD/evaluate-every-system.sh") >"$evallog" 2>&1; then
       note "verify: $why; every declared system evaluates, the build is CI's on push"
     else
       fail_repo "$repo" "eval over every system failed: $(tail -1 "$evallog")  log: $evallog"
@@ -432,9 +432,9 @@ for repo in "${TARGETS[@]}"; do
       printf 'chore(std): adopt nix-packaging-standard %s\n\n' "$TAG"
       cat "$NOTES"
       if [ "$FOREIGN" -eq 1 ] && [ "$BUILD_ON_CI" -eq 1 ]; then
-        printf '\nTest: nix flake check --no-eval-cache --no-build --all-systems, rolled with --build-on-ci; the build is CI'"'"'s on push\n'
+        printf '\nTest: nix flake check --no-build --all-systems without import from derivation, rolled with --build-on-ci; the build is CI'"'"'s on push\n'
       elif [ "$FOREIGN" -eq 1 ]; then
-        printf '\nTest: nix flake check --no-eval-cache --no-build --all-systems on a host with no output for this flake; the build is CI'"'"'s on push\n'
+        printf '\nTest: nix flake check --no-build --all-systems without import from derivation on a host with no output for this flake; the build is CI'"'"'s on push\n'
       else
         printf '\nTest: the canonical build, run locally before this push\n'
       fi

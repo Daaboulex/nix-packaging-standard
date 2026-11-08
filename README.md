@@ -202,7 +202,7 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `callers/ci.yml` | `.github/workflows/ci.yml` | Triggers, permissions and concurrency of CI, passing the `RECLAIM_DISK` repository variable (`on` or `off`; unset is `off`, anything else fails the run); calls `package-ci.yml@release` |
 | `callers/update.yml` | `.github/workflows/update.yml`, except in a first-party repo (upstream type `none`), which carries none | The Update trigger, one cron for Sunday and one for the other days, queued with Maintenance in the `writes-default-branch` concurrency group so the two writers of the default branch never push over each other; the job's condition reads the `UPDATE_CADENCE` repository variable (`daily` or `weekly`; unset is `daily`), so a day it does not run starts no runner, and passes it on (anything else fails the Sunday run); calls `package-update.yml@release` |
 | `callers/maintenance.yml` | `.github/workflows/maintenance.yml` | The Maintenance trigger, one cron for Sunday, one for Wednesday and one for the other days, in the `writes-default-branch` group it shares with Update; the job's condition reads the `MAINTENANCE_CADENCE` repository variable (`daily`, `biweekly` or `weekly`; unset is `weekly`), so a day it does not run starts no runner, and passes it on (anything else fails the Sunday run) |
-| `.github/workflows/package-ci.yml` | *(reusable, not synced)* | Archetype-blind CI (build every output on a runner per declared system) |
+| `.github/workflows/package-ci.yml` | *(reusable, not synced)* | Archetype-blind CI: every declared system evaluated with import from derivation forbidden, then every output built on a runner per declared system |
 | `.github/workflows/package-update.yml` | *(reusable, not synced)* | The update, verified on every declared system before it pushes |
 | `.github/workflows/package-maintenance.yml` | *(reusable, not synced)* | `flake.lock` refresh on the repo's cadence: heal probe, every declared system evaluated, the checks built on a runner per declared system, pushed only if all are green |
 | `update.sh` | *(run from here; retired copy `scripts/update.sh`)* | Detect + apply upstream updates. A `custom` repo keeps its own `scripts/update.sh`, which the Update workflow runs instead |
@@ -211,6 +211,7 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `classify-build-failure.sh` | *(run from here; retired copy `scripts/classify-build-failure.sh`)* | Name a red run's failure class and enumerate its failed targets |
 | `retry-transient.sh` | *(run from here)* | Run an updater or a build, retrying only a `transient-infra` failure within a time budget, optionally from the checked-out tree, and leave the final attempt as the log |
 | `declared-runners.sh` | *(run from here; retired copy `scripts/declared-runners.sh`)* | Name a GitHub runner for every system the flake declares checks on, refusing an unknown system or a flake that does not evaluate |
+| `evaluate-every-system.sh` | *(run from here)* | Evaluate every system the flake declares with import from derivation forbidden, so a check that reads a built file at evaluation fails on every store alike and the failure is named; CI's plan job, the Maintenance refresh and `fleet-roll` run it |
 | `report-failure.sh` | *(run from here; retired copy `scripts/report-failure.sh`)* | Keep one open issue per failure: file it the first day, then rewrite it each failing run with the days since it opened, commenting only when the failure changes |
 | `update-readme-options.sh` | `scripts/update-readme-options.sh` | Only where a repo already carries it: splice an options reference into the README |
 | `.envrc` | `.envrc` | `use flake`, so nix-direnv carries the dev-state pins into every entry point |
@@ -298,6 +299,16 @@ A package whose `meta.platforms` excludes a declared arch is simply not built
 there (declared == built, per system *and* per package). There
 is no per-repo build target, no archetype conditional, and no binary-cache token:
 `cache.nixos.org` substitutes every unmodified dependency for free.
+
+Before the matrix starts, the plan job evaluates every declared system with
+`allow-import-from-derivation` off (`evaluate-every-system.sh`). A check that
+reads a derivation output at evaluation time (`builtins.readFile` of a
+`writeText`, say) passes on any store that already holds the file and fails on
+any other, so a developer's host and the push build both go green while the
+Sunday refresh on another architecture cannot build the path; Nix refuses the
+read even for a path the store holds, so the same evaluation fails everywhere
+and names the file. The Maintenance refresh, `fleet-roll` and the release's
+fleet check evaluate the same way.
 
 The lint check (`pre-commit`) runs once per repo, on `x86_64-linux` when the
 repo declares it and otherwise on its first declared system: it reads the same
@@ -1138,7 +1149,8 @@ plus a `CHANGELOG.md`).
   outside `flake.lock`, such as meson wrap files, rewrites it from the new lock
   there; the app may only rewrite tracked files, an untracked file fails the
   run, and what it rewrote rides the same verification and commit as the lock),
-  the heal probe, `nix flake check --no-build --all-systems`, then the checks built on a runner
+  the heal probe, every declared system evaluated with import from derivation
+  forbidden (`evaluate-every-system.sh`), then the checks built on a runner
   for every declared system; push only if every one is green, else file or
   rewrite the one open `maintenance` issue, whose class names an evaluation
   failure (`eval-error`) apart from a build one; plus stale-branch cleanup

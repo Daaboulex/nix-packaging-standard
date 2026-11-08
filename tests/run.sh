@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Behavioral regression tests for the canonical update.sh, exercised end-to-end
-# against stubbed curl/git/nix (no network, no real build). Guards the three
-# defects fixed 2026-05:
+# against stubbed curl/git/nix (no network; only Test 34 builds a one-line
+# fixture derivation with the real nix). Guards the three defects fixed 2026-05:
 #   1. tagFilter ignored in github-release  -> foreign namespace ("android/*") selected
 #   2. no trackOnly mode                    -> version-read failure on hand-mirrored repos
 #   3. version clobber + JSON-resident hash -> mesa-style rev-only packages couldn't update
@@ -416,6 +416,7 @@ check "loguru not duplicated" "1" "$(grep -c 'loguru' "$d/env.nix")"
 CLASSIFY="$STD/classify-build-failure.sh"
 RETRY="$STD/retry-transient.sh"
 LATEST_RUN="$STD/scripts/latest-worked-run.jq"
+EVAL="$STD/evaluate-every-system.sh"
 ROLL="$STD/scripts/fleet-roll.sh"
 run_classify() {
   (GITHUB_OUTPUT="$1/out.env" bash "$CLASSIFY" "$2" >"$1/clog" 2>&1)
@@ -1553,6 +1554,20 @@ chmod +x "$d/bin/nix"
   printf '%s %s\n' "$pass" "$fail" >"$d/counts"
 )
 read -r pass fail <"$d/counts"
+
+echo "Test 34: the every-system evaluation refuses a read of a derivation output at evaluation time, even when the store holds the file"
+d="$WORK/t34"
+mkdir -p "$d/ifd-at-eval" "$d/ifd-free"
+sys=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+sed "s/@system@/$sys/" "$FIXTURES/ifd-at-eval/flake.nix" >"$d/ifd-at-eval/flake.nix"
+sed "s/@system@/$sys/" "$FIXTURES/ifd-free/flake.nix" >"$d/ifd-free/flake.nix"
+nix build --no-link --option allow-import-from-derivation true "path:$d/ifd-at-eval#checks.$sys.reads-at-eval" >"$d/build.log" 2>&1
+check "the fixture builds, so the file it reads at evaluation is valid in the store" "0" "$?"
+(cd "$d/ifd-at-eval" && bash "$EVAL") >"$d/ifd.log" 2>&1
+check "a check reading a derivation output at evaluation fails although the store holds the file" "1" "$?"
+check "and the failure names import from derivation" "yes" "$(grep -q 'import from derivation' "$d/ifd.log" && echo yes || echo no)"
+(cd "$d/ifd-free" && bash "$EVAL") >"$d/free.log" 2>&1
+check "a check reading the same file in its build step passes" "0" "$?"
 
 echo
 echo "------------------------------------------"

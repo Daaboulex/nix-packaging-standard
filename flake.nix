@@ -696,8 +696,8 @@
               ''
                 grep -q 'foreign_flake "\$dir" "\$sys"' "$roll" \
                   || { echo "fleet-roll never asks whether the host has an output for the flake, so a foreign flake either fails the roll or, worse, is pushed on a skipped build"; exit 1; }
-                grep -q -- '--no-build --all-systems' "$roll" \
-                  || { echo "a foreign flake is not verified by evaluating every system it declares"; exit 1; }
+                grep -q 'bash "\$STD/evaluate-every-system.sh"' "$roll" \
+                  || { echo "a foreign flake is not verified by the standard's evaluation of every system it declares, the one that forbids import from derivation"; exit 1; }
                 grep -q 'host-hooks.nix' "$roll" \
                   || { echo "ensure_hook has no fallback for a flake with no dev shell on this host, so the commit would run no gate"; exit 1; }
                 grep -q 'the build is CI' "$roll" \
