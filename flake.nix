@@ -232,6 +232,149 @@
           # Each pattern must match its own fail-open example and NOT the
           # correct one. Built from the same list the gate uses, so a pattern
           # that stops discriminating cannot go unnoticed.
+          checks.std-steam-compat-tool =
+            let
+              inherit (import ./lib.nix) steamCompatTool;
+              fetch =
+                { tag, token, ... }:
+                pkgs.runCommand "fixture-${tag}-${token}" { } ''
+                  mkdir -p "$out"
+                  touch "$out/proton" "$out/toolmanifest.vdf"
+                  echo upstream > "$out/compatibilitytool.vdf"
+                '';
+              x86_64 = {
+                system = "x86_64-linux";
+                suffix = "";
+                qualifier = null;
+              };
+              ge = steamCompatTool {
+                inherit pkgs fetch;
+                attribute = "proton-ge";
+                brand = "GE-Proton";
+                homepage = "https://example.invalid/ge";
+                description = "fixture";
+                license = lib.licenses.bsd3;
+                sources = {
+                  version = "GE-Proton11-12";
+                  variants = {
+                    x86_64 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+                    aarch64 = "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";
+                  };
+                  pins."GE-Proton10-34".variants.x86_64 = "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=";
+                };
+                majorPattern = "GE-Proton([0-9]+)-.*";
+                buildOf = tag: lib.head (builtins.match "GE-Proton[0-9]+-(.*)" tag);
+                assetUrl = tag: token: "https://example.invalid/${tag}-${token}.tar.gz";
+                variantsOf = release: release.variants;
+                tokens = {
+                  inherit x86_64;
+                  aarch64 = {
+                    system = "aarch64-linux";
+                    suffix = "";
+                    qualifier = null;
+                  };
+                };
+              };
+              cachyos = steamCompatTool {
+                inherit pkgs fetch;
+                attribute = "proton-cachyos";
+                brand = "Proton-CachyOS";
+                homepage = "https://example.invalid/cachyos";
+                description = "fixture";
+                license = lib.licenses.bsd3;
+                sources = {
+                  version = "cachyos-11.0-20261015-slr";
+                  variants = {
+                    x86_64 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+                    x86_64_v3 = "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";
+                    arm64 = "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=";
+                  };
+                  pins."cachyos-10.0-sunset-slr".variants = {
+                    x86_64 = "sha256-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD=";
+                    x86_64_v3 = "sha256-EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE=";
+                  };
+                };
+                majorPattern = "cachyos-([0-9]+\\.[0-9]+)-.*";
+                buildOf =
+                  tag:
+                  let
+                    build = lib.head (builtins.match "cachyos-[0-9.]+-(.*)-slr" tag);
+                  in
+                  if builtins.match "[0-9]{8}" build != null then
+                    "${lib.substring 0 4 build}-${lib.substring 4 2 build}-${lib.substring 6 2 build}"
+                  else
+                    build;
+                assetUrl = tag: token: "https://example.invalid/proton-${tag}-${token}.tar.xz";
+                variantsOf = release: release.variants;
+                tokens = {
+                  inherit x86_64;
+                  x86_64_v3 = {
+                    system = "x86_64-linux";
+                    suffix = "-v3";
+                    qualifier = "v3";
+                  };
+                  arm64 = {
+                    system = "aarch64-linux";
+                    suffix = "";
+                    qualifier = null;
+                  };
+                };
+              };
+              onArm = system == "aarch64-linux";
+              want = label: cond: lib.optional (!cond) label;
+              problems =
+                want "the host's GE tool shows the rolling release with its channel" (
+                  ge.tools.proton-ge.display == "GE-Proton 11 (12, latest)"
+                )
+                ++ want "the GE key is the attribute and the channel" (ge.tools.proton-ge.key == "proton-ge-latest")
+                ++ want "the x86_64 GE payload carries the same key on every host" (
+                  ge.tools.proton-ge-x86_64.key == "proton-ge-latest"
+                )
+                ++ want "a GE pin shows its major and build and no channel word" (
+                  ge.tools.proton-ge-x86_64.v10.display == "GE-Proton 10 (34)"
+                )
+                ++ want "a GE pin's key is the attribute and v<major>" (
+                  ge.tools.proton-ge-x86_64.v10.key == "proton-ge-v10"
+                )
+                ++ want "a pin with no asset for this host is absent from the host's tool" (
+                  (ge.tools.proton-ge ? v10) == !onArm
+                )
+                ++ want "the foreign payload says so in its pname, the native one does not" (
+                  ge.tools.proton-ge-x86_64.pname == (if onArm then "proton-ge-x86_64" else "proton-ge")
+                )
+                ++ want "CachyOS's date build renders as a date with the variant first" (
+                  cachyos.tools.proton-cachyos-x86_64-v3.display == "Proton-CachyOS 11.0 (v3, 2026-10-15, latest)"
+                )
+                ++ want "CachyOS's sunset pin keeps its word" (
+                  cachyos.tools.proton-cachyos-x86_64-v3.v10.display == "Proton-CachyOS 10.0 (v3, sunset)"
+                )
+                ++ want "the v3 key carries the variant suffix before the channel" (
+                  cachyos.tools.proton-cachyos-x86_64-v3.v10.key == "proton-cachyos-v3-v10"
+                )
+                ++ want "the host's CachyOS tool shows no arch" (
+                  cachyos.tools.proton-cachyos.display == "Proton-CachyOS 11.0 (2026-10-15, latest)"
+                )
+                ++ want "the plain x86_64 variant has no suffix in its attribute" (
+                  cachyos.tools ? proton-cachyos-x86_64 && !(cachyos.tools ? proton-cachyos-x86_64-)
+                );
+            in
+            pkgs.runCommand "std-steam-compat-tool"
+              {
+                shapes = [
+                  ge.checks.compat-tool-shape
+                  cachyos.checks.compat-tool-shape
+                ];
+              }
+              (
+                lib.concatMapStringsSep "\n" (p: "echo ${lib.escapeShellArg ("  FAIL " + p)}") problems
+                + lib.optionalString (problems != [ ]) "\nexit 1\n"
+                + ''
+                  for s in $shapes; do cat "$s"; done
+                  echo "std-steam-compat-tool: two fixtures, keys stable per channel, displays in the fleet's format"
+                  touch "$out"
+                ''
+              );
+
           checks.std-fail-open-patterns =
             let
               inherit (import ./lib.nix) failOpenPatterns;

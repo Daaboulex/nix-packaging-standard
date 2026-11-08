@@ -173,6 +173,7 @@ without building the closure — eval-only and cheap, even in CI.
 | `drvEvalCheck { pkgs, name?, drv }` | Packages whose closure is not on `cache.nixos.org` and cannot build on a free CI runner (CUDA/ROCm, very large builds). Forces `drv`'s full build-graph evaluation without realizing it; skips with a trivial pass on a system the drv's `meta.platforms` excludes. See the off-CI exception below. |
 | `pythonSitePackagesCheck { pkgs, drv, package, name? }` | First-party python application repos. Proves the BUILT output ships exactly one top-level import package (plus its dist-info) in `site-packages` -- a flat top-level module (`cli.py`, `utils.py`) collides with any other application in a merged environment. See "Python apps: one top-level package" below. |
 | `pristineBinaryCheck { pkgs, package, binaryPath, name? }` | Prebuilt self-reading binaries (embedded resources / appended payloads). Asserts the installed binary is byte-identical to `package.src`, so no fixup phase can silently corrupt it. See "Prebuilt self-reading binaries" below. |
+| `steamCompatTool { pkgs, attribute, brand, homepage, description, license, sources, majorPattern, buildOf, assetUrl, variantsOf, tokens, fetch? }` | Prebuilt Steam compatibility tools (GE-Proton, Proton-CachyOS, UMU-Proton). Builds every channel of every variant as a two-output derivation with a stable vdf key and a display name in the fleet's format, returns the host's tool attributes with their channel passthrus and the x86_64 payload, and a `compat-tool-shape` check that builds every pin. See "Steam compatibility tools" below. |
 | `patchAssertions` (a shell string, not a function) | Any `postPatch` that rewrites upstream source with `sed`/`awk` rather than `substituteInPlace --replace-fail`. Prepend it, then assert after every edit with `landed` / `gone` / `present` / `exactly_one` / `landed_soft`. Without it a renamed upstream anchor makes the edit apply to nothing and the package still builds green. See "Patching upstream source" below. |
 | `devStateHook` (a shell string) | The exports that keep every tool's cache and home under the project's `.devshell/`; `base` wires it into the default shell. See "Self-contained dev state" below. |
 | `mkDevShell { pkgs, config } args` | A custom dev shell that cannot get the pin order wrong: the pins, then the hook install, then the caller's own hook. |
@@ -751,23 +752,45 @@ corruption (fixup phases); a mismatch means upstream replaced the artifact
 
 ## Steam compatibility tools
 
-Prebuilt Proton forks (GE-Proton, Proton-CachyOS) package as two-output
-derivations mirroring nixpkgs `proton-ge-bin`: a stub `out` plus
-`steamcompattool` holding the tool, consumed via
-`programs.steam.extraCompatPackages`.
+Prebuilt Proton forks (GE-Proton, Proton-CachyOS, UMU-Proton) package through
+`std.lib.steamCompatTool` as two-output derivations mirroring nixpkgs
+`proton-ge-bin`: a stub `out` plus `steamcompattool` holding the tool, consumed
+via `programs.steam.extraCompatPackages`. The helper writes each tool's
+`compatibilitytool.vdf` itself, because that file carries two names with two
+jobs:
 
-- Normalize the `compatibilitytool.vdf` identity to a stable, version-free
-  name (`substituteInPlace --replace-fail`), overridable via a
-  `steamDisplayName` argument. Steam maps games to the vdf identity: a
-  versioned name breaks every per-game mapping on each release.
-- The shape check asserts the tool layout (`compatibilitytool.vdf`, the
-  `proton` entry point), the stable identity prefix, and -- via a grep for
-  `package.version` -- that no versioned identity leaked.
-- Package every variant upstream publishes (ISA tiers, arm64) as a variant
-  map in one `package.nix`; a new upstream variant is one added entry. The
-  baseline variant forces all variant sources (an `allVariantSources` list
-  attr) so `update.sh`'s hash convergence reaches every hash through
-  `.#default`.
+- The **key** (the entry under `compat_tools`) is what Steam saves in
+  `config.vdf` for a game's choice. It is `<attribute>-<channel>`, lowercase, no
+  version, no arch: `proton-ge-latest`, `proton-ge-v10`, `proton-cachyos-v3-v11`.
+  It never moves, so a game's choice survives every update, and the native build
+  and the x86_64 payload of one channel share it, so one Steam root serving an
+  aarch64 and an x86 client keeps one mapping.
+- The **display name** is what the dropdown shows: `<Brand> <major> (<qualifiers>)`
+  in Valve's own `Proton 11.0` shape, with upstream's facts only. The brand is
+  upstream's spelling (`GE-Proton`, `Proton-CachyOS`, `UMU-Proton`), the major is
+  written the way upstream writes it (`11` for GE-Proton11-12, `10.0` for
+  UMU-Proton-10.0-4), and the brackets hold the variant word first, the build
+  (`buildOf tag`: `12`, `4e`, `sunset`, a date as `2026-10-15`), and `latest` last
+  on the rolling channel: `GE-Proton 11 (12, latest)`, `GE-Proton 10 (34)`,
+  `Proton-CachyOS 11.0 (v3, 2026-10-15, latest)`, `UMU-Proton 9.0 (4e)`. No arch
+  word anywhere.
+
+The repo passes `sources` (the rolling release's facts at the top, one entry per
+pinned release under `pins`, between the `# std:rolling` and `# std:pins`
+markers the updater's `majorPattern` rollover writes), `majorPattern` read from
+`.github/update.json` so the helper and the updater share one regex,
+`variantsOf` (how a release names its per-variant hashes), `assetUrl`, and
+`tokens`: upstream's asset token (`x86_64`, `x86_64_v3`, `arm64`, `aarch64`) to
+the system it runs on, the attribute suffix (`-v3`) and the qualifier word
+(`v3`). It returns `tools`, the attributes a flake exposes: `<attribute>` is the
+host's own build, `<attribute><suffix>` an ISA variant of it, and
+`<attribute>-x86_64<suffix>` the x86_64 payload on every host (for an x86 client
+under FEX on aarch64; on x86_64 it is the same derivation), each with its
+channels as **passthru** (`.latest`, `.v<major>`), never as top-level packages.
+`checks.compat-tool-shape` references every channel of every exposed token, so
+`declared == built` holds for the pins through the check, and asserts the
+`proton` entry point, both vdf files, the key and display formats, no arch or
+build-type word in either name, no `latest` on a pin, and unique keys.
 
 ## Short-circuiting pipelines under `pipefail`
 
@@ -1479,6 +1502,19 @@ sinavarasina's steam-arm64-nix PR #6 by hand could not credit him the way
 GitHub records a co-author. A `Co-authored-by:` line with a GitHub noreply
 address now passes; a personal address, a bot login and a tool's name stay
 refused (Test 27).
+
+v3.5.0 (2026-11) gives the Proton repos one shape and an automatic rollover.
+`set_hash` rewrote every line that named a hash field, so a repo pinning one
+release per major under the rolling release's field names (umu-proton-nix)
+would have had every pin overwritten on its first update; it now rewrites the
+first literal alone (Test 31). `majorPattern` in `update.json` makes the
+updater copy the outgoing rolling release into the pins block the day upstream
+opens a new major, so a `v<major>` channel never vanishes and no hand edit is
+needed (Tests 32 to 32c). `std.lib.steamCompatTool` builds every channel of
+every variant of a prebuilt Steam tool with a stable vdf key per channel and a
+display name in one format, `<Brand> <major> (<qualifiers>)`, so a game's
+choice survives updates and is shared by the aarch64 and the x86 client on one
+Steam root, and the dropdown shows which release runs (`std-steam-compat-tool`).
 
 ## License
 
