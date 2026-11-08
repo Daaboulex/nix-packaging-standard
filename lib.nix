@@ -410,20 +410,19 @@ rec {
         ${sources.version} = sources;
       }
       // sources.pins;
-      channelOf =
-        tag:
-        if tag == sources.version then "latest" else "v${lib.head (lib.splitString "." (majorOf tag))}";
+      majorChannel = tag: "v${lib.head (lib.splitString "." (majorOf tag))}";
       hasToken = token: tag: variantsOf releases.${tag} ? ${token};
       qualifiers =
-        token: tag:
+        token: tag: channel:
         lib.optional (tokens.${token}.qualifier != null) tokens.${token}.qualifier
         ++ [ (buildOf tag) ]
-        ++ lib.optional (tag == sources.version) "latest";
+        ++ lib.optional (channel == "latest") "latest";
       display =
-        token: tag: "${brand} ${majorOf tag} (${lib.concatStringsSep ", " (qualifiers token tag)})";
-      key = token: tag: "${attribute}${tokens.${token}.suffix}-${channelOf tag}";
+        token: tag: channel:
+        "${brand} ${majorOf tag} (${lib.concatStringsSep ", " (qualifiers token tag channel)})";
+      key = token: channel: "${attribute}${tokens.${token}.suffix}-${channel}";
       tool =
-        token: tag:
+        token: tag: channel:
         let
           t = tokens.${token};
           foreign = t.system != hostSystem;
@@ -444,10 +443,9 @@ rec {
             "steamcompattool"
           ];
           passthru = {
-            inherit tag token;
-            channel = channelOf tag;
-            key = key token tag;
-            display = display token tag;
+            inherit tag token channel;
+            key = key token channel;
+            display = display token tag channel;
           };
           installPhase = ''
             runHook preInstall
@@ -468,10 +466,10 @@ rec {
             {
               "compat_tools"
               {
-                "${key token tag}"
+                "${key token channel}"
                 {
                   "install_path" "."
-                  "display_name" "${display token tag}"
+                  "display_name" "${display token tag channel}"
                   "from_oslist" "windows"
                   "to_oslist" "linux"
                 }
@@ -489,13 +487,22 @@ rec {
       channels =
         token:
         let
-          tags = lib.filter (hasToken token) (lib.attrNames releases);
-          names = map channelOf tags;
+          pinned = lib.filter (hasToken token) (lib.attrNames sources.pins);
+          names = map majorChannel pinned;
+          rolling = majorChannel sources.version;
         in
-        if lib.length (lib.unique names) != lib.length names then
-          throw "${attribute}: two releases share one channel among ${lib.concatStringsSep ", " names}; one pin per major"
+        if lib.elem rolling names then
+          throw "${attribute}: a pin shares the rolling release's major (${rolling}); the rollover pins that line when upstream closes it"
+        else if lib.length (lib.unique names) != lib.length names then
+          throw "${attribute}: two pins share one major among ${lib.concatStringsSep ", " names}; one pin per major"
         else
-          lib.listToAttrs (map (tag: lib.nameValuePair (channelOf tag) (tool token tag)) tags);
+          lib.listToAttrs (
+            map (tag: lib.nameValuePair (majorChannel tag) (tool token tag (majorChannel tag))) pinned
+          )
+          // {
+            latest = tool token sources.version "latest";
+            ${rolling} = tool token sources.version rolling;
+          };
       withChannels =
         token:
         let

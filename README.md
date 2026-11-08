@@ -787,6 +787,10 @@ host's own build, `<attribute><suffix>` an ISA variant of it, and
 `<attribute>-x86_64<suffix>` the x86_64 payload on every host (for an x86 client
 under FEX on aarch64; on x86_64 it is the same derivation), each with its
 channels as **passthru** (`.latest`, `.v<major>`), never as top-level packages.
+The rolling release carries two channels: `latest`, and its own line's
+`v<major>` shown as a pin (`GE-Proton 11 (12)`), so a consumer that names `v11`
+follows the newest 11 until upstream closes the line and the rollover freezes
+it; a pin inside the rolling major is refused, since the rollover owns that line.
 `checks.compat-tool-shape` references every channel of every exposed token, so
 `declared == built` holds for the pins through the check, and asserts the
 `proton` entry point, both vdf files, the key and display formats, no arch or
@@ -1515,6 +1519,13 @@ every variant of a prebuilt Steam tool with a stable vdf key per channel and a
 display name in one format, `<Brand> <major> (<qualifiers>)`, so a game's
 choice survives updates and is shared by the aarch64 and the x86 client on one
 Steam root, and the dropdown shows which release runs (`std-steam-compat-tool`).
+
+v3.5.1 (2026-11) gives the rolling release its own line's `v<major>` channel
+beside `latest`. v3.5.0's helper built channels from the pins alone, so
+`pkgs.proton-ge.v11` vanished the moment proton-ge-nix adopted it while the
+tree's hosts name it; the old per-repo assembly had given the rolling major
+that channel, and the dropdown lists the line and the rolling entry side by
+side (`GE-Proton 11 (12)` and `GE-Proton 11 (12, latest)`).
 
 ## License
 

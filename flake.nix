@@ -339,6 +339,16 @@
                 ++ want "a pin with no asset for this host is absent from the host's tool" (
                   (ge.tools.proton-ge ? v10) == !onArm
                 )
+                ++ want "the rolling release also carries its own line's channel, shown as a pin" (
+                  ge.tools.proton-ge.v11.display == "GE-Proton 11 (12)"
+                  && ge.tools.proton-ge.v11.key == "proton-ge-v11"
+                )
+                ++ want "the rolling line's channel is one derivation apart from latest" (
+                  ge.tools.proton-ge.v11.steamcompattool != ge.tools.proton-ge.steamcompattool
+                )
+                ++ want "CachyOS's rolling line channel shows the date and no channel word" (
+                  cachyos.tools.proton-cachyos.v11.display == "Proton-CachyOS 11.0 (2026-10-15)"
+                )
                 ++ want "the foreign payload says so in its pname, the native one does not" (
                   ge.tools.proton-ge-x86_64.pname == (if onArm then "proton-ge-x86_64" else "proton-ge")
                 )
