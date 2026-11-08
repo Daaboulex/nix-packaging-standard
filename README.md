@@ -1561,6 +1561,33 @@ line (cachyos-settings-nix, the same day); they go to stderr, a fetch's own
 error is no longer discarded, and an output carrying a line break fails the
 run by name.
 
+v3.5.3 (2026-11) refuses an import from derivation on every store, repairs a
+missing hook during a roll, and moves the Proton overlay rule into the
+standard. steam-arm64-nix read a `writeText` output with `builtins.readFile`
+inside two checks: every local gate passed because the M1's store held the
+file, the push build passed because the aarch64 runner built it, and only the
+Sunday Maintenance, evaluating every system on an x86 runner, failed with
+"path ... is not valid", a line the classifier reads as `transient-infra`.
+`evaluate-every-system.sh` evaluates every declared system with
+`allow-import-from-derivation` off, which Nix refuses even for a path the
+store already holds; CI's plan job, the Maintenance refresh, `fleet-roll` and
+the release's fleet check run it, the failure is classed
+`import-from-derivation` (`tests/run.sh` Tests 11e and 34), and on 2026-11-08
+no consumer evaluated with it. Rolling mesa-git-nix to v3.5.2 failed three
+times with "the hook set could not be installed": the hook was gone while the
+gitignored `.pre-commit-config.yaml` link already pointed at the current
+config, and git-hooks.nix installs only when that link changes, so entering
+the shell installed nothing; the roll now removes the link before it enters,
+so the install runs every time (Test 33). `steamCompatTool` takes the tool's
+facts as a function of pkgs and returns the overlay itself, written from
+`prev` because the helper decides its attribute names from the pkgs it is
+given and `final` recursed, plus an `overlay-applies` check that proves the
+overlay yields the flake's own derivations; the three Proton repos drop their
+own overlay line and check together with their lock bump to this release, and
+a fleet check that includes them before that bump refuses the release, since
+their old call shape does not evaluate against it. No synced file changed, so
+this release needs no fleet roll.
+
 ## License
 
 MIT. See `LICENSE`.
