@@ -197,6 +197,10 @@ main() {
       failures+=("$repo: sync.sh failed; $log")
       continue
     fi
+    if ! (cd "$clone" && bash "$work/std/write-option-reference.sh" --override-input std "git+file://$STD?rev=$sha") >>"$log" 2>&1; then
+      failures+=("$repo: docs/OPTIONS.md could not be rewritten against $version, as the roll will; $log")
+      continue
+    fi
     git -C "$clone" add -A
     if ! git -C "$clone" diff --cached --quiet; then
       git -C "$clone" -c user.name=release -c user.email=release@localhost commit --quiet -m "roll to $version" >>"$log" 2>&1 ||
