@@ -178,9 +178,19 @@ against the tree:
 - **No branding.** No maintainer attribution or personal-identity line; functional
   links (upstream, clone URL) stay.
 - **Plain, not marketing.** Concrete terms for what the repo is and does — no hype
-  adjectives, no generic CI-boilerplate paragraph, no emoji. The `generated:*`
-  marker blocks carry the machine-fillable surface; everything outside them is
-  hand-written and must be accurate.
+  adjectives, no generic CI-boilerplate paragraph, no emoji.
+- **Written for a person who has never seen the repo.** The page answers, in
+  this order: what it is and who it is for, whether it works and on what, how
+  to install it, how to use it, what does not work, what to do when it
+  breaks. One idea to a paragraph, four sentences at most. The proof stays
+  out of the page: a check's name, the date something was measured, an issue
+  number, the reason a design is the way it is. Those live under `docs/`
+  (`DESIGN.md`, `COMPATIBILITY.md`, `DEVELOPMENT.md`), linked from a closing
+  "More" section. No section twice, and no marker block: a `generated:`
+  comment pair that nothing fills is not structure. `check-readme-sections`
+  holds only the floor, a title and an install section; no tool can judge
+  whether a page reads well, so the rest is read by a person. The README of
+  `steam-arm64-nix` is the worked example.
 - **Links resolve.** A reference to a file of the same repository is written
   as a link, and the `lychee` hook checks every relative link in every `.md`
   file, offline. A file name in backticks is not checked: it may name someone

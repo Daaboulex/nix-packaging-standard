@@ -510,6 +510,7 @@ EVAL="$STD/evaluate-every-system.sh"
 ROLL="$STD/scripts/fleet-roll.sh"
 SHRINK="$STD/scripts/check-baselines-shrink.sh"
 ASSIST="$STD/scripts/check-assistant-files.sh"
+SECTIONS="$STD/scripts/check-readme-sections.sh"
 run_classify() {
   (GITHUB_OUTPUT="$1/out.env" bash "$CLASSIFY" "$2" >"$1/clog" 2>&1)
   RC=$?
@@ -1800,6 +1801,25 @@ check "a file of 200 lines passes" "0" "$?"
 bash "$ASSIST" "$d/CLAUDE.md" "$d/AGENTS.md" >"$d/log" 2>&1
 check "a file of 201 lines is refused" "1" "$?"
 check "and it is named with its length" "1" "$(grep -c 'AGENTS.md is 201 lines' "$d/log")"
+
+echo "Test 37: check-readme-sections holds a title and an install section, and asks for no marker"
+readme_case() { # readme_case <name> <line>...  -> runs the hook in a directory holding that README
+  d="$WORK/t37-$1"
+  mkdir -p "$d"
+  shift
+  printf '%s\n' "$@" >"$d/README.md"
+  (cd "$d" && bash "$SECTIONS" >"$d/log" 2>&1)
+}
+readme_case plain '# Tool' '' 'What it is.' '' '## Install' '' 'How.'
+check "a page with a title and an install section passes, with no marker in it" "0" "$?"
+readme_case quick '# Tool' '' '## Quick Start'
+check "Quick Start counts as the install section" "0" "$?"
+readme_case untitled 'What it is.' '' '## Installation'
+check "a page with no title is refused" "1" "$?"
+check "and the refusal says so" "1" "$(grep -c 'no title' "$d/log")"
+readme_case uninstallable '# Tool' '' '## Usage' '' '<!-- BEGIN generated:installation -->'
+check "a marker is not an install section" "1" "$?"
+check "and the refusal names the section" "1" "$(grep -c 'how to install it' "$d/log")"
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"
