@@ -162,9 +162,10 @@ TAG_FILTER=$(echo "$CONFIG" | jq -r '.upstream.tagFilter // ".*"')
 # match still terminates instead of walking an unbounded history.
 TAG_PAGE_LIMIT=10
 # trackOnly: for hand-mirrored repos with no buildable artifact (the package is
-# a reimplementation, not a fetched source). The updater only DETECTS upstream
-# movement and files a "remirror-needed" reminder; it never writes, builds, or
-# advances a version. trackFile/trackKey locate the recorded upstream marker.
+# a reimplementation, not a fetched source). The updater detects upstream
+# movement and files a "remirror-needed" reminder; it builds nothing, and it
+# moves the marker only where trackFile carries a file ledger that ports none
+# of the changed files. trackFile/trackKey locate the recorded upstream marker.
 TRACK_ONLY=$(echo "$CONFIG" | jq -r '.trackOnly // false')
 TRACK_FILE=$(echo "$CONFIG" | jq -r '.trackFile // "upstream-version.json"')
 TRACK_KEY=$(echo "$CONFIG" | jq -r '.trackKey // "commit"')
@@ -506,16 +507,85 @@ esac
 # A hand-mirrored repo has no buildable artifact to bump. Compare the recorded
 # marker to the upstream HEAD; if they differ, exit 1 with `remirror-needed` so
 # the workflow files a reminder for a human to re-mirror (and then bump
-# trackFile). The marker is never auto-advanced and nothing is built.
+# trackFile). Nothing is built. A `files` map in trackFile, upstream path to
+# { "decision": "ported" | "left-to-nixos" | "not-ported" }, narrows that: the
+# marker moves by itself when every changed file was only modified and is
+# marked not-ported, and a run that finds upstream unchanged checks that the
+# map lists exactly the files upstream has.
 if [ "$TRACK_ONLY" = "true" ]; then
   NEW_REF="${FULL_REV:-$LATEST_VERSION}"
   output "new_version" "${NEW_REF:0:7}"
+  LEDGER=$(jq -c '.files // empty' "$TRACK_FILE")
+  if [ -n "$LEDGER" ] && [ "$UPSTREAM_TYPE" != "github-commit" ]; then
+    err "trackOnly: '$TRACK_FILE' carries a file ledger, which is read against GitHub's compare and tree endpoints; upstream type '$UPSTREAM_TYPE' has neither"
+    output "updated" "false"
+    output "error_type" "config-error"
+    exit 1
+  fi
   if [ "${CURRENT_VERSION:0:7}" = "${NEW_REF:0:7}" ] || [ "$CURRENT_VERSION" = "$NEW_REF" ]; then
+    if [ -n "$LEDGER" ]; then
+      TREE=$(fetch_latest "curl -sfL 'https://api.github.com/repos/$OWNER/$REPO/git/trees/$NEW_REF?recursive=1'") || {
+        warn "Failed to fetch the tree of $OWNER/$REPO at $NEW_REF"
+        output "updated" "false"
+        exit 2
+      }
+      if [ "$(jq -r '.truncated' <<<"$TREE")" != "false" ]; then
+        err "trackOnly: GitHub cut the tree of $OWNER/$REPO short, so the ledger cannot be checked against it"
+        output "updated" "false"
+        output "error_type" "config-error"
+        exit 1
+      fi
+      UNLISTED=$(jq -r --argjson ledger "$LEDGER" \
+        '[.tree[] | select(.type == "blob") | .path] as $upstream
+         | (($upstream - ($ledger | keys)) | map("upstream has it, the ledger does not: " + .))
+         + ((($ledger | keys) - $upstream) | map("the ledger has it, upstream does not: " + .))
+         | .[]' <<<"$TREE")
+      if [ -n "$UNLISTED" ]; then
+        err "trackOnly: the file ledger in '$TRACK_FILE' does not match upstream at $CURRENT_VERSION"
+        printf '%s\n' "$UNLISTED" >&2
+        output "updated" "false"
+        output "error_type" "config-error"
+        exit 1
+      fi
+    fi
     log "Already up to date (marker $CURRENT_VERSION)"
     output "updated" "false"
     exit 0
   fi
-  log "Upstream advanced: $CURRENT_VERSION -> ${NEW_REF:0:7} — manual re-mirror needed"
+  if [ -n "$LEDGER" ]; then
+    COMPARE=$(fetch_latest "curl -sfL 'https://api.github.com/repos/$OWNER/$REPO/compare/$CURRENT_VERSION...$NEW_REF'") || {
+      warn "Failed to compare $CURRENT_VERSION with $NEW_REF in $OWNER/$REPO"
+      output "updated" "false"
+      exit 2
+    }
+    CHANGED=$(jq -r '.files | length' <<<"$COMPARE")
+    NEEDS_A_PERSON=$(jq -r --argjson ledger "$LEDGER" \
+      '.files[]
+       | ($ledger[.filename].decision // "no decision yet") as $decision
+       | select(.status != "modified" or $decision != "not-ported")
+       | "\(.status), \($decision): \(.filename)"' <<<"$COMPARE")
+    if [ "$CHANGED" -lt 300 ] && [ -z "$NEEDS_A_PERSON" ]; then
+      NEW_DATE=$(jq -r '.commits[-1].commit.committer.date[0:10]' <<<"$COMPARE")
+      jq --arg key "$TRACK_KEY" --arg commit "${NEW_REF:0:7}" --arg date "$NEW_DATE" \
+        '.[$key] = $commit | .date = $date' "$TRACK_FILE" >"$TRACK_FILE.new"
+      mv "$TRACK_FILE.new" "$TRACK_FILE"
+      log "Upstream advanced: $CURRENT_VERSION -> ${NEW_REF:0:7}; $CHANGED file(s) changed and the ledger ports none of them, so the marker moves by itself"
+      output "updated" "true"
+      exit 0
+    fi
+    log "Upstream advanced: $CURRENT_VERSION -> ${NEW_REF:0:7} — these files need a person:"
+    if [ "$CHANGED" -ge 300 ]; then
+      log "GitHub lists at most 300 changed files and this comparison reached that, so none is cleared"
+    fi
+    printf '%s\n' "$NEEDS_A_PERSON" >&2
+    jq -r --argjson ledger "$LEDGER" \
+      '.files[]
+       | select(.status != "modified" or ($ledger[.filename].decision // "") != "not-ported")
+       | "--- \(.filename)\n\((.patch // "(no text difference to show)") | split("\n") | .[0:40] | join("\n"))"' \
+      <<<"$COMPARE" >&2
+  else
+    log "Upstream advanced: $CURRENT_VERSION -> ${NEW_REF:0:7} — manual re-mirror needed"
+  fi
   output "updated" "false"
   output "error_type" "remirror-needed"
   exit 1

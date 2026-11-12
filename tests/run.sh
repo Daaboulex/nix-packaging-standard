@@ -57,6 +57,12 @@ for a in "$@"; do
   */tags*)
     [ -n "${STUB_CURL_TAGS_FILE:-}" ] && { cat "$STUB_CURL_TAGS_FILE" || exit 1; exit 0; }
     ;;
+  */compare/*)
+    [ -n "${STUB_CURL_COMPARE_FILE:-}" ] && { cat "$STUB_CURL_COMPARE_FILE" || exit 1; exit 0; }
+    ;;
+  */git/trees/*)
+    [ -n "${STUB_CURL_TREE_FILE:-}" ] && { cat "$STUB_CURL_TREE_FILE" || exit 1; exit 0; }
+    ;;
   esac
 done
 # Paged list endpoints: serve $STUB_CURL_PAGE_DIR/page<N>.json, empty past the
@@ -189,6 +195,90 @@ printf '{ "commit": "bbbbbbbb", "date": "x" }\n' >"$d/upstream-version.json"
 STUB_CURL_FILE="$WORK/commit.json" run_update "$d"
 check "up-to-date exits 0" "0" "$RC"
 check "updated=false" "false" "$(get "$d" updated)"
+
+echo "Test 2e: a file ledger lets the marker move by itself only past files nobody ported"
+ledger_fixture() { # ledger_fixture <dir> <marker>
+  mkdir -p "$1/.github"
+  cp "$WORK/t2/.github/update.json" "$1/.github/update.json"
+  cat >"$1/upstream-version.json" <<JSON
+{
+  "repo": "o/r",
+  "commit": "$2",
+  "date": "2026-01-01",
+  "files": {
+    "usr/lib/sysctl.d/tuning.conf": { "decision": "ported" },
+    "usr/lib/modprobe.d/gpu.conf": { "decision": "left-to-nixos" },
+    "usr/bin/tool": { "decision": "not-ported" }
+  }
+}
+JSON
+}
+compare_of() { # compare_of <file> <status> <path>
+  cat >"$1" <<JSON
+{ "commits": [ { "commit": { "committer": { "date": "2026-02-03T04:05:06Z" } } } ],
+  "files": [ { "filename": "$3", "status": "$2", "patch": "@@ -1 +1 @@\n-old line\n+new line" } ] }
+JSON
+}
+
+d="$WORK/t2d"
+ledger_fixture "$d" aaaaaaa
+compare_of "$WORK/compare.json" modified usr/bin/tool
+STUB_CURL_FILE="$WORK/commit.json" STUB_CURL_COMPARE_FILE="$WORK/compare.json" run_update "$d"
+check "a change to a file nobody ported exits 0" "0" "$RC"
+check "and reports an update" "true" "$(get "$d" updated)"
+check "the marker moved to the new commit" "bbbbbbb" "$(jq -r .commit "$d/upstream-version.json")"
+check "the date is the new commit's" "2026-02-03" "$(jq -r .date "$d/upstream-version.json")"
+check "the ledger is kept" "3" "$(jq -r '.files | length' "$d/upstream-version.json")"
+
+for blocked in "modified usr/lib/sysctl.d/tuning.conf ported" \
+  "modified usr/lib/modprobe.d/gpu.conf left-to-nixos" \
+  "added usr/lib/new.conf no decision yet" \
+  "removed usr/bin/tool not-ported"; do
+  read -r status path decision <<<"$blocked"
+  d="$WORK/t2d-$status-$(basename "$path")"
+  ledger_fixture "$d" aaaaaaa
+  compare_of "$WORK/compare.json" "$status" "$path"
+  before="$(cat "$d/upstream-version.json")"
+  STUB_CURL_FILE="$WORK/commit.json" STUB_CURL_COMPARE_FILE="$WORK/compare.json" run_update "$d"
+  check "a file $status upstream, $decision, stops for a person" "1 remirror-needed" "$RC $(get "$d" error_type)"
+  check "and leaves the marker alone" "$before" "$(cat "$d/upstream-version.json")"
+  check "and names the file with its decision" "1" "$(grep -cF "$status, $decision: $path" "$d/log")"
+  check "and shows what changed in it" "1" "$(grep -cF '+new line' "$d/log")"
+done
+
+d="$WORK/t2d-current"
+ledger_fixture "$d" bbbbbbb
+printf '%s\n' '{ "truncated": false, "tree": [' \
+  '{ "type": "blob", "path": "usr/lib/sysctl.d/tuning.conf" },' \
+  '{ "type": "blob", "path": "usr/lib/modprobe.d/gpu.conf" },' \
+  '{ "type": "tree", "path": "usr/bin" },' \
+  '{ "type": "blob", "path": "usr/bin/tool" } ] }' >"$WORK/tree.json"
+STUB_CURL_FILE="$WORK/commit.json" STUB_CURL_TREE_FILE="$WORK/tree.json" run_update "$d"
+check "a ledger that lists every upstream file is a clean no-op" "0 false" "$RC $(get "$d" updated)"
+
+printf '%s\n' '{ "truncated": false, "tree": [' \
+  '{ "type": "blob", "path": "usr/lib/sysctl.d/tuning.conf" },' \
+  '{ "type": "blob", "path": "usr/lib/modprobe.d/gpu.conf" },' \
+  '{ "type": "blob", "path": "usr/lib/unlisted.conf" } ] }' >"$WORK/tree.json"
+STUB_CURL_FILE="$WORK/commit.json" STUB_CURL_TREE_FILE="$WORK/tree.json" run_update "$d"
+check "a ledger that does not match upstream fails as a config error" "1 config-error" "$RC $(get "$d" error_type)"
+check "naming the file upstream has and the ledger lacks" "1" "$(grep -cF 'upstream has it, the ledger does not: usr/lib/unlisted.conf' "$d/log")"
+check "and the file the ledger has and upstream lacks" "1" "$(grep -cF 'the ledger has it, upstream does not: usr/bin/tool' "$d/log")"
+
+printf '{ "truncated": true, "tree": [] }\n' >"$WORK/tree.json"
+STUB_CURL_FILE="$WORK/commit.json" STUB_CURL_TREE_FILE="$WORK/tree.json" run_update "$d"
+check "a tree GitHub cut short is refused, not read as complete" "1 config-error" "$RC $(get "$d" error_type)"
+
+d="$WORK/t2d-other-host"
+ledger_fixture "$d" aaaaaaa
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "git-ls-remote", "url": "u", "branch": "main" },
+  "trackOnly": true, "trackFile": "upstream-version.json", "trackKey": "commit",
+  "packageFile": null, "hashes": [], "verify": { "check": "eval" } }
+JSON
+STUB_GIT_REV="0bc68ab1962d62e66251a43a5b076f3c470b4189" run_update "$d"
+check "a ledger on an upstream GitHub cannot compare is a config error" "1 config-error" "$RC $(get "$d" error_type)"
 
 # ---- Test 2c: a retried ls-remote leaves the captured commit clean ---------
 echo "Test 2c: one failed ls-remote, then the retry -> clean commit, clean outputs"

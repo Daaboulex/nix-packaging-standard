@@ -215,12 +215,12 @@
     "trackOnly": {
       "type": "boolean",
       "default": false,
-      "description": "Hand-mirrored repos with no buildable artifact: the updater only DETECTS upstream movement (against trackFile/trackKey) and files a 'remirror-needed' reminder issue — it never writes, builds, or advances a version. Requires a commit-tracked upstream type."
+      "description": "Hand-mirrored repos with no buildable artifact: the updater detects upstream movement (against trackFile/trackKey) and files a 'remirror-needed' reminder issue. It builds nothing, and it moves the marker only where trackFile carries a file ledger that ports none of the changed files. Requires a commit-tracked upstream type; a ledger requires github-commit."
     },
     "trackFile": {
       "type": "string",
       "default": "upstream-version.json",
-      "description": "trackOnly: JSON file recording the last-mirrored upstream marker."
+      "description": "trackOnly: JSON file recording the last-mirrored upstream marker. An optional `files` object in it is the file ledger: each upstream path mapped to an object whose `decision` is `ported`, `left-to-nixos` or `not-ported`."
     },
     "trackKey": {
       "type": "string",

@@ -1241,9 +1241,20 @@ doing any work.
   tag. A filter that matches nothing fails closed with `no-matching-tag`.
 - **`trackOnly: true`** is the hand-mirrored mode: the updater only DETECTS
   upstream movement (against `trackFile`/`trackKey`, default
-  `upstream-version.json`/`commit`) and files a `remirror-needed` reminder issue
-  -- it never writes, builds, or advances a version. Requires a commit-tracked
-  upstream type.
+  `upstream-version.json`/`commit`) and files a `remirror-needed` reminder issue.
+  It builds nothing. Requires a commit-tracked upstream type.
+
+  A `files` object in the track file is the file ledger: every upstream path
+  with a `decision` of `ported`, `left-to-nixos` or `not-ported`. With it the
+  updater reads which files changed. When each was only modified and is
+  `not-ported`, the marker moves by itself and the run commits it. Any other
+  change stops for a person, and the issue names each file with its decision
+  and shows the first 40 lines of its difference: a ported file, a file left
+  to NixOS (the claim that NixOS does the same may no longer hold), and a file
+  added, removed or renamed (the ledger itself must change). A run that finds
+  upstream unchanged checks that the ledger lists exactly the files upstream
+  has, and fails as `config-error` naming each difference. A ledger needs a
+  `github-commit` upstream (`tests/run.sh` Test 2e).
 - **`verify.check`** is one of `elf` / `wrapper` / `desktop` / `eval`. `eval`
   (also the default when omitted) makes eval + a clean build the whole
   verification; the others additionally assert the named artifact exists under
