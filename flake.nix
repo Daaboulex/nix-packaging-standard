@@ -193,6 +193,9 @@
                   armOnly.aarch64-linux ? pre-commit
                 ) true)
                 (expect "a consumer that switches no detection on gets none" (current ? std-detect-shell) false)
+                (expect "a consumer that names no module gets no option reference check" (
+                  current ? std-option-reference
+                ) false)
               ];
             in
             pkgs.runCommand "std-base-fixtures" { } (
@@ -383,6 +386,70 @@
                 else
                   "expect ${lib.escapeShellArg case.say} test -e ${case.file}"
               ) cases}
+              [ "$bad" = 0 ] || exit 1
+              touch "$out"
+            '';
+
+          checks.std-option-reference-fixtures =
+            let
+              fixture = name: ./tests/fixtures/option-reference + "/${name}";
+              control = fixture "control";
+              on =
+                source: module:
+                (baseOnWith source [ system ] {
+                  perSystem.std.option-reference."Demo module" = module;
+                }).${system}.std-option-reference;
+              described =
+                { lib, ... }:
+                {
+                  options.demo.enable = lib.mkEnableOption "the demo";
+                };
+              refused = say: drv: has: {
+                inherit say;
+                test = "grep -qF -- ${lib.escapeShellArg has} ${pkgs.testers.testBuildFailure drv}/testBuildFailure.log";
+              };
+              cases = [
+                {
+                  say = "a reference that matches the module passes";
+                  test = "test -e ${on control (control + "/module.nix")}";
+                }
+                (refused "a reference the module has moved on from is refused, with the difference shown"
+                  (on (fixture "stale") described)
+                  "-An older rendering."
+                )
+                (refused "a missing reference is refused" (on (fixture "bare") described) "is missing")
+                (refused "a README that does not link to the reference is refused" (on (fixture "bare") described)
+                  "does not link to"
+                )
+                (refused "an option with no description is refused" (on control (
+                  { lib, ... }:
+                  {
+                    options.demo.silent = lib.mkOption { type = lib.types.bool; };
+                  }
+                )) "has no description")
+                (refused "a default that shows a derivation is refused" (on control (
+                  { lib, pkgs, ... }:
+                  {
+                    options.demo.package = lib.mkOption {
+                      type = lib.types.package;
+                      default = pkgs.hello;
+                      description = "The program the demo runs.";
+                    };
+                  }
+                )) "shows a store path or a derivation")
+                (refused "a module with no option is refused" (on control { }) "declares no option")
+              ];
+            in
+            pkgs.runCommand "std-option-reference-fixtures" { } ''
+              bad=0
+              ${lib.concatMapStringsSep "\n" (case: ''
+                if ${case.test}; then
+                  echo ${lib.escapeShellArg "  ok   ${case.say}"}
+                else
+                  echo ${lib.escapeShellArg "  FAIL ${case.say}"}
+                  bad=1
+                fi
+              '') cases}
               [ "$bad" = 0 ] || exit 1
               touch "$out"
             '';
@@ -1051,6 +1118,7 @@
                 base = ./flake-modules/base.nix;
                 hooks = ./flake-modules/hooks.nix;
                 detect = ./flake-modules/detect.nix;
+                optionReference = ./flake-modules/option-reference.nix;
                 libNames = builtins.attrNames (import ./lib.nix);
                 syncedPaths = builtins.attrNames (lib.importJSON ./synced-files.json);
               }
@@ -1064,7 +1132,7 @@
                     bad=1
                   fi
                 }
-                for n in $(grep -ohE '(^|[[:space:]])std-[a-z0-9-]+ =' "$base" "$hooks" "$detect" | tr -d ' =' | sort -u); do
+                for n in $(grep -ohE '(^|[[:space:]])std-[a-z0-9-]+ =' "$base" "$hooks" "$detect" "$optionReference" | tr -d ' =' | sort -u); do
                   want "$n" "a check or hook this standard provides"
                 done
                 for n in $libNames; do

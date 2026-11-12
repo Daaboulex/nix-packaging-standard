@@ -30,6 +30,7 @@ in
   imports = [
     inputs.git-hooks.flakeModule
     (import ./detect.nix lintSystem)
+    (import ./option-reference.nix lintSystem)
   ];
 
   perSystem =
@@ -57,11 +58,9 @@ in
       ruffConfigArg = lib.optionalString (!hasOwnRuffConfig) " --config ${../ruff.toml}";
 
       syncMap = lib.importJSON ../synced-files.json;
-      hasReadmeOptions = builtins.pathExists (src + "/scripts/update-readme-options.sh");
       synced = lib.mapAttrs (_: canon: ../. + "/${canon}") (
         builtins.removeAttrs (lib.filterAttrs (_: canon: canon != null) syncMap) (
-          lib.optional (!hasReadmeOptions) "scripts/update-readme-options.sh"
-          ++ lib.optional isFirstParty updateCaller
+          lib.optional isFirstParty updateCaller
         )
       );
       retired =
@@ -75,6 +74,8 @@ in
         dst:
         if dst == updateCaller then
           "${dst} is an Update caller in a first-party repo: upstream type none gives Update nothing to follow, so every scheduled run only spends runner minutes; delete it"
+        else if dst == "scripts/update-readme-options.sh" then
+          "${dst} is a retired copy: docs/OPTIONS.md is written from the modules named under std.option-reference, by nix run .#std-write-option-reference; delete it"
         else
           "${dst} is a retired copy: the workflows run the standard's own script at the commit that defines them, so this file is never read; delete it";
       retiredPresent = builtins.filter (dst: builtins.pathExists (src + "/${dst}")) retired;

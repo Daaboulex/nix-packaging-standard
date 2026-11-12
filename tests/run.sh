@@ -964,7 +964,7 @@ if command -v nix >/dev/null 2>&1; then
   echo "Test 23: after-lock-update runs the flake's app and stages only what it rewrote"
   HOOK="$STD/after-lock-update.sh"
   NP=$(nix eval --impure --raw --expr "(builtins.getFlake \"$STD\").inputs.nixpkgs.outPath")
-  hook_fixture() { # hook_fixture <dir> <app script, or empty for no apps>
+  hook_fixture() { # hook_fixture <dir> <app script, or empty for no apps> [app name]
     mkdir -p "$1"
     if [ -z "$2" ]; then
       printf '{ outputs = _: { }; }\n' >"$1/flake.nix"
@@ -974,7 +974,7 @@ if command -v nix >/dev/null 2>&1; then
   inputs.nixpkgs.url = "path:$NP";
   outputs = { nixpkgs, ... }: {
     apps = nixpkgs.lib.genAttrs [ "x86_64-linux" "aarch64-linux" ] (system: {
-      after-lock-update = {
+      ${3:-after-lock-update} = {
         type = "app";
         program = "\${nixpkgs.legacyPackages.\${system}.writeShellScript "hook" ''$2''}";
       };
@@ -1001,7 +1001,7 @@ NIX
   hook_fixture "$d" ""
   run_hook "$d"
   check "a flake with no apps is a clean no-op" "0" "$?"
-  check "and says nothing was run" "1" "$(grep -c 'nothing to run' "$d.log")"
+  check "and says so for each of the two apps it looks for" "2" "$(grep -c 'nothing to run' "$d.log")"
 
   d="$WORK/t23b"
   hook_fixture "$d" 'echo new > pinned.txt'
@@ -1026,6 +1026,12 @@ NIX
   (cd "$d" && git add -A)
   if run_hook "$d"; then failed=0; else failed=1; fi
   check "a flake that does not evaluate fails the hook" "1" "$failed"
+
+  d="$WORK/t23f"
+  hook_fixture "$d" 'echo new > pinned.txt' std-write-option-reference
+  run_hook "$d"
+  check "a flake declaring only the option reference writer has it run" "0" "$?"
+  check "and the reference it rewrote is staged" "pinned.txt" "$(cd "$d" && git diff --cached --name-only)"
 else
   echo "Test 23 skipped (nix unavailable)"
 fi

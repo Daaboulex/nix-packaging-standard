@@ -2,22 +2,28 @@
 set -euo pipefail
 
 system=$(nix eval --impure --raw --expr builtins.currentSystem)
-declared=$(nix eval --impure --json --expr \
-  "let f = builtins.getFlake (toString ./.); in f ? apps && f.apps ? \"$system\" && f.apps.\"$system\" ? after-lock-update")
+ran=0
 
-case "$declared" in
-false)
-  echo "after-lock-update: the flake declares no apps.$system.after-lock-update, nothing to run"
-  exit 0
-  ;;
-true) ;;
-*)
-  echo "after-lock-update: could not read the flake's apps: $declared" >&2
-  exit 1
-  ;;
-esac
+for app in after-lock-update std-write-option-reference; do
+  declared=$(nix eval --impure --json --expr \
+    "let f = builtins.getFlake (toString ./.); in f ? apps && f.apps ? \"$system\" && f.apps.\"$system\" ? \"$app\"")
 
-nix run ".#after-lock-update"
+  case "$declared" in
+  false)
+    echo "after-lock-update: the flake declares no apps.$system.$app, nothing to run"
+    ;;
+  true)
+    nix run ".#$app"
+    ran=1
+    ;;
+  *)
+    echo "after-lock-update: could not read the flake's apps: $declared" >&2
+    exit 1
+    ;;
+  esac
+done
+
+[ "$ran" = 1 ] || exit 0
 
 untracked=$(git ls-files --others --exclude-standard)
 if [ -n "$untracked" ]; then

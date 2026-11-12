@@ -191,6 +191,25 @@ against the tree:
   table below is rendered by `flake-modules/detections.nix`, which the options
   read too, and the hook list by `flake-modules/hooks.nix`;
   `std-readme-tables-current` fails when either differs from the page.
+- **Options are listed in `docs/OPTIONS.md`, written from the modules.** A
+  flake that exports a module names it in `perSystem`, under the heading its
+  options are listed under:
+
+  ```nix
+  std.option-reference."NixOS module" = ./module.nix;
+  ```
+
+  `nix run .#std-write-option-reference` writes the file: every visible
+  option with its description, type and default, and its example unless it
+  is a boolean. The README shows the few options a person sets first and
+  links to the file; it carries no option table of its own.
+  `std-option-reference` fails when the file is missing or differs from the
+  modules, when the README does not link to it, when an option has no
+  description, and when a default or example shows a store path or a
+  derivation (it would change with every lock update: write it with
+  `lib.literalExpression`). Maintenance runs the writer after the lock
+  update, so a type nixpkgs words differently cannot leave the file behind.
+  A flake that names no module gets neither the check nor the app.
 - **No history.** A page says what is true now. What a release changed lives
   in its tag message.
 - **A file for an assistant is the exception.** The README is the one source,
@@ -203,7 +222,7 @@ against the tree:
 
 | Module | Provides |
 | --- | --- |
-| `base` | git-hooks gate (every hook in the table below), `formatter`, `devShells.default`, every declared package aliased into `checks` on the systems its `meta.platforms` supports (so `nix flake check` BUILDS it), and these checks: `std-conformance` (synced files byte-match the canonical), `std-no-retired-copies` (no script copy the workflows no longer read), `std-follows-release` (`inputs.std.url` is the `release` branch, `releaseUrl`), `std-update-json` (`.github/update.json` satisfies the schema), `std-devstate` (the baseline `.gitignore` entries are present), `std-devshell-order` (every dev shell pins `PRE_COMMIT_HOME` before it installs the hooks), `std-homestate` (no `home.file` in the home root), `std-meta-maintainers` (maintainers carry the nixpkgs shape), `std-no-fail-open` (no shell shape that reports success while doing nothing), `std-no-deprecated-system` (no `pkgs.system` read), `std-no-host-profile` (no path under the host's profile) |
+| `base` | git-hooks gate (every hook in the table below), `formatter`, `devShells.default`, every declared package aliased into `checks` on the systems its `meta.platforms` supports (so `nix flake check` BUILDS it), and these checks: `std-conformance` (synced files byte-match the canonical), `std-no-retired-copies` (no script copy the workflows no longer read), `std-follows-release` (`inputs.std.url` is the `release` branch, `releaseUrl`), `std-update-json` (`.github/update.json` satisfies the schema), `std-devstate` (the baseline `.gitignore` entries are present), `std-devshell-order` (every dev shell pins `PRE_COMMIT_HOME` before it installs the hooks), `std-homestate` (no `home.file` in the home root), `std-meta-maintainers` (maintainers carry the nixpkgs shape), `std-no-fail-open` (no shell shape that reports success while doing nothing), `std-no-deprecated-system` (no `pkgs.system` read), `std-no-host-profile` (no path under the host's profile), and, where the flake names a module under `std.option-reference`, `std-option-reference` (`docs/OPTIONS.md` is what the modules declare, and the README links to it) |
 
 The hooks `base` installs, rendered from `flake-modules/hooks.nix`:
 
@@ -263,13 +282,13 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `.github/workflows/package-maintenance.yml` | *(reusable, not synced)* | `flake.lock` refresh on the repo's cadence: heal probe, every declared system evaluated, the checks built on a runner per declared system, pushed only if all are green |
 | `update.sh` | *(run from here; retired copy `scripts/update.sh`)* | Detect + apply upstream updates. A `custom` repo keeps its own `scripts/update.sh`, which the Update workflow runs instead |
 | `heal-overlays.sh` | *(run from here; retired copy `scripts/heal-overlays.sh`)* | Probe every temporary divergence against the updated inputs and drop the healed ones |
-| `after-lock-update.sh` | *(run from here; retired copy `scripts/after-lock-update.sh`)* | Run the flake's `apps.<system>.after-lock-update` after the lock update, when it declares one, and stage the tracked files it rewrote |
+| `after-lock-update.sh` | *(run from here; retired copy `scripts/after-lock-update.sh`)* | Run the flake's `apps.<system>.after-lock-update` and then its `std-write-option-reference` after the lock update, each when the flake declares it, and stage the tracked files they rewrote |
 | `classify-build-failure.sh` | *(run from here; retired copy `scripts/classify-build-failure.sh`)* | Name a red run's failure class and enumerate its failed targets |
 | `retry-transient.sh` | *(run from here)* | Run an updater or a build, retrying only a `transient-infra` failure within a time budget, optionally from the checked-out tree, and leave the final attempt as the log |
 | `declared-runners.sh` | *(run from here; retired copy `scripts/declared-runners.sh`)* | Name a GitHub runner for every system the flake declares checks on, refusing an unknown system or a flake that does not evaluate |
 | `evaluate-every-system.sh` | *(run from here)* | Evaluate every system the flake declares with import from derivation forbidden, so a check that reads a built file at evaluation fails on every store alike and the failure is named; CI's plan job, the Maintenance refresh and `fleet-roll` run it |
 | `report-failure.sh` | *(run from here; retired copy `scripts/report-failure.sh`)* | Keep one open issue per failure: file it the first day, then rewrite it each failing run with the days since it opened, commenting only when the failure changes |
-| `update-readme-options.sh` | `scripts/update-readme-options.sh` | Only where a repo already carries it: splice an options reference into the README |
+| `flake-modules/option-reference.nix` | *(imported by `base`; retired copy `scripts/update-readme-options.sh`)* | Write and check `docs/OPTIONS.md` from the modules a flake names under `std.option-reference` |
 | `.envrc` | `.envrc` | `use flake`, so nix-direnv carries the dev-state pins into every entry point |
 | `.editorconfig` | `.editorconfig` | The fleet's editor defaults |
 | `update.schema.json` | *(reference, not synced)* | JSON Schema for `update.json` |
@@ -1291,6 +1310,8 @@ plus a `CHANGELOG.md`).
   outside `flake.lock`, such as meson wrap files, rewrites it from the new lock
   there; the app may only rewrite tracked files, an untracked file fails the
   run, and what it rewrote rides the same verification and commit as the lock),
+  then `std-write-option-reference` under the same terms where the flake
+  names a module,
   the heal probe, every declared system evaluated with import from derivation
   forbidden (`evaluate-every-system.sh`), then the checks built on a runner
   for every declared system; push only if every one is green, else file or

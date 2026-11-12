@@ -4,7 +4,7 @@
   ".github/workflows/update.yml": "callers/update.yml",
   ".envrc": ".envrc",
   ".editorconfig": ".editorconfig",
-  "scripts/update-readme-options.sh": "update-readme-options.sh",
+  "scripts/update-readme-options.sh": null,
   "scripts/update.sh": null,
   "scripts/heal-overlays.sh": null,
   "scripts/after-lock-update.sh": null,

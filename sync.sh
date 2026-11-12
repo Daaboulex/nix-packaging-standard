@@ -53,9 +53,6 @@ for repo in "${targets[@]}"; do
   }
   rtype=$(jq -r '.upstream.type // ""' "$dir/.github/update.json")
   for src in "${!FILES[@]}"; do
-    if [ "$src" = "update-readme-options.sh" ] && [ ! -f "$dir/${FILES[$src]}" ]; then
-      continue
-    fi
     if [ "$src" = "callers/update.yml" ] && [ "$rtype" = none ]; then
       continue
     fi
