@@ -1,0 +1,58 @@
+# CI for the canonical Nix Packaging Standard itself. The fleet's drift-check
+# guarantees each repo MATCHES this canonical; this guarantees the canonical is
+# CORRECT — shell soundness, a valid schema, the schema accepts every supported
+# config pattern, update.sh's logic passes behavioral regression tests, and the
+# flake's own checks build. Without that last one the repo declared checks that
+# only ever ran on someone's laptop, which is the very defect std-no-fail-open
+# and std-patch-assertions exist to catch.
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DeterminateSystems/determinate-nix-action@16f94ba7aae399b9f9077c254b6719ec6de7e3e3 # v3.24.2
+        with:
+          extra-conf: lazy-trees = false
+
+      # The canonical repo holds itself to the formatting and workflow linting
+      # it hands the fleet; without this it was the one repo exempt from its
+      # own gate, and lib.nix had drifted unformatted.
+      - name: Nix formatting
+        run: |
+          nix fmt
+          git diff --exit-code --stat
+
+      - name: Shell syntax (bash -n)
+        run: |
+          git ls-files -z '*.sh' | xargs -0 -n1 nix run --inputs-from . nixpkgs#bash -- -n
+
+      # Every tool comes from this flake's own lock, never from the runner
+      # image: a bare `shellcheck` ran the image's older build, which reports
+      # findings the pinned one does not, so this step failed on code that is
+      # clean locally and nothing said why.
+      - name: ShellCheck
+        run: git ls-files -z '*.sh' | xargs -0 nix run --inputs-from . nixpkgs#shellcheck --
+
+      - name: Schema is a valid JSON Schema
+        run: nix run --inputs-from . nixpkgs#check-jsonschema -- --check-metaschema update.schema.json
+
+      - name: Every supported config pattern satisfies the schema
+        run: nix run --inputs-from . nixpkgs#check-jsonschema -- --schemafile update.schema.json tests/configs/*.json
+
+      - name: update.sh behavioral regression tests
+        run: bash tests/run.sh
+
+      - name: Flake checks (patch assertions, fail-open patterns, fixtures, hooks)
+        run: nix flake check --keep-going --print-build-logs
+
+  package-ci:
+    uses: ./.github/workflows/package-ci.yml

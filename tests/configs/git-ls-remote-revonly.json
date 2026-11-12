@@ -1,0 +1,12 @@
+{
+  "package": "example-git",
+  "upstream": {
+    "type": "git-ls-remote",
+    "url": "https://gitlab.example.org/acme/example.git",
+    "branch": "main"
+  },
+  "packageFile": "version.json",
+  "versionScheme": "rev-only",
+  "hashes": [{ "field": "hash", "file": "version.json" }],
+  "verify": { "binary": null, "args": null }
+}

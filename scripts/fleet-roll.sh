@@ -1,0 +1,492 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+usage() {
+  cat <<'USAGE'
+fleet-roll - adopt the standard's release branch head across every consumer repo.
+
+  PKG_REPOS_DIR=/path/to/repos ./scripts/fleet-roll.sh [options] [repo...]
+
+  The target is the commit origin/release points to, published by
+  scripts/release.sh. Each repo's std input is set to follow the release
+  branch, its lock is moved to that commit, and the synced files are copied
+  from that same commit, never from this working tree.
+  --execute      commit and push. WITHOUT IT THIS IS A DRY RUN: each repo is
+                 bumped, synced and verified, then restored to its clean state.
+  --notes <file> the commit body, required by --execute. What the release
+                 changes is the author's to state; the script will not invent it.
+  --skip-build   skip the local canonical build. Refused with --execute, since
+                 pushing unverified is the thing this exists to prevent.
+  --build-on-ci  evaluate every declared system here and leave the build to
+                 each repo's CI on push, the path a repo with no output for
+                 this host always takes; for a roll left to run unattended.
+  --sync         fast-forward a clone that is clean and strictly behind its
+                 remote. A clone that is ahead, diverged or dirty is still a
+                 failure; only a provably lossless fast-forward is taken.
+  repo...        restrict to these repos (default: every consumer).
+
+Scope: every directory under PKG_REPOS_DIR holding a .github/update.json.
+A repo already following the release branch, locked to its head and in sync
+is reported and left alone. A repo with no git
+remote (an unpushed WIP) is rolled locally and pushed nowhere, the way
+fleet-audit audits such a repo locally and skips it remotely.
+
+Exit: 0 = every targeted repo rolled or dry-ran clean; 1 = at least one repo
+failed; 2 = usage or environment error. Fails closed: a dirty repo, a repo out
+of sync with its remote, a missing release branch, or a failing build is a
+failure and is never rolled past.
+USAGE
+}
+
+STD="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+EXECUTE=0
+SKIP_BUILD=0
+BUILD_ON_CI=0
+SYNC=0
+NOTES=""
+declare -a TARGETS=()
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --execute) EXECUTE=1 ;;
+  --skip-build) SKIP_BUILD=1 ;;
+  --build-on-ci) BUILD_ON_CI=1 ;;
+  --sync) SYNC=1 ;;
+  --notes)
+    shift
+    NOTES="${1:-}"
+    ;;
+  -*)
+    echo "fleet-roll: unknown option '$1'" >&2
+    exit 2
+    ;;
+  *) TARGETS+=("$1") ;;
+  esac
+  shift
+done
+
+REPOS_DIR="${PKG_REPOS_DIR:?set PKG_REPOS_DIR to the directory holding the packaging-repo clones}"
+[ -d "$REPOS_DIR" ] || {
+  echo "fleet-roll: PKG_REPOS_DIR '$REPOS_DIR' is not a directory" >&2
+  exit 2
+}
+
+for tool in git nix jq; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    echo "fleet-roll: required tool '$tool' not found" >&2
+    exit 2
+  }
+done
+
+if [ "$BUILD_ON_CI" -eq 1 ] && [ "$SKIP_BUILD" -eq 1 ]; then
+  echo "fleet-roll: --build-on-ci with --skip-build is refused; --build-on-ci still evaluates every system before a push" >&2
+  exit 2
+fi
+if [ "$EXECUTE" -eq 1 ] && [ "$SKIP_BUILD" -eq 1 ]; then
+  echo "fleet-roll: --execute with --skip-build is refused; a push must be verified" >&2
+  exit 2
+fi
+if [ "$EXECUTE" -eq 1 ]; then
+  if [ -z "$NOTES" ] || [ ! -f "$NOTES" ]; then
+    echo "fleet-roll: --execute requires --notes <file> holding the commit body" >&2
+    exit 2
+  fi
+fi
+git -C "$STD" fetch --quiet origin refs/heads/release:refs/remotes/origin/release || {
+  echo "fleet-roll: could not fetch the standard's release branch; publish one with scripts/release.sh" >&2
+  exit 2
+}
+RELEASE_SHA=$(git -C "$STD" rev-parse refs/remotes/origin/release)
+TAG=$(git -C "$STD" tag --points-at "$RELEASE_SHA" --list 'v*' | sort -V | tail -1)
+[ -n "$TAG" ] || {
+  echo "fleet-roll: origin/release ($RELEASE_SHA) carries no version tag, so it was not published by scripts/release.sh" >&2
+  exit 2
+}
+
+rolled=0
+skipped=0
+retired=0
+failed=0
+declare -a FAILED_REPOS=()
+
+FAST_BUILD_JOBS=${FAST_BUILD_JOBS:-8}
+STALL_TIMEOUT=${STALL_TIMEOUT:-900}
+STALL_POLL=${STALL_POLL:-30}
+
+transient() {
+  local cls
+  cls=$(mktemp)
+  GITHUB_OUTPUT="$cls" bash "$STD/classify-build-failure.sh" "$1"
+  grep -qx 'class=transient-infra' "$cls"
+}
+LOGDIR=$(mktemp -d -t fleet-roll-XXXXXX)
+RELEASE_TREE="$LOGDIR/std"
+mkdir -p "$RELEASE_TREE"
+git -C "$STD" archive "$RELEASE_SHA" | tar -x -C "$RELEASE_TREE" || {
+  echo "fleet-roll: could not extract $RELEASE_SHA from $STD" >&2
+  exit 2
+}
+RELEASE_URL=$(nix eval --raw --file "$RELEASE_TREE/lib.nix" releaseUrl) || {
+  echo "fleet-roll: $TAG names no releaseUrl in lib.nix, so it predates the release branch" >&2
+  exit 2
+}
+
+note() { printf '  %s\n' "$1"; }
+fail_repo() {
+  printf 'FAIL  %s: %s\n' "$1" "$2"
+  failed=$((failed + 1))
+  FAILED_REPOS+=("$1")
+}
+
+restore() {
+  local dir="$1"
+  git -C "$dir" reset --quiet --hard HEAD || echo "fleet-roll: could not reset $dir to HEAD; it is left dirty" >&2
+  local f
+  while IFS= read -r f; do
+    [ -n "$f" ] && rm -f "$dir/$f"
+  done < <(git -C "$dir" ls-files --others --exclude-standard)
+}
+
+# An interrupted roll (Ctrl-C, SIGTERM, usage limit, crash) otherwise leaves the
+# repo it was mid-edit dirty, and the NEXT roll refuses that repo with "working
+# tree is not clean". That stranding has cost two runs, so it is trapped here.
+IN_FLIGHT=""
+# shellcheck disable=SC2329,SC2317
+on_abort() {
+  local rc=$?
+  if [ -n "$IN_FLIGHT" ] && [ -n "$(git -C "$IN_FLIGHT" status --porcelain 2>/dev/null)" ]; then
+    printf 'fleet-roll: interrupted while editing %s -- restoring it to a clean tree\n' "$IN_FLIGHT" >&2
+    restore "$IN_FLIGHT"
+    if [ -n "$(git -C "$IN_FLIGHT" status --porcelain 2>/dev/null)" ]; then
+      printf 'fleet-roll: FAILED to restore %s; it is still dirty, inspect before re-running\n' "$IN_FLIGHT" >&2
+    fi
+  fi
+  exit "$rc"
+}
+trap on_abort EXIT INT TERM HUP
+
+# A pre-commit hook records an ABSOLUTE nix store path that nix-collect-garbage
+# can remove, and no consumer clone is gcrooted (none has .direnv), so every hook
+# is one GC away from breaking. A DANGLING hook fails the commit loudly. A MISSING
+# hook is worse: the commit succeeds and the repo's own gate never runs at all.
+hook_live() {
+  local hook="$1/.git/hooks/pre-commit" p
+  [ -f "$hook" ] || return 1
+  p=$(grep -oE '/nix/store/[a-z0-9]+-[^/]*/bin/pre-commit' "$hook" 2>/dev/null | head -1)
+  [ -n "$p" ] && [ -e "$p" ] && [ -e "$1/.pre-commit-config.yaml" ]
+}
+
+# The hook set is a function of the standard the consumer pins, so a pin bump
+# installs the hooks of the tag being adopted. A consumer that declares no
+# output for this host has no dev shell here; its hook set is then built for
+# the host from that same pinned standard.
+refresh_hook() {
+  local dir="$1"
+  [ -L "$dir/.pre-commit-config.yaml" ] && unlink "$dir/.pre-commit-config.yaml"
+  (cd "$dir" && nix develop --command true) >>"$steplog" 2>&1 ||
+    (cd "$dir" && nix develop --impure --expr \
+      "import $RELEASE_TREE/flake-modules/host-hooks.nix { consumer = $dir; system = builtins.currentSystem; }" \
+      --command true) >>"$steplog" 2>&1
+  hook_live "$dir"
+}
+
+ensure_hook() {
+  local dir="$1"
+  hook_live "$dir" && return 0
+  printf '  pre-commit hook missing or dangling; reinstalling from the devshell\n'
+  refresh_hook "$dir"
+}
+
+# A flake with no checks for this host cannot be built here; it is verified by
+# evaluating every system it declares, and its build is CI's on push.
+foreign_flake() {
+  ! (cd "$1" && nix eval --raw ".#checks.$2" --apply 'x: "declared"') >/dev/null 2>&1
+}
+
+# A NAMED target that is not a consumer is an error, not a skip: the per-repo
+# loop below skips a non-consumer silently, which is right for the discovered
+# set (it sweeps every directory) and wrong for an explicit one -- asking for
+# two repos and rolling one must never report success.
+EXPLICIT_TARGETS=0
+[ "${#TARGETS[@]}" -gt 0 ] && EXPLICIT_TARGETS=1
+
+if [ "${#TARGETS[@]}" -eq 0 ]; then
+  while IFS= read -r d; do TARGETS+=("$(basename "$d")"); done \
+    < <(find "$REPOS_DIR" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+fi
+
+if [ "$EXPLICIT_TARGETS" -eq 1 ]; then
+  declare -a MISSING=()
+  for repo in "${TARGETS[@]}"; do
+    [ -e "$REPOS_DIR/$repo/.git" ] && [ -f "$REPOS_DIR/$repo/.github/update.json" ] ||
+      MISSING+=("$repo")
+  done
+  if [ "${#MISSING[@]}" -gt 0 ]; then
+    printf 'fleet-roll: named but not a consumer under %s: %s\n' \
+      "$REPOS_DIR" "${MISSING[*]}" >&2
+    echo "fleet-roll: refusing a partial roll; re-run with names that exist" >&2
+    exit 2
+  fi
+fi
+
+if [ "$EXECUTE" -eq 1 ]; then
+  printf '== fleet-roll %s -- EXECUTE (commits and pushes) ==\n' "$TAG"
+else
+  printf '== fleet-roll %s -- DRY RUN (nothing is committed or pushed) ==\n' "$TAG"
+fi
+
+for repo in "${TARGETS[@]}"; do
+  dir="$REPOS_DIR/$repo"
+  [ -e "$dir/.git" ] || continue
+  [ -f "$dir/.github/update.json" ] || continue
+  IN_FLIGHT="$dir"
+  if command -v gh >/dev/null 2>&1 &&
+    [ "$(cd "$dir" && gh repo view --json isArchived --jq .isArchived 2>/dev/null)" = true ]; then
+    printf 'skip  %s: archived upstream, retired from the fleet\n' "$repo"
+    retired=$((retired + 1))
+    continue
+  fi
+
+  if [ -n "$(git -C "$dir" status --porcelain)" ]; then
+    fail_repo "$repo" "working tree is not clean; refusing to roll over local work"
+    continue
+  fi
+  branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD)
+  if [ "$branch" != main ]; then
+    fail_repo "$repo" "on branch '$branch', expected main"
+    continue
+  fi
+  steplog="$LOGDIR/$repo.steps.log"
+  # An unpushed WIP has no remote to sync with or push to, and fleet-audit
+  # already audits such a repo locally and skips it remotely. Rolled the same
+  # way: no fetch, no push, the adoption commit lands locally and the repo is
+  # reported as carrying it, so a remoteless consumer cannot sit on an old tag
+  # unseen.
+  REMOTELESS=0
+  if ! git -C "$dir" remote get-url origin >/dev/null 2>&1; then
+    REMOTELESS=1
+  else
+    if ! git -C "$dir" fetch --quiet origin >"$steplog" 2>&1; then
+      fail_repo "$repo" "cannot reach origin: $(tail -1 "$steplog")  log: $steplog"
+      continue
+    fi
+    counts=$(git -C "$dir" rev-list --left-right --count "origin/main...HEAD" 2>/dev/null) || counts=""
+    behind=$(awk '{print $1}' <<<"$counts")
+    ahead=$(awk '{print $2}' <<<"$counts")
+    if [ "${behind:-1}" != 0 ] && [ "${ahead:-1}" = 0 ] && [ "$SYNC" -eq 1 ]; then
+      if git -C "$dir" merge --ff-only --quiet origin/main 2>/dev/null; then
+        printf 'sync  %s: fast-forwarded %s commit(s)\n' "$repo" "$behind"
+        counts=$(git -C "$dir" rev-list --left-right --count "origin/main...HEAD" 2>/dev/null) || counts=""
+        behind=$(awk '{print $1}' <<<"$counts")
+        ahead=$(awk '{print $2}' <<<"$counts")
+      else
+        fail_repo "$repo" "fast-forward refused by git despite a clean tree behind origin"
+        continue
+      fi
+    fi
+    if [ "${behind:-1}" != 0 ] || [ "${ahead:-1}" != 0 ]; then
+      fail_repo "$repo" "out of sync with origin/main (behind=${behind:-?} ahead=${ahead:-?}); --sync fast-forwards a clean clone that is only behind"
+      continue
+    fi
+  fi
+
+  current=$(grep -oE '"github:Daaboulex/nix-packaging-standard[^"]*"' "$dir/flake.nix" | head -1 | tr -d '"')
+  if [ -z "$current" ]; then
+    fail_repo "$repo" "flake.nix names no github:Daaboulex/nix-packaging-standard input"
+    continue
+  fi
+  locked=$(jq -r '.nodes.std.locked.rev // empty' "$dir/flake.lock")
+  if [ "$current" = "$RELEASE_URL" ] && [ "$locked" = "$RELEASE_SHA" ] &&
+    PKG_REPOS_DIR="$REPOS_DIR" bash "$RELEASE_TREE/sync.sh" --check "$repo" >>"$steplog" 2>&1; then
+    printf 'ok    %s: already at %s\n' "$repo" "$TAG"
+    skipped=$((skipped + 1))
+    continue
+  fi
+
+  printf '\n-- %s: %s at %s -> %s\n' "$repo" "$current" "${locked:-(not locked)}" "$TAG"
+
+  if ! sed -i -E "s#\"github:Daaboulex/nix-packaging-standard[^\"]*\"#\"${RELEASE_URL}\"#" "$dir/flake.nix"; then
+    fail_repo "$repo" "could not rewrite the pin in flake.nix"
+    restore "$dir"
+    continue
+  fi
+  if ! grep -qF "\"$RELEASE_URL\"" "$dir/flake.nix"; then
+    fail_repo "$repo" "pin rewrite did not take"
+    restore "$dir"
+    continue
+  fi
+
+  if ! (cd "$dir" && nix flake update std >>"$steplog" 2>&1); then
+    fail_repo "$repo" "nix flake update std failed: $(tail -1 "$steplog")  log: $steplog"
+    restore "$dir"
+    continue
+  fi
+  locked=$(jq -r '.nodes.std.locked.rev // empty' "$dir/flake.lock")
+  if [ "$locked" != "$RELEASE_SHA" ]; then
+    fail_repo "$repo" "the lock resolved std to '${locked:-nothing}', not the release head $RELEASE_SHA; the release branch moved during the roll"
+    restore "$dir"
+    continue
+  fi
+
+  if ! PKG_REPOS_DIR="$REPOS_DIR" bash "$RELEASE_TREE/sync.sh" "$repo" >>"$steplog" 2>&1; then
+    fail_repo "$repo" "sync.sh failed: $(tail -1 "$steplog")  log: $steplog"
+    restore "$dir"
+    continue
+  fi
+
+  if ! refresh_hook "$dir"; then
+    fail_repo "$repo" "the hook set of $TAG could not be installed, so the commit would run the old tag's gate or none"
+    restore "$dir"
+    continue
+  fi
+
+  if ! git -C "$dir" add -A; then
+    fail_repo "$repo" "could not stage the adoption, so a file sync.sh added would be invisible to the build and missing from the commit"
+    restore "$dir"
+    continue
+  fi
+  note "changed: $(git -C "$dir" diff --cached --name-only | tr '\n' ' ')"
+
+  sys=$(nix eval --impure --raw --expr 'builtins.currentSystem' 2>/dev/null)
+  FOREIGN=0
+  if [ "$SKIP_BUILD" -eq 0 ] && { [ "$BUILD_ON_CI" -eq 1 ] || foreign_flake "$dir" "$sys"; }; then
+    FOREIGN=1
+    if [ "$BUILD_ON_CI" -eq 1 ]; then why="--build-on-ci"; else why="no output for $sys here"; fi
+    evallog="$LOGDIR/$repo.eval.log"
+    if (cd "$dir" && bash "$STD/evaluate-every-system.sh") >"$evallog" 2>&1; then
+      note "verify: $why; every declared system evaluates, the build is CI's on push"
+    else
+      fail_repo "$repo" "eval over every system failed: $(tail -1 "$evallog")  log: $evallog"
+      restore "$dir"
+      continue
+    fi
+  elif [ "$SKIP_BUILD" -eq 0 ]; then
+    buildlog="$LOGDIR/$repo.log"
+    # -j is nix-fast-build's own worker count, NOT nix's max-jobs, but it
+    # DEFAULTS to it: on a max-jobs=0 host it starts zero build workers and
+    # then waits on a queue nothing will ever drain. Never omit it, never 0.
+    # Bound on SILENCE, not elapsed time: a heavy build and a hang are the same
+    # duration, so only absence of output distinguishes them.
+    build_one() {
+      (cd "$dir" && nix run --inputs-from . nixpkgs#nix-fast-build -- \
+        -j "$FAST_BUILD_JOBS" --skip-cached --no-nom --flake ".#checks.$sys") >"$buildlog" 2>&1 &
+      local bpid=$! last=-1 now quiet=0
+      while kill -0 "$bpid" 2>/dev/null; do
+        sleep "$STALL_POLL"
+        now=$(stat -c %s "$buildlog" 2>/dev/null || echo 0)
+        if [ "$now" != "$last" ]; then
+          last=$now
+          quiet=0
+        else
+          quiet=$((quiet + STALL_POLL))
+          if [ "$quiet" -ge "$STALL_TIMEOUT" ]; then
+            kill -TERM "$bpid" 2>/dev/null || true
+            wait "$bpid" 2>/dev/null || true
+            return 124
+          fi
+        fi
+      done
+      wait "$bpid"
+    }
+    build_one
+    brc=$?
+    if [ "$brc" -eq 124 ]; then
+      fail_repo "$repo" "build produced no output for ${STALL_TIMEOUT}s (stalled)  log: $buildlog"
+      restore "$dir"
+      continue
+    fi
+    if [ "$brc" -ne 0 ] && transient "$buildlog"; then
+      note "build: transient fetch failure, retrying once in 60s"
+      sleep 60
+      build_one
+      brc=$?
+    fi
+    if [ "$brc" -ne 0 ]; then
+      why=$(grep -oiE 'HTTP error [0-9]{3}|error: [0-9]{3}|Too Many Requests|cannot download|unable to download|hash mismatch|Failed attributes: [^ ]*|builder for .* failed' "$buildlog" | sort -u | head -2 | tr '\n' ';')
+      if transient "$buildlog"; then
+        fail_repo "$repo" "TRANSIENT fetch failure, still failing after one retry: ${why:-see log}  log: $buildlog"
+      else
+        fail_repo "$repo" "build failed: ${why:-see log}  log: $buildlog"
+      fi
+      restore "$dir"
+      continue
+    fi
+    note "build: green"
+  else
+    note "build: SKIPPED (not eligible to push)"
+  fi
+
+  if [ "$EXECUTE" -eq 1 ]; then
+    if ! ensure_hook "$dir"; then
+      fail_repo "$repo" "pre-commit hook missing or dangling and could not be reinstalled; committing would bypass the repo's own gate"
+      restore "$dir"
+      continue
+    fi
+    msg=$(mktemp)
+    {
+      printf 'chore(std): adopt nix-packaging-standard %s\n\n' "$TAG"
+      cat "$NOTES"
+      if [ "$FOREIGN" -eq 1 ] && [ "$BUILD_ON_CI" -eq 1 ]; then
+        printf '\nTest: nix flake check --no-build --all-systems without import from derivation, rolled with --build-on-ci; the build is CI'"'"'s on push\n'
+      elif [ "$FOREIGN" -eq 1 ]; then
+        printf '\nTest: nix flake check --no-build --all-systems without import from derivation, where no output of this flake builds; the build is CI'"'"'s on push\n'
+      else
+        printf '\nTest: the canonical build, run locally before this push\n'
+      fi
+    } >"$msg"
+    if ! git -C "$dir" commit --quiet -a -F "$msg"; then
+      rm -f "$msg"
+      fail_repo "$repo" "commit failed"
+      restore "$dir"
+      continue
+    fi
+    rm -f "$msg"
+    if [ "$REMOTELESS" -eq 1 ]; then
+      note "committed: $(git -C "$dir" log -1 --format=%h) (no remote; nothing to push)"
+      rolled=$((rolled + 1))
+      continue
+    fi
+    perr=$(mktemp)
+    git -C "$dir" push origin main 2>&1 | tee "$perr"
+    prc=${PIPESTATUS[0]}
+    if [ "$prc" -ne 0 ]; then
+      git -C "$dir" reset --hard --quiet HEAD~1
+      why=$(grep -m1 -E "^(remote: )?(error|fatal|! \[)" "$perr" | sed 's/^[[:space:]]*//')
+      if grep -qE "pre-push|hook declined|std-home-proof" "$perr"; then
+        why="this repo's own pre-push hook refused it: ${why:-see the output above}"
+      fi
+      rm -f "$perr"
+      fail_repo "$repo" "push failed: ${why:-no error text captured}; commit undone, nothing left behind"
+      continue
+    fi
+    rm -f "$perr"
+    note "pushed: $(git -C "$dir" log -1 --format=%h)"
+  else
+    restore "$dir"
+    if [ -n "$(git -C "$dir" status --porcelain)" ]; then
+      fail_repo "$repo" "dry run could not restore a clean tree; inspect before re-running"
+      continue
+    fi
+    note "restored: clean"
+  fi
+  rolled=$((rolled + 1))
+done
+IN_FLIGHT=""
+
+printf '\n== summary ==\n'
+printf 'rolled: %s   already at %s: %s   retired: %s   failed: %s\n' "$rolled" "$TAG" "$skipped" "$retired" "$failed"
+if [ "$failed" -gt 0 ]; then
+  printf 'failed repos: %s\n' "${FAILED_REPOS[*]}"
+  printf 'build logs kept in: %s\n' "$LOGDIR"
+  exit 1
+fi
+rm -rf "$LOGDIR"
+if [ "$EXECUTE" -eq 0 ]; then
+  printf 'DRY RUN -- nothing was committed or pushed. Re-run with --execute --notes <file>.\n'
+fi
+exit 0

@@ -1,0 +1,14 @@
+{
+    "files": {
+        "./m.py": [
+            {
+                "code": "reportReturnType",
+                "range": {
+                    "startColumn": 11,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            }
+        ]
+    }
+}

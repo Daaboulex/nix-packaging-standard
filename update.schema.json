@@ -1,0 +1,351 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nix Packaging Standard — .github/update.json",
+  "description": "Config consumed by the Nix Packaging Standard update.sh. Canonical repo: github.com/Daaboulex/nix-packaging-standard.",
+  "type": "object",
+  "required": [
+    "package",
+    "upstream"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "package": {
+      "type": "string",
+      "description": "Package / repo name."
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Canonical GitHub repo description, applied by sync-meta.sh. Convention: '<Upstream Name> packaged for NixOS — <one concise clause>' (HM-only: '… Home Manager module — …'; original projects describe directly). No cross-repo references, no marketing fluff, one clause."
+    },
+    "topics": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]*$"
+      },
+      "description": "Canonical GitHub repo topics, applied by sync-meta.sh. Convention: 'nix', 'nixos', 'flake' baseline + 'nixos-module'/'home-manager' where applicable + the software name + a few domain topics. Lowercase, hyphenated."
+    },
+    "platforms": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Documented exceptions to the fleet's canonical architecture set (x86_64-linux + aarch64-linux). The SUPPORTED set is the flake's `systems` — the executable truth CI builds; this field carries only the REASON each canonical arch the repo does NOT build is dropped. Absent: the repo builds the full canonical set. fleet-audit binds the two — a canonical arch missing from `systems` with no reason here is a silent drop (RED); a reason for an arch the flake DOES build is stale (RED).",
+      "properties": {
+        "aarch64-linux": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One-line reason this repo does not build aarch64-linux (e.g. 'amd64-only upstream .deb', 'x86-only asm in upstream Rust', 'no pkgsi686Linux on aarch64'). 'untested' is not a reason — declare it in `systems` and let the arm runner verify instead."
+        },
+        "x86_64-linux": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One-line reason this repo does not build x86_64-linux (e.g. an upstream that ships aarch64 binaries only). The same rule applies as for aarch64: state the reason, never leave the drop silent."
+        }
+      }
+    },
+    "upstream": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "github-release",
+            "github-tag",
+            "github-commit",
+            "gitlab-tag",
+            "gitlab-commit",
+            "gitea-commit",
+            "git-ls-remote",
+            "none",
+            "custom"
+          ]
+        },
+        "owner": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string",
+          "description": "GitLab/Gitea host."
+        },
+        "project": {
+          "type": "string",
+          "description": "GitLab project path."
+        },
+        "url": {
+          "type": "string",
+          "description": "git-ls-remote URL."
+        },
+        "branch": {
+          "type": "string",
+          "description": "Branch for *-commit types (default: main)."
+        },
+        "tagFilter": {
+          "type": "string",
+          "default": ".*",
+          "description": "ERE matched against release/tag names (github-release, github-tag). Selects the newest matching tag — pin to one namespace when upstream publishes several (e.g. \"^[0-9]\" to skip \"android/*\"). Default \".*\" matches all."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "enum": [
+                  "github-release",
+                  "github-tag",
+                  "github-commit"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "owner",
+              "repo"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "enum": [
+                  "gitlab-tag",
+                  "gitlab-commit"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "project"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "gitea-commit"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "host",
+              "owner",
+              "repo"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "git-ls-remote"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "url"
+            ]
+          }
+        }
+      ]
+    },
+    "packageFile": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": "package.nix",
+      "description": "File `nix build .#default` centers on. null/omitted for module-only or non-building repos (upstream type none/trackOnly)."
+    },
+    "versionFile": {
+      "type": "string",
+      "description": "File holding the canonical version literal (default: packageFile)."
+    },
+    "versionAttr": {
+      "type": "string",
+      "default": "version",
+      "description": "Attribute name to match — handles `version = \"x\"` and parameterized `<attr> ? \"x\"`."
+    },
+    "revFile": {
+      "type": "string",
+      "description": "File holding the package src `rev` literal for commit-tracked upstreams (default: versionFile). Set it when several `rev = \"...\"` literals exist so the package src rev is bumped, not a dependency's."
+    },
+    "majorPattern": {
+      "type": "string",
+      "description": "ERE matching the whole version with one group, the major line (e.g. \"GE-Proton([0-9]+)-.*\"). When the newest tag's group differs from the current version's, the updater copies the rolling block of versionFile (between `# std:rolling-begin` and `# std:rolling-end`, minus the version line and the markers) into the pins block right after `# std:pins-begin`, under the outgoing version, before it writes the new one, so a channel per major keeps resolving the day a new major lands. Needs both marker pairs in versionFile; the pattern may not contain `|`."
+    },
+    "versionScheme": {
+      "enum": [
+        "literal",
+        "unstable-date",
+        "rev-only"
+      ],
+      "default": "literal",
+      "description": "How the version literal is written. 'literal': the upstream string verbatim (a bare 7-char SHA for commit-tracked repos). 'unstable-date': '<base>-unstable-<YYYY-MM-DD>' (nixpkgs VCS-snapshot convention), where <base> is upstream's newest tagFilter-matching tag, refetched on every bump — commit-tracked types only; comparison is by rev. 'rev-only': bump rev (+ hash + date) and LEAVE the human-set version string untouched (git-snapshot packages like mesa-git whose version is upstream's self-reported MESA_VERSION); commit-tracked types only; comparison is by rev."
+    },
+    "versionBase": {
+      "type": "string",
+      "description": "FALLBACK base version prefix for versionScheme 'unstable-date' (e.g. '2.0.0'). The base is normally upstream's newest tagFilter-matching tag, refetched on every bump, so an upstream release cannot leave it understating the snapshot; this value is read only when upstream publishes no tag, or for a commit-tracked type with no tag API (gitlab-commit, gitea-commit, git-ls-remote). With neither, the base is derived by stripping any '-unstable-*' suffix from the current version."
+    },
+    "trackOnly": {
+      "type": "boolean",
+      "default": false,
+      "description": "Hand-mirrored repos with no buildable artifact: the updater only DETECTS upstream movement (against trackFile/trackKey) and files a 'remirror-needed' reminder issue — it never writes, builds, or advances a version. Requires a commit-tracked upstream type."
+    },
+    "trackFile": {
+      "type": "string",
+      "default": "upstream-version.json",
+      "description": "trackOnly: JSON file recording the last-mirrored upstream marker."
+    },
+    "trackKey": {
+      "type": "string",
+      "default": "commit",
+      "description": "trackOnly: key in trackFile holding the recorded upstream commit."
+    },
+    "hashes": {
+      "type": "array",
+      "description": "SRI hash fields in evaluation-dependency order (source first).",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Bare field name — auto-located in the first *.nix file declaring it."
+          },
+          {
+            "type": "object",
+            "required": [
+              "field",
+              "file"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "file": {
+                "type": "string"
+              }
+            },
+            "description": "Explicit placement when a field name appears in multiple files. `file` may be a .json (e.g. version.json) for a JSON-resident hash (\"field\": \"sha256-...\"); required there since the bare-string form only scans *.nix."
+          }
+        ]
+      }
+    },
+    "variantAssets": {
+      "type": "object",
+      "required": [
+        "assetPrefix"
+      ],
+      "additionalProperties": false,
+      "description": "Multi-arch prebuilt-binary release mode (github-release only, mutually exclusive with `hashes`). The updater enumerates the newest matching release's assets, takes each <variant> from <assetPrefix><tag>-<variant><assetSuffix>, prefetches it unpacked (the FOD hash a fetchzip yields), and regenerates the marker-delimited rolling `variants` attrset in sourceFile — between `# std:variants-begin` and `# std:variants-end`. A newly published variant (a future x86_64_v4) is picked up with no config change; a dropped one disappears; pins outside the markers are never touched.",
+      "properties": {
+        "sourceFile": {
+          "type": "string",
+          "default": "sources.nix",
+          "description": "File holding the marker-delimited rolling `variants` attrset."
+        },
+        "assetPrefix": {
+          "type": "string",
+          "description": "Literal text before the tag in the asset name, e.g. \"proton-\" for \"proton-<tag>-<variant>.tar.xz\"; \"\" when the tag starts the name."
+        },
+        "assetSuffix": {
+          "type": "string",
+          "default": ".tar.xz",
+          "description": "Literal text after the variant in the asset name."
+        },
+        "defaultVariant": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_]+$",
+          "description": "Variant name for the asset that carries no `-<variant>` token, i.e. exactly `<assetPrefix><tag><assetSuffix>` — GE-Proton ships `<tag>.tar.gz` for x86_64 alongside `<tag>-aarch64.tar.gz`. Omit when every asset is variant-tagged."
+        }
+      }
+    },
+    "verify": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "binary": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Binary under result/bin to run; null to skip."
+        },
+        "args": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "check": {
+          "enum": [
+            "elf",
+            "wrapper",
+            "desktop",
+            "eval"
+          ],
+          "description": "Artifact check when no binary is run. 'eval': eval + clean build are the verification, no artifact-shape assertion (also the behavior when omitted). 'elf'/'wrapper'/'desktop': additionally assert the named artifact exists under result/."
+        }
+      }
+    },
+    "pythonRequirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Env+source python app (python.withPackages + upstream source, no wheel metadata): reconcile the upstream requirements file against the env. update.sh auto-adds a nixpkgs-resolvable new requirement above the '# std:requirements-auto-add' marker in envFile; lib.requirementsCoveredCheck gates real coverage in CI and the update verification build.",
+      "required": [
+        "file"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Requirements file path inside the upstream source (e.g. requirements.txt)."
+        },
+        "envFile": {
+          "type": "string",
+          "description": "Repo file holding the withPackages list and the auto-add marker (default package.nix)."
+        },
+        "ignore": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Requirement names (PEP503-normalized) knowingly not shipped: dev/packaging tooling the app never imports on shipped paths, or dist-name mismatches provided under another attr. One source of truth for BOTH update.sh's auto-add and lib.requirementsCoveredCheck."
+        }
+      }
+    },
+    "subpackages": {
+      "type": "array",
+      "description": "Attributes of the default package (its passthru) whose fixed-output hashes nix-update also recomputes, each passed as --subpackage. A hash that lives in a separate derivation, such as a web UI's npmDepsHash, is otherwise never refreshed.",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+      },
+      "uniqueItems": true
+    }
+  }
+}

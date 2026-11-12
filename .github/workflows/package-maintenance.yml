@@ -1,0 +1,370 @@
+name: Package maintenance
+on:
+  workflow_call:
+    inputs:
+      cadence:
+        description: "daily, biweekly (Wednesday and Sunday) or weekly (Sunday); a dispatched run always runs"
+        type: string
+        default: weekly
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.c.outputs.run }}
+    steps:
+      - name: Apply the repository's cadence
+        id: c
+        env:
+          CADENCE: ${{ inputs.cadence }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          dow=$(date -u +%u)
+          case "$CADENCE" in
+          daily) run=yes ;;
+          biweekly) if [ "$dow" = 3 ] || [ "$dow" = 7 ]; then run=yes; else run=no; fi ;;
+          weekly) if [ "$dow" = 7 ]; then run=yes; else run=no; fi ;;
+          *)
+            echo "::error::cadence '$CADENCE' is none of daily, biweekly, weekly; fix the MAINTENANCE_CADENCE repository variable"
+            exit 1
+            ;;
+          esac
+          if [ "$EVENT" = workflow_dispatch ]; then run=yes; fi
+          echo "cadence=$CADENCE dow=$dow event=$EVENT -> run=$run"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  prepare:
+    needs: gate
+    if: needs.gate.outputs.run == 'yes'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LOG: /tmp/log-evaluation.log
+    outputs:
+      changed: ${{ steps.candidate.outputs.changed }}
+      sha: ${{ steps.candidate.outputs.sha }}
+      runners: ${{ steps.candidate.outputs.runners }}
+      healed: ${{ steps.heal.outputs.healed }}
+      kept: ${{ steps.heal.outputs.kept }}
+      heal: ${{ steps.heal.outcome }}
+      stopped: ${{ steps.stopped.outputs.stage }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - &fetch-std
+        name: Fetch the standard at the commit that defines this workflow
+        env:
+          STD_REPOSITORY: ${{ job.workflow_repository }}
+          STD_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -o pipefail
+          if [ -z "$STD_REPOSITORY" ] || [ -z "$STD_SHA" ]; then
+            echo "::error::job.workflow_repository='$STD_REPOSITORY' job.workflow_sha='$STD_SHA': this runner does not name the commit of the reusable workflow, so its scripts cannot be fetched at that commit"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/std"
+          curl -fsSL --retry 5 --retry-all-errors "https://codeload.github.com/$STD_REPOSITORY/tar.gz/$STD_SHA" |
+            tar -xz --strip-components=1 -C "$RUNNER_TEMP/std"
+          echo "STD=$RUNNER_TEMP/std" >>"$GITHUB_ENV"
+          echo "running the scripts of $STD_REPOSITORY at $STD_SHA"
+      - uses: DeterminateSystems/determinate-nix-action@16f94ba7aae399b9f9077c254b6719ec6de7e3e3 # v3.24.2
+        with:
+          extra-conf: lazy-trees = false
+
+      - name: Update flake.lock
+        id: lock
+        run: |
+          set -o pipefail
+          nix flake update 2>&1 | tee -a "$LOG"
+
+      - name: Run the flake's after-lock-update app
+        id: app
+        run: |
+          set -o pipefail
+          bash "$STD/after-lock-update.sh" 2>&1 | tee -a "$LOG"
+
+      - name: Probe the temporary fixes against the updated inputs and heal the ones no longer needed
+        id: heal
+        run: |
+          set -o pipefail
+          bash "$STD/heal-overlays.sh" 2>&1 | tee -a "$LOG"
+
+      - name: Evaluate every declared system with import from derivation forbidden
+        id: evaluate
+        run: |
+          set -o pipefail
+          bash "$STD/evaluate-every-system.sh" 2>&1 | tee -a "$LOG"
+
+      - name: Record the candidate
+        id: candidate
+        run: |
+          sha=$(git rev-parse HEAD)
+          runners=$(bash "$STD/declared-runners.sh")
+          git add flake.lock
+          git diff --cached --binary > /tmp/candidate.patch
+          if [ -s /tmp/candidate.patch ]; then
+            changed=true
+          else
+            changed=false
+            echo "The refresh changed no input and healed no fix: the committed lock is what was last verified, so nothing is built again."
+          fi
+          {
+            echo "changed=$changed"
+            echo "sha=$sha"
+            echo "runners=$runners"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: candidate
+          path: /tmp/candidate.patch
+          if-no-files-found: error
+
+      - name: Name the step that stopped the refresh
+        id: stopped
+        if: failure()
+        env:
+          LOCK: ${{ steps.lock.outcome }}
+          APP: ${{ steps.app.outcome }}
+          HEAL: ${{ steps.heal.outcome }}
+          EVALUATE: ${{ steps.evaluate.outcome }}
+          CANDIDATE: ${{ steps.candidate.outcome }}
+        run: |
+          if [ "$LOCK" = failure ]; then stage="updating flake.lock"
+          elif [ "$APP" = failure ]; then stage="running the flake's after-lock-update app"
+          elif [ "$HEAL" = failure ]; then stage="probing the temporary fixes"
+          elif [ "$EVALUATE" = failure ]; then stage="evaluating every declared system"
+          elif [ "$CANDIDATE" = failure ]; then stage="recording the candidate"
+          else stage="setting up the runner"
+          fi
+          echo "stage=$stage" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the evaluation log for the report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: log-evaluation
+          path: ${{ env.LOG }}
+
+  verify:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.prepare.outputs.runners) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    env:
+      LOG: /tmp/log-${{ matrix.os }}.log
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - *fetch-std
+      - uses: DeterminateSystems/determinate-nix-action@16f94ba7aae399b9f9077c254b6719ec6de7e3e3 # v3.24.2
+        with:
+          extra-conf: |
+            lazy-trees = false
+            keep-outputs = true
+            keep-derivations = true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: candidate
+          path: /tmp/candidate
+
+      - name: Apply the candidate
+        run: git apply --index /tmp/candidate/candidate.patch
+
+      - name: Restore the Nix store of the newest earlier run, saved again under this lock
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/flake.lock', '**/*.nix') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-${{ runner.arch }}-
+          gc-max-store-size-linux: 8G
+
+      - name: Build every check for this system, retrying only a transient fetch failure
+        run: |
+          SYS=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+          bash "$STD/retry-transient.sh" "$LOG" 13200 -- \
+            nix run --inputs-from . nixpkgs#nix-fast-build -- --skip-cached --no-nom --flake ".#checks.$SYS"
+
+      - name: Keep the build log for the report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: log-${{ matrix.os }}
+          path: ${{ env.LOG }}
+
+  publish:
+    needs: [prepare, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: candidate
+          path: /tmp/candidate
+
+      - name: Push the verified lock
+        env:
+          HEALED: ${{ needs.prepare.outputs.healed }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ ! -s /tmp/candidate/candidate.patch ]; then
+            echo "Nothing to push: lock unchanged and no fix healed"
+            exit 0
+          fi
+          git apply --index /tmp/candidate/candidate.patch
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$HEALED" ]; then
+            git commit -m "chore: update flake.lock; drop healed fix(es): ${HEALED}"
+          else
+            git commit -m "chore: update flake.lock"
+          fi
+          git push origin "HEAD:refs/heads/$BRANCH"
+
+      - name: Close the maintenance issues this clean run resolves
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9 (node24)
+        with:
+          script: |
+            const titleBase = 'Maintenance: flake.lock update';
+            const open = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              labels: 'maintenance', state: 'open'
+            });
+            for (const issue of open.data) {
+              if (!issue.title.startsWith(titleBase)) continue;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Resolved: the scheduled lock refresh built clean in [run ${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}).`
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number, state: 'closed', state_reason: 'completed'
+              });
+            }
+
+  report:
+    needs: [prepare, verify]
+    if: always() && (needs.prepare.result == 'failure' || needs.verify.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - *fetch-std
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: log-*
+          path: /tmp/logs
+          merge-multiple: true
+
+      - name: Gather the failure logs
+        run: |
+          : >/tmp/lock-build.log
+          found=0
+          for f in /tmp/logs/log-*.log; do
+            [ -f "$f" ] || continue
+            found=1
+            printf '=== %s\n' "$(basename "$f" .log)" >>/tmp/lock-build.log
+            cat "$f" >>/tmp/lock-build.log
+          done
+          if [ "$found" = 0 ]; then
+            echo "No log reached the report: the download found no log-*.log file." >>/tmp/lock-build.log
+          fi
+
+      - name: Classify failure
+        id: classify
+        run: bash "$STD/classify-build-failure.sh" /tmp/lock-build.log
+
+      - name: Report the failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAIL_CLASS: ${{ steps.classify.outputs.class }}
+          FAIL_EVIDENCE: ${{ steps.classify.outputs.evidence }}
+          FAILED_ATTRS: ${{ steps.classify.outputs.failed_attrs }}
+          FAILED_DRVS: ${{ steps.classify.outputs.failed_drvs }}
+          HEALED: ${{ needs.prepare.outputs.healed }}
+          KEPT: ${{ needs.prepare.outputs.kept }}
+          HEAL: ${{ needs.prepare.outputs.heal }}
+          PREPARE: ${{ needs.prepare.result }}
+          STOPPED: ${{ needs.prepare.outputs.stopped }}
+        run: |
+          fence='```'
+          if [ "$PREPARE" = failure ]; then
+            what="The scheduled lock refresh stopped while ${STOPPED:-setting up the runner}"
+          else
+            what="The refreshed flake.lock did not build on every declared system"
+          fi
+          {
+            printf '## flake.lock update failed\n\n'
+            printf '%s. **flake.lock was NOT pushed.**\n\n' "$what"
+            printf "**Class**: \`%s\`\n" "$FAIL_CLASS"
+            if [ "$HEAL" = success ]; then
+              printf '**Temporary fixes kept**: %s\n' "${KEPT:-(none declared)}"
+              if [ -n "$HEALED" ]; then
+                printf "**Healed fixes NOT pushed**: \`%s\`. They probed as no longer needed against the new inputs, but the verification was red, so the removal was not pushed. If the removal is what broke it, correct that predicate; otherwise the lock bump itself broke the build.\n" "$HEALED"
+              fi
+            elif [ "$HEAL" = failure ]; then
+              printf '**Temporary fixes**: not probed; the heal step failed.\n'
+            else
+              printf '**Temporary fixes**: not probed; the run stopped before the heal step.\n'
+            fi
+            printf '\n### Recovery\n\n%sbash\nnix flake update\nnix flake check --no-build --all-systems\nnix build --no-link\n%s\n' "$fence" "$fence"
+          } >/tmp/issue-head.md
+          bash "$STD/report-failure.sh" maintenance "Maintenance: flake.lock update" "Maintenance: flake.lock update failed ($FAIL_CLASS)" /tmp/issue-head.md /tmp/lock-build.log
+
+  cleanup:
+    needs: gate
+    if: needs.gate.outputs.run == 'yes'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Delete update and upstream-update branches whose head is older than 30 days
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9 (node24)
+        with:
+          script: |
+            const { data: allRefs } = await github.rest.git.listMatchingRefs({
+              owner: context.repo.owner, repo: context.repo.repo,
+              ref: 'heads/'
+            });
+            const stalePatterns = [
+              /^refs\/heads\/update[\/_]/,
+              /^refs\/heads\/upstream-update[\/_]/,
+            ];
+            const candidates = allRefs.filter(r => stalePatterns.some(p => p.test(r.ref)));
+            const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+            const failed = [];
+            for (const ref of candidates) {
+              try {
+                const { data: commit } = await github.rest.git.getCommit({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  commit_sha: ref.object.sha
+                });
+                if (new Date(commit.author.date).getTime() < thirtyDaysAgo) {
+                  core.info(`Deleting stale branch: ${ref.ref}`);
+                  await github.rest.git.deleteRef({
+                    owner: context.repo.owner, repo: context.repo.repo,
+                    ref: ref.ref.replace('refs/', '')
+                  });
+                }
+              } catch (e) {
+                if (e.status === 422) {
+                  core.info(`${ref.ref} was already deleted`);
+                  continue;
+                }
+                failed.push(`${ref.ref}: ${e.message}`);
+              }
+            }
+            if (failed.length) {
+              core.setFailed(`could not clean ${failed.length} stale branch(es): ${failed.join('; ')}`);
+            }

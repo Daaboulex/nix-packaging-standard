@@ -1,0 +1,311 @@
+# flakeModules.base — the shared surface every packaging repo imports.
+#
+# Consumed by a repo with:
+#   imports = [ inputs.std.flakeModules.base ];
+#
+# Provides, in the consumer's own module fixpoint (so each repo stays
+# self-contained and reproducible against its own lock):
+#   - the git-hooks lint/format gate (nixfmt, typos, rumdl with its
+#     config, and the standard's own check-readme-sections script), the
+#     formatter, and a dev shell — so repos carry no .rumdl.toml or linter scripts;
+#   - every declared package aliased into `checks` (so `nix flake check` /
+#     nix-fast-build actually BUILD the package — nix#13470);
+#   - `std-conformance`: a hermetic check that the synced callers and
+#     dotfiles byte-match this standard's canonicals;
+#   - `std-update-json`: validates .github/update.json against the schema.
+{
+  inputs,
+  lib,
+  config,
+  ...
+}:
+let
+  lintSystem =
+    if builtins.elem "x86_64-linux" config.systems then
+      "x86_64-linux"
+    else
+      builtins.head config.systems;
+in
+{
+  imports = [
+    inputs.git-hooks.flakeModule
+    (import ./detect.nix lintSystem)
+  ];
+
+  perSystem =
+    {
+      config,
+      pkgs,
+      system,
+      ...
+    }:
+    let
+      src = inputs.self;
+
+      updateJson =
+        if builtins.pathExists (src + "/.github/update.json") then
+          builtins.fromJSON (builtins.readFile (src + "/.github/update.json"))
+        else
+          { };
+      isCustom = (updateJson.upstream.type or "") == "custom";
+      isFirstParty = (updateJson.upstream.type or "") == "none";
+      updateCaller = ".github/workflows/update.yml";
+
+      hasOwnRuffConfig =
+        builtins.pathExists (src + "/pyproject.toml")
+        && lib.hasInfix "[tool.ruff" (builtins.readFile (src + "/pyproject.toml"));
+      ruffConfigArg = lib.optionalString (!hasOwnRuffConfig) " --config ${../ruff.toml}";
+
+      syncMap = lib.importJSON ../synced-files.json;
+      hasReadmeOptions = builtins.pathExists (src + "/scripts/update-readme-options.sh");
+      synced = lib.mapAttrs (_: canon: ../. + "/${canon}") (
+        builtins.removeAttrs (lib.filterAttrs (_: canon: canon != null) syncMap) (
+          lib.optional (!hasReadmeOptions) "scripts/update-readme-options.sh"
+          ++ lib.optional isFirstParty updateCaller
+        )
+      );
+      retired =
+        builtins.attrNames (
+          builtins.removeAttrs (lib.filterAttrs (_: canon: canon == null) syncMap) (
+            lib.optional isCustom "scripts/update.sh"
+          )
+        )
+        ++ lib.optional isFirstParty updateCaller;
+      retiredReason =
+        dst:
+        if dst == updateCaller then
+          "${dst} is an Update caller in a first-party repo: upstream type none gives Update nothing to follow, so every scheduled run only spends runner minutes; delete it"
+        else
+          "${dst} is a retired copy: the workflows run the standard's own script at the commit that defines them, so this file is never read; delete it";
+      retiredPresent = builtins.filter (dst: builtins.pathExists (src + "/${dst}")) retired;
+
+      inherit (import ../lib.nix) releaseUrl;
+      declaredStdUrl = ((import (src + "/flake.nix")).inputs.std or { }).url or "(no std input)";
+
+      # Only alias a package into `checks` on systems it actually supports (its
+      # own meta.platforms / badPlatforms). Without this, an x86_64-only package
+      # in a repo that ALSO declares aarch64-linux aborts the aarch64 build with
+      # "Refusing to evaluate ... not available on the requested hostPlatform".
+      # True package-level `declared == built`: each package builds only where
+      # its meta allows, so a repo may mix arch-portable and x86-only packages.
+      buildable = lib.filterAttrs (_: p: lib.meta.availableOn pkgs.stdenv.hostPlatform p) config.packages;
+    in
+    {
+      pre-commit.settings.hooks = import ./hooks.nix { inherit pkgs lib ruffConfigArg; };
+      pre-commit.check.enable = system == lintSystem;
+
+      apps = lib.optionalAttrs (system == lintSystem) {
+        std-check-commit-messages = {
+          type = "app";
+          program = lib.getExe (
+            pkgs.writeShellApplication {
+              name = "std-check-commit-messages";
+              runtimeInputs = [
+                pkgs.git
+                config.pre-commit.settings.package
+              ];
+              text = ''
+                PRE_COMMIT_HOME="$(git rev-parse --show-toplevel)/.devshell/pre-commit"
+                export PRE_COMMIT_HOME
+                set -- "$@" ${lib.getExe config.pre-commit.settings.package} run -c ${config.pre-commit.settings.configFile} --hook-stage commit-msg --commit-msg-filename
+              ''
+              + builtins.readFile ../scripts/check-commit-range.sh;
+            }
+          );
+          meta.description = "Run the commit-message hook over every commit after the first argument up to the second, as CI does on a push";
+        };
+      };
+
+      formatter = pkgs.writeShellScriptBin "treefmt" ''
+        exec ${pkgs.nixfmt-tree}/bin/treefmt --no-cache "$@"
+      '';
+
+      devShells.default = pkgs.mkShell {
+        packages = [
+          pkgs.nil
+          config.pre-commit.settings.package
+        ]
+        ++ config.pre-commit.settings.enabledPackages;
+        # Self-contained dev state: shell-provided tools keep caches/homes in
+        # the project's gitignored .devshell/, never $HOME. The pins run
+        # BEFORE the hook install: inputsFrom would run git-hooks first and
+        # pre-commit install would write ~/.cache/pre-commit. Custom shells
+        # do the same: devStateHook, then the installation script.
+        shellHook = (import ../lib.nix).devStateHook + config.pre-commit.installationScript;
+      };
+
+      checks = (lib.mapAttrs' (n: v: lib.nameValuePair "package-${n}" v) buildable) // {
+        std-conformance =
+          pkgs.runCommand "std-conformance" { passthru.required = builtins.attrNames synced; }
+            (
+              (lib.concatStringsSep "\n" (
+                lib.mapAttrsToList (dst: canon: ''
+                  if ! diff -u ${canon} ${src + "/${dst}"}; then
+                    echo "::error::${dst} drifted from the canonical nix-packaging-standard"
+                    exit 1
+                  fi
+                  echo "ok  ${dst}"
+                '') synced
+              ))
+              + "\ntouch \"$out\"\n"
+            );
+
+        std-no-retired-copies =
+          pkgs.runCommand "std-no-retired-copies" { passthru.present = retiredPresent; }
+            (
+              if retiredPresent == [ ] then
+                ''touch "$out"''
+              else
+                lib.concatMapStringsSep "\n" (
+                  dst: "echo ${lib.escapeShellArg "::error::${retiredReason dst}"}"
+                ) retiredPresent
+                + "\nexit 1\n"
+            );
+
+        std-follows-release =
+          pkgs.runCommand "std-follows-release" { passthru.declared = declaredStdUrl; }
+            (
+              if declaredStdUrl == releaseUrl then
+                ''touch "$out"''
+              else
+                ''
+                  echo ${lib.escapeShellArg "::error::inputs.std.url is '${declaredStdUrl}'; it must be '${releaseUrl}', so the scheduled lock refresh moves this repository to each verified release instead of leaving it on the one it was pinned to"}
+                  exit 1
+                ''
+            );
+
+        # Self-contained dev state: the baseline .gitignore must keep build
+        # outputs and shell state out of the tree -- the dev shell writes tool
+        # caches into .devshell/ by contract (lib.devStateHook), and a missing
+        # ignore entry would let that state (or result symlinks) get committed.
+        # Every dev shell this repo defines must pin PRE_COMMIT_HOME before it
+        # installs the git hooks, or pre-commit writes ~/.cache/pre-commit
+        # first. std-home-proof catches that only when the write actually
+        # happens; this reads the composed hook, so a wrong order is caught
+        # before it bites and without entering the shell at all. The strings
+        # are compared in Nix and never written to the store, so a hook that
+        # interpolates a large package does not drag it into the check.
+        std-devshell-order =
+          let
+            offence =
+              name: shell:
+              let
+                lines = lib.splitString "\n" (shell.shellHook or "");
+                lineOf =
+                  needle:
+                  lib.findFirst (x: x != null) null (
+                    lib.imap0 (i: l: if lib.hasInfix needle l then i + 1 else null) lines
+                  );
+                installs = lineOf "pre-commit install";
+                pins = lineOf "PRE_COMMIT_HOME=";
+              in
+              if installs == null then
+                null
+              else if pins == null then
+                "devShell ${name} installs the git hooks but never pins PRE_COMMIT_HOME, so pre-commit writes the real home"
+              else if pins > installs then
+                "devShell ${name} installs the git hooks at line ${toString installs} but pins PRE_COMMIT_HOME only at line ${toString pins}, so pre-commit writes ~/.cache/pre-commit first; compose it with inputs.std.lib.mkDevShell"
+              else
+                null;
+            offences = lib.filter (x: x != null) (lib.mapAttrsToList offence config.devShells);
+          in
+          pkgs.runCommand "std-devshell-order" { } (
+            if offences == [ ] then
+              ''touch "$out"''
+            else
+              lib.concatMapStringsSep "\n" (o: "echo ${lib.escapeShellArg ("::error::" + o)}") offences
+              + "\nexit 1\n"
+          );
+
+        std-devstate = pkgs.runCommand "std-devstate" { } ''
+          gi=${src + "/.gitignore"}
+          canon=${../.gitignore}
+          [ -f "$gi" ] || { echo "::error::no .gitignore (fleet baseline required)"; exit 1; }
+          miss=0
+          while IFS= read -r entry; do
+            case "$entry" in "# advisory"*) break ;; "" | "#"*) continue ;; esac
+            grep -qxF "$entry" "$gi" || { echo "::error::.gitignore misses fleet-baseline entry: $entry"; miss=1; }
+          done < "$canon"
+          [ "$miss" = 0 ] || exit 1
+          touch "$out"
+        '';
+
+        std-homestate = pkgs.runCommand "std-homestate" { nativeBuildInputs = [ pkgs.gnugrep ]; } ''
+          hits=$(grep -rn 'home\.file\."\.' ${src} --include='*.nix' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::a module declares a file in the home root; an app's state belongs in its XDG place"
+            echo "$hits"
+            echo "use xdg.configFile/xdg.dataFile, or the variable the app documents."
+            echo "an upstream that hardcodes a home-root path is named in the README with the file and line that proves it."
+            exit 1
+          fi
+          touch "$out"
+        '';
+        std-update-json =
+          pkgs.runCommand "std-update-json" { nativeBuildInputs = [ pkgs.check-jsonschema ]; }
+            ''
+              check-jsonschema --schemafile ${../update.schema.json} ${src + "/.github/update.json"}
+              touch "$out"
+            '';
+
+        std-meta-maintainers =
+          let
+            malformed = lib.concatLists (
+              lib.mapAttrsToList (
+                pname: p:
+                lib.imap0 (
+                  i: m:
+                  if builtins.isAttrs m && m ? name then
+                    null
+                  else
+                    "${pname}: meta.maintainers[${toString i}] must be an attrset carrying a 'name' attribute (nixpkgs maintainer shape), got ${builtins.typeOf m}"
+                ) (p.meta.maintainers or [ ])
+              ) config.packages
+            );
+            errors = lib.filter (e: e != null) malformed;
+          in
+          pkgs.runCommand "std-meta-maintainers" { } (
+            if errors == [ ] then
+              ''touch "$out"''
+            else
+              lib.concatMapStringsSep "\n" (e: "echo ${lib.escapeShellArg ("::error::" + e)}") errors
+              + "\nexit 1\n"
+          );
+
+        std-no-fail-open =
+          let
+            inherit (import ../lib.nix) failOpenPatterns failOpenScan;
+            scan = failOpenScan { inherit lib src; };
+          in
+          pkgs.runCommand "std-no-fail-open" { } ''
+            bad=0
+            ${lib.concatMapStringsSep "\n" scan failOpenPatterns}
+            [ "$bad" = 0 ] || exit 1
+            echo "ok: no fail-open shell shapes"
+            touch "$out"
+          '';
+
+        std-no-deprecated-system = pkgs.runCommand "std-no-deprecated-system" { } ''
+          if grep -rnE '\b(final|prev|pkgs|stdenv)\.system\b|inherit[[:space:]]*\((final|prev|pkgs|stdenv)\)[[:space:]]*system\b' ${src} --include='*.nix'; then
+            echo "::error::deprecated 'system' read above -- use stdenv.hostPlatform.system (nixpkgs aliases.nix warnAlias, 25.11+)"
+            exit 1
+          fi
+          touch "$out"
+        '';
+
+        std-no-host-profile =
+          pkgs.runCommand "std-no-host-profile" { nativeBuildInputs = [ pkgs.gnugrep ]; }
+            ''
+              hits=$(grep -rnE '/run/current-system|/etc/profiles/per-user|/nix/var/nix/profiles|\.nix-profile' ${src} --include='*.nix' --include='*.sh' || true)
+              if [ -n "$hits" ]; then
+                echo "::error::a package reads the host's profile instead of pinning what it needs"
+                echo "$hits"
+                echo "name the dependency in the derivation and refer to it by store path."
+                echo "a profile holds whatever that machine has installed: the program can be a different version, or absent, and nothing reports it at runtime."
+                exit 1
+              fi
+              touch "$out"
+            '';
+      };
+    };
+}

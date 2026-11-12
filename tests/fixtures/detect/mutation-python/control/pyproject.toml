@@ -1,0 +1,10 @@
+[project]
+name = "lib"
+version = "0"
+
+[tool.mutmut]
+source_paths = ["src/"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

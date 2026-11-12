@@ -1,0 +1,56 @@
+# Canonical .gitignore — Nix Packaging Standard.
+# Bootstrapped into each repo by sync.sh. A repo may append its own entries
+# below a "# repo-specific" marker; the entries above are the fleet baseline.
+
+# Build outputs
+result
+result-*
+
+# Nix / direnv
+.direnv/
+.devshell/
+
+# git-hooks.nix generated config (a /nix/store symlink — never commit)
+.pre-commit-config.yaml
+
+# AI agent artifacts -- never tracked (the no-tracked-ignored-files CI check fails if any are committed)
+CLAUDE.md
+GEMINI.md
+AGENTS.md
+AI-progress.json
+AI-tasks.json
+.session-handoff*.md
+.claude/
+.gemini/
+.codex/
+.cursor/
+.superpowers/
+.ai-context/
+.planning/
+
+# advisory -- bootstrapped by sync.sh, not enforced by std-devstate (below)
+# Caches
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.rumdl_cache/
+.mypy_cache/
+.hypothesis/
+
+# Coverage output
+.coverage
+.coverage.*
+/htmlcov/
+/coverage/
+
+# Ad-hoc build/test litter (nix builds run sandboxed; these appear only from
+# manual tool runs in a dev shell). Output dirs are root-anchored so they never
+# match a same-named source directory such as src/core/build.
+/build/
+/dist/
+/target/
+*.egg-info/
+.eggs/
+node_modules/
+.venv/
+venv/

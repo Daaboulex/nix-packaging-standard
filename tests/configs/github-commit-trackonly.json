@@ -1,0 +1,15 @@
+{
+  "package": "example-mirror",
+  "upstream": {
+    "type": "github-commit",
+    "owner": "acme",
+    "repo": "example-settings",
+    "branch": "master"
+  },
+  "trackOnly": true,
+  "trackFile": "upstream-version.json",
+  "trackKey": "commit",
+  "packageFile": null,
+  "hashes": [],
+  "verify": { "check": "eval" }
+}
