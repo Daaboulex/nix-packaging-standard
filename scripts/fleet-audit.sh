@@ -493,13 +493,13 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     fi
   done
 
-  # --- license consistency (README badge <-> LICENSE file) -------------------
-  # The README license badge is static text; nothing else ties it to the
-  # LICENSE actually shipped, so a relicense or copy-paste badge could drift
-  # silently. Fingerprint the LICENSE and require the badge to agree.
+  # --- license consistency (README License section <-> LICENSE file) ----------
+  # The README's License section is static text; nothing else ties it to the
+  # LICENSE actually shipped, so a relicense could drift silently.
+  # Fingerprint the LICENSE and require the section to name it.
   # meta.license accuracy vs upstream remains the documented out-of-band
   # judgment (module/overlay repos carry no gateable literal).
-  hdr "per-repo: license consistency (README badge matches LICENSE)"
+  hdr "per-repo: license consistency (README License section names the LICENSE)"
   for repo in "${CONSUMERS[@]}"; do
     dir="$REPOS_DIR/$repo"
     [ -f "$dir/LICENSE" ] || {
@@ -523,24 +523,24 @@ if [ "$DO_LOCAL" -eq 1 ]; then
       red "$repo: LICENSE not recognized by the fingerprint set (extend fleet-audit)"
       continue
     fi
-    badge="$(grep -oE 'License: [A-Za-z0-9 .+-]+' "$dir/README.md" | head -1 | sed 's/License: //' | tr -d ' ')"
-    if [ -z "$badge" ]; then
-      red "$repo: README has no license badge"
+    stated="$(sed -n '/^## License$/,/^## /p' "$dir/README.md" | sed '1d;/^## /d')"
+    if [ -z "$stated" ]; then
+      red "$repo: README has no License section, so it does not say what the LICENSE file is"
       continue
     fi
     lic_ok=0
     case "$lic" in
-    MIT) grep -qiE '^MIT' <<<"$badge" && lic_ok=1 ;;
-    GPL-2.0) grep -qiE 'gpl.*2' <<<"$badge" && lic_ok=1 ;;
-    GPL-3.0) grep -qiE 'gpl.*3' <<<"$badge" && lic_ok=1 ;;
-    AGPL-3.0) grep -qi 'agpl' <<<"$badge" && lic_ok=1 ;;
-    Zlib) grep -qi 'zlib' <<<"$badge" && lic_ok=1 ;;
-    Unlicense) grep -qi 'unlicense' <<<"$badge" && lic_ok=1 ;;
+    MIT) grep -qwi 'MIT' <<<"$stated" && lic_ok=1 ;;
+    GPL-2.0) grep -qiE 'gpl[^0-9]{0,3}2' <<<"$stated" && lic_ok=1 ;;
+    GPL-3.0) grep -qiE 'gpl[^0-9]{0,3}3' <<<"$stated" && ! grep -qi 'agpl' <<<"$stated" && lic_ok=1 ;;
+    AGPL-3.0) grep -qi 'agpl' <<<"$stated" && lic_ok=1 ;;
+    Zlib) grep -qi 'zlib' <<<"$stated" && lic_ok=1 ;;
+    Unlicense) grep -qi 'unlicense' <<<"$stated" && lic_ok=1 ;;
     esac
     if [ "$lic_ok" -eq 1 ]; then
-      ok "$repo: license badge matches LICENSE ($lic)"
+      ok "$repo: the README's License section names the LICENSE file's license ($lic)"
     else
-      red "$repo: license badge '$badge' does not match LICENSE ($lic)"
+      red "$repo: the README's License section does not name the LICENSE file's license ($lic)"
     fi
   done
 
