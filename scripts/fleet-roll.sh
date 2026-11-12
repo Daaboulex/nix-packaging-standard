@@ -339,6 +339,12 @@ for repo in "${TARGETS[@]}"; do
     continue
   fi
 
+  if ! (cd "$dir" && bash "$RELEASE_TREE/write-option-reference.sh") >>"$steplog" 2>&1; then
+    fail_repo "$repo" "docs/OPTIONS.md could not be rewritten from the modules, so the adopted check would refuse it: $(tail -1 "$steplog")  log: $steplog"
+    restore "$dir"
+    continue
+  fi
+
   if ! refresh_hook "$dir"; then
     fail_repo "$repo" "the hook set of $TAG could not be installed, so the commit would run the old tag's gate or none"
     restore "$dir"

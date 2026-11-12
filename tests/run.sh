@@ -1055,7 +1055,7 @@ if command -v nix >/dev/null 2>&1; then
   echo "Test 23: after-lock-update runs the flake's app and stages only what it rewrote"
   HOOK="$STD/after-lock-update.sh"
   NP=$(nix eval --impure --raw --expr "(builtins.getFlake \"$STD\").inputs.nixpkgs.outPath")
-  hook_fixture() { # hook_fixture <dir> <app script, or empty for no apps> [app name]
+  hook_fixture() { # hook_fixture <dir> <app script, or empty for no apps>
     mkdir -p "$1"
     if [ -z "$2" ]; then
       printf '{ outputs = _: { }; }\n' >"$1/flake.nix"
@@ -1065,7 +1065,7 @@ if command -v nix >/dev/null 2>&1; then
   inputs.nixpkgs.url = "path:$NP";
   outputs = { nixpkgs, ... }: {
     apps = nixpkgs.lib.genAttrs [ "x86_64-linux" "aarch64-linux" ] (system: {
-      ${3:-after-lock-update} = {
+      after-lock-update = {
         type = "app";
         program = "\${nixpkgs.legacyPackages.\${system}.writeShellScript "hook" ''$2''}";
       };
@@ -1092,7 +1092,8 @@ NIX
   hook_fixture "$d" ""
   run_hook "$d"
   check "a flake with no apps is a clean no-op" "0" "$?"
-  check "and says so for each of the two apps it looks for" "2" "$(grep -c 'nothing to run' "$d.log")"
+  check "and says there was no app to run" "1" "$(grep -c 'nothing to run' "$d.log")"
+  check "and no option reference to write" "1" "$(grep -c 'nothing to write' "$d.log")"
 
   d="$WORK/t23b"
   hook_fixture "$d" 'echo new > pinned.txt'
@@ -1118,11 +1119,29 @@ NIX
   if run_hook "$d"; then failed=0; else failed=1; fi
   check "a flake that does not evaluate fails the hook" "1" "$failed"
 
+  reference_fixture() { # reference_fixture <dir> <tracked|untracked>: a flake whose only check lives on another system
+    mkdir -p "$1/docs"
+    printf '%s\n' '{ outputs = _: { checks.riscv64-linux.std-option-reference.rendered = "the new page\n"; }; }' >"$1/flake.nix"
+    [ "$2" = tracked ] && printf 'the old page\n' >"$1/docs/OPTIONS.md"
+    (cd "$1" && git init -q && git config user.email t@t && git config user.name t && git add -A &&
+      git commit -qm fixture) >"$1.setup.log" 2>&1 || {
+      echo "  fixture setup failed:"
+      sed "s/^/    /" "$1.setup.log"
+    }
+  }
+
   d="$WORK/t23f"
-  hook_fixture "$d" 'echo new > pinned.txt' std-write-option-reference
+  reference_fixture "$d" tracked
   run_hook "$d"
-  check "a flake declaring only the option reference writer has it run" "0" "$?"
-  check "and the reference it rewrote is staged" "pinned.txt" "$(cd "$d" && git diff --cached --name-only)"
+  check "an option reference is rewritten on a host the flake declares nothing for" "0" "$?"
+  check "the page is what the check renders" "the new page" "$(cat "$d/docs/OPTIONS.md")"
+  check "and it is staged" "docs/OPTIONS.md" "$(cd "$d" && git diff --cached --name-only)"
+
+  d="$WORK/t23g"
+  reference_fixture "$d" untracked
+  run_hook "$d"
+  check "a reference git does not track yet fails closed" "1" "$?"
+  check "and the failure names it" "1" "$(grep -cx 'docs/OPTIONS.md' "$d.log")"
 else
   echo "Test 23 skipped (nix unavailable)"
 fi

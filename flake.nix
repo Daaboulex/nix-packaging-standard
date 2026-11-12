@@ -413,6 +413,12 @@
                   say = "a reference that matches the module passes";
                   test = "test -e ${on control (control + "/module.nix")}";
                 }
+                {
+                  say = "a description ending in a list and a type holding a line break render as the committed page, the type on one line";
+                  test = "test -e ${
+                    on (fixture "awkward") (fixture "awkward" + "/module.nix")
+                  } && grep -qF 'pattern [^\\n\\r]+`. Default' ${fixture "awkward"}/docs/OPTIONS.md";
+                }
                 (refused "a reference the module has moved on from is refused, with the difference shown"
                   (on (fixture "stale") described)
                   "-An older rendering."

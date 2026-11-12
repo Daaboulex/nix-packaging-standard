@@ -217,8 +217,10 @@ against the tree:
   modules, when the README does not link to it, when an option has no
   description, and when a default or example shows a store path or a
   derivation (it would change with every lock update: write it with
-  `lib.literalExpression`). Maintenance runs the writer after the lock
-  update, so a type nixpkgs words differently cannot leave the file behind.
+  `lib.literalExpression`). Maintenance and the fleet roll rewrite the file
+  after the lock moves (`write-option-reference.sh`, which reads the page
+  from the check by evaluation, so it works on a host the flake declares
+  nothing for), so a type nixpkgs words differently cannot leave it behind.
   A flake that names no module gets neither the check nor the app.
 - **No history.** A page says what is true now. What a release changed lives
   in its tag message.
@@ -292,7 +294,8 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `.github/workflows/package-maintenance.yml` | *(reusable, not synced)* | `flake.lock` refresh on the repo's cadence: heal probe, every declared system evaluated, the checks built on a runner per declared system, pushed only if all are green |
 | `update.sh` | *(run from here; retired copy `scripts/update.sh`)* | Detect + apply upstream updates. A `custom` repo keeps its own `scripts/update.sh`, which the Update workflow runs instead |
 | `heal-overlays.sh` | *(run from here; retired copy `scripts/heal-overlays.sh`)* | Probe every temporary divergence against the updated inputs and drop the healed ones |
-| `after-lock-update.sh` | *(run from here; retired copy `scripts/after-lock-update.sh`)* | Run the flake's `apps.<system>.after-lock-update` and then its `std-write-option-reference` after the lock update, each when the flake declares it, and stage the tracked files they rewrote |
+| `after-lock-update.sh` | *(run from here; retired copy `scripts/after-lock-update.sh`)* | Run the flake's `apps.<system>.after-lock-update` when it declares one, then `write-option-reference.sh`, and stage the tracked files they rewrote |
+| `write-option-reference.sh` | *(run from here)* | Write `docs/OPTIONS.md` from the modules a flake names under `std.option-reference`, by evaluating the page the check renders; a flake that names none is left alone |
 | `classify-build-failure.sh` | *(run from here; retired copy `scripts/classify-build-failure.sh`)* | Name a red run's failure class and enumerate its failed targets |
 | `retry-transient.sh` | *(run from here)* | Run an updater or a build, retrying only a `transient-infra` failure within a time budget, optionally from the checked-out tree, and leave the final attempt as the log |
 | `declared-runners.sh` | *(run from here; retired copy `scripts/declared-runners.sh`)* | Name a GitHub runner for every system the flake declares checks on, refusing an unknown system or a flake that does not evaluate |
@@ -1331,7 +1334,7 @@ plus a `CHANGELOG.md`).
   outside `flake.lock`, such as meson wrap files, rewrites it from the new lock
   there; the app may only rewrite tracked files, an untracked file fails the
   run, and what it rewrote rides the same verification and commit as the lock),
-  then `std-write-option-reference` under the same terms where the flake
+  then `write-option-reference.sh` under the same terms where the flake
   names a module,
   the heal probe, every declared system evaluated with import from derivation
   forbidden (`evaluate-every-system.sh`), then the checks built on a runner

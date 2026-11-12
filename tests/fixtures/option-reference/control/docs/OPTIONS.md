@@ -10,27 +10,25 @@ Declared in [module.nix](../module.nix).
 
 Whether to enable the demo.
 
-- Type: boolean
-- Default: `false`
+Type: `boolean`. Default: `false`.
 
 ### `demo.greeting`
 
 What the demo says when it starts.
 
-- Type: string
-- Default: `"hello"`
-- Example: `"good morning"`
+Type: `string`. Default: `"hello"`. Example: `"good morning"`.
 
 ### `demo.limits`
 
 How much of each resource the demo may use.
 
-- Type: attribute set of signed integer
-- Default:
+Type: `attribute set of signed integer`.
 
-  ```nix
-  {
-    cpu = 2;
-    memory = 512;
-  }
-  ```
+Default:
+
+```nix
+{
+  cpu = 2;
+  memory = 512;
+}
+```

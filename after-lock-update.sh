@@ -1,27 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 system=$(nix eval --impure --raw --expr builtins.currentSystem)
 ran=0
 
-for app in after-lock-update std-write-option-reference; do
-  declared=$(nix eval --impure --json --expr \
-    "let f = builtins.getFlake (toString ./.); in f ? apps && f.apps ? \"$system\" && f.apps.\"$system\" ? \"$app\"")
+declared=$(nix eval --impure --json --expr \
+  "let f = builtins.getFlake (toString ./.); in f ? apps && f.apps ? \"$system\" && f.apps.\"$system\" ? after-lock-update")
 
-  case "$declared" in
-  false)
-    echo "after-lock-update: the flake declares no apps.$system.$app, nothing to run"
-    ;;
-  true)
-    nix run ".#$app"
-    ran=1
-    ;;
-  *)
-    echo "after-lock-update: could not read the flake's apps: $declared" >&2
-    exit 1
-    ;;
-  esac
-done
+case "$declared" in
+false)
+  echo "after-lock-update: the flake declares no apps.$system.after-lock-update, nothing to run"
+  ;;
+true)
+  nix run ".#after-lock-update"
+  ran=1
+  ;;
+*)
+  echo "after-lock-update: could not read the flake's apps: $declared" >&2
+  exit 1
+  ;;
+esac
+
+written=$(bash "$here/write-option-reference.sh")
+printf '%s\n' "$written"
+case "$written" in
+*"docs/OPTIONS.md written"*) ran=1 ;;
+esac
 
 [ "$ran" = 1 ] || exit 0
 

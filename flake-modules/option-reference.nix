@@ -10,34 +10,61 @@ let
   writer = "std-write-option-reference";
   rewrite = "nix run .#${writer}";
 
-  indented =
-    text:
-    lib.concatMapStringsSep "\n" (line: if line == "" then "" else "  ${line}") (
-      lib.splitString "\n" text
-    );
+  onOneLine =
+    lib.replaceStrings
+      [
+        "\n"
+        "\r"
+        "\t"
+      ]
+      [
+        "\\n"
+        "\\r"
+        "\\t"
+      ];
 
-  value =
+  prose = rendered: rendered._type or "" == "literalMD";
+  written = rendered: lib.trimWith { end = true; } rendered.text;
+  short = rendered: !lib.hasInfix "\n" (written rendered);
+
+  code = text: if lib.hasInfix "`" text then "`` ${text} ``" else "`${text}`";
+
+  fact =
     label: rendered:
-    if rendered._type or "" == "literalMD" then
-      "- ${label}: ${rendered.text}"
-    else if lib.hasInfix "\n" rendered.text then
-      "- ${label}:\n\n  ```nix\n${indented rendered.text}\n  ```"
+    "${label}: ${if prose rendered then written rendered else code (written rendered)}";
+
+  block =
+    label: rendered:
+    if prose rendered then
+      "${label}:\n\n${written rendered}"
     else
-      "- ${label}: `${rendered.text}`";
+      "${label}:\n\n```nix\n${written rendered}\n```";
 
   entry =
     option:
-    lib.concatStringsSep "\n" (
+    let
+      shown =
+        lib.optional (option ? default) {
+          label = "Default";
+          rendered = option.default;
+        }
+        ++ lib.optional (option ? example && option.type != "boolean") {
+          label = "Example";
+          rendered = option.example;
+        };
+      facts = [
+        "Type: ${code (onOneLine option.type)}"
+      ]
+      ++ map (value: fact value.label value.rendered) (lib.filter (value: short value.rendered) shown)
+      ++ lib.optional option.readOnly "Read only";
+    in
+    lib.concatStringsSep "\n\n" (
       [
         "### `${option.name}`"
-        ""
         (lib.trim option.description)
-        ""
-        "- Type: ${option.type}"
+        "${lib.concatStringsSep ". " facts}."
       ]
-      ++ lib.optional (option ? default) (value "Default" option.default)
-      ++ lib.optional (option ? example && option.type != "boolean") (value "Example" option.example)
-      ++ lib.optional option.readOnly "- Read only"
+      ++ map (value: block value.label value.rendered) (lib.filter (value: !short value.rendered) shown)
     );
 
   switchesFirst =
@@ -198,7 +225,7 @@ in
       checks = lib.optionalAttrs (system == lintSystem) {
         std-option-reference =
           if faults != [ ] then
-            pkgs.runCommand "std-option-reference" { } (
+            pkgs.runCommand "std-option-reference" { passthru.rendered = rendered; } (
               lib.concatMapStringsSep "\n" (fault: "echo ${lib.escapeShellArg "::error::${fault}"}") faults
               + "\nexit 1\n"
             )
