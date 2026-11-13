@@ -13,10 +13,10 @@ result-*
 # git-hooks.nix generated config (a /nix/store symlink — never commit)
 .pre-commit-config.yaml
 
-# AI agent artifacts -- never tracked (the no-tracked-ignored-files CI check fails if any are committed)
+# One assistant's own files and session leftovers -- never tracked (the no-tracked-ignored-files CI
+# check fails if any are committed). AGENTS.md is not here: it is the tracked rules file.
 CLAUDE.md
 GEMINI.md
-AGENTS.md
 AI-progress.json
 AI-tasks.json
 .session-handoff*.md

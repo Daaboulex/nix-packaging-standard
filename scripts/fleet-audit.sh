@@ -162,7 +162,7 @@ if [ "$DO_LOCAL" -eq 1 ]; then
   if [ "${#meta_targets[@]}" -eq 0 ]; then
     warn "no repos with a remote to check metadata against"
   elif PKG_REPOS_DIR="$REPOS_DIR" GH_OWNER="$OWNER" bash "$STD/sync-meta.sh" --check "${meta_targets[@]}" >/tmp/fa-meta.log 2>&1; then
-    ok "GitHub description + topics match update.json"
+    ok "GitHub description, topics and labels match the standard"
   else
     red "sync-meta.sh --check reported drift:"
     sed 's/^/      /' /tmp/fa-meta.log

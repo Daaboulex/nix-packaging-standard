@@ -88,7 +88,7 @@ in
     enable = true;
     name = "check-assistant-files";
     entry = "bash ${../scripts/check-assistant-files.sh}";
-    files = "(^|/)(CLAUDE|AGENTS|GEMINI)\\.md$";
+    files = "(^|/)(CLAUDE|AGENTS|GEMINI|CONTRIBUTING)\\.md$";
     language = "system";
   };
   check-commit-message = {

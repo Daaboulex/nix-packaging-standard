@@ -144,9 +144,13 @@ fail_repo() {
 }
 
 restore() {
-  local dir="$1"
+  local dir="$1" f
+  local -a written=()
+  mapfile -t written < <(git -C "$dir" ls-files --others --exclude-standard)
   git -C "$dir" reset --quiet --hard HEAD || echo "fleet-roll: could not reset $dir to HEAD; it is left dirty" >&2
-  local f
+  for f in "${written[@]}"; do
+    [ -n "$f" ] && rm -f "$dir/$f"
+  done
   while IFS= read -r f; do
     [ -n "$f" ] && rm -f "$dir/$f"
   done < <(git -C "$dir" ls-files --others --exclude-standard)

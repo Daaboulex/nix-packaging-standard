@@ -1266,6 +1266,7 @@ check "a missing log fails the report before any gh call" "1:0" "$RC:$(wc -l <"$
 
 echo "Test 25: sync.sh writes the callers and deletes retired copies, except a custom updater; a first-party repo carries no Update caller"
 SYNC="$STD/sync.sh"
+HEADS="$STD/heads"
 d="$WORK/t25"
 for r in plain custom firstparty; do
   mkdir -p "$d/$r/.git" "$d/$r/.github/workflows" "$d/$r/scripts"
@@ -1293,6 +1294,8 @@ check "a repo with an upstream gets the Update caller" "yes" "$same"
 check "a first-party repo loses its Update caller" "absent" "$([ -e "$d/firstparty/.github/workflows/update.yml" ] && echo present || echo absent)"
 if cmp -s "$STD/callers/ci.yml" "$d/firstparty/.github/workflows/ci.yml"; then same=yes; else same=no; fi
 check "a first-party repo still gets the CI caller" "yes" "$same"
+if cmp -s "$STD/.github/ISSUE_TEMPLATE/task.yml" "$d/plain/.github/ISSUE_TEMPLATE/task.yml"; then same=yes; else same=no; fi
+check "a repo gets the task form" "yes" "$same"
 PKG_REPOS_DIR="$d" bash "$SYNC" --check plain custom firstparty >/dev/null
 check "a synced repo is in sync" "0" "$?"
 printf 'not json\n' >"$d/plain/.github/update.json"
@@ -1510,6 +1513,11 @@ SH
   check "a new baseline .gitignore line needs a roll" "roll" "$r"
   if consumers_need_roll "$ignore" "$caller"; then r=roll; else r=none; fi
   check "a changed caller needs a roll" "roll" "$r"
+  mkdir -p "$STD/heads"
+  printf 'head\n' >"$STD/heads/AGENTS.md"
+  g add -A && g commit -qm head && head=$(g rev-parse HEAD)
+  if consumers_need_roll "$caller" "$head"; then r=roll; else r=none; fi
+  check "a changed rule file head needs a roll" "roll" "$r"
   printf '%s %s\n' "$pass" "$fail" >"$d/counts"
 )
 read -r pass fail <"$d/counts"
@@ -1810,7 +1818,7 @@ check "a JSON baseline with more lines is refused" "1" "$?"
 shrink HEAD~1 nosuchcommit
 check "a head that is no commit fails" "1" "$?"
 
-echo "Test 36: check-assistant-files refuses a file for an assistant over 200 lines"
+echo "Test 36: check-assistant-files refuses a rules file over 200 lines, a path under /home and a personal email address"
 d="$WORK/t36"
 mkdir -p "$d"
 seq 200 >"$d/CLAUDE.md"
@@ -1820,6 +1828,18 @@ check "a file of 200 lines passes" "0" "$?"
 bash "$ASSIST" "$d/CLAUDE.md" "$d/AGENTS.md" >"$d/log" 2>&1
 check "a file of 201 lines is refused" "1" "$?"
 check "and it is named with its length" "1" "$(grep -c 'AGENTS.md is 201 lines' "$d/log")"
+printf 'Build in /home/someone/work.\n' >"$d/AGENTS.md"
+bash "$ASSIST" "$d/AGENTS.md" >"$d/log" 2>&1
+check "a path under /home is refused" "1" "$?"
+printf 'Ask a.person@example.org.\n' >"$d/AGENTS.md"
+bash "$ASSIST" "$d/AGENTS.md" >"$d/log" 2>&1
+check "a personal email address is refused" "1" "$?"
+check "and it is named" "1" "$(grep -c 'a.person@example.org' "$d/log")"
+printf 'Credit 1+someone@users.noreply.github.com.\n' >"$d/AGENTS.md"
+bash "$ASSIST" "$d/AGENTS.md" >"$d/log" 2>&1
+check "a GitHub noreply address passes" "0" "$?"
+bash "$ASSIST" "$HEADS/AGENTS.md" "$HEADS/CONTRIBUTING.md" >"$d/log" 2>&1
+check "the standard's own heads pass" "0" "$?"
 
 echo "Test 37: check-readme-sections holds a title and an install section, and asks for no marker"
 readme_case() { # readme_case <name> <line>...  -> runs the hook in a directory holding that README
@@ -1839,6 +1859,103 @@ check "and the refusal says so" "1" "$(grep -c 'no title' "$d/log")"
 readme_case uninstallable '# Tool' '' '## Usage' '' '<!-- BEGIN generated:installation -->'
 check "a marker is not an install section" "1" "$?"
 check "and the refusal names the section" "1" "$(grep -c 'how to install it' "$d/log")"
+echo "Test 38: sync.sh writes the rule files, rewrites only their head, refuses one it cannot merge, and stops ignoring AGENTS.md"
+d="$WORK/t38"
+for r in fresh own unmergeable; do
+  mkdir -p "$d/$r/.git" "$d/$r/.github"
+  printf '{"upstream":{"type":"none"}}\n' >"$d/$r/.github/update.json"
+done
+printf 'result\nAGENTS.md\nCLAUDE.md\n' >"$d/fresh/.gitignore"
+PKG_REPOS_DIR="$d" bash "$SYNC" --check fresh >/dev/null
+check "a repo with no rule files is reported as drift" "1" "$?"
+check "--check writes no rule file" "absent" "$([ -e "$d/fresh/AGENTS.md" ] && echo present || echo absent)"
+PKG_REPOS_DIR="$d" bash "$SYNC" fresh >"$d/log"
+check "sync exits clean on a repo with no rule files" "0" "$?"
+if cmp -s "$HEADS/AGENTS.md" "$d/fresh/AGENTS.md"; then same=yes; else same=no; fi
+check "a new AGENTS.md is the head" "yes" "$same"
+if cmp -s "$HEADS/CONTRIBUTING.md" "$d/fresh/CONTRIBUTING.md"; then same=yes; else same=no; fi
+check "a new CONTRIBUTING.md is the head" "yes" "$same"
+check "AGENTS.md leaves the ignore list" "0" "$(grep -cxF 'AGENTS.md' "$d/fresh/.gitignore")"
+check "CLAUDE.md stays on the ignore list" "1" "$(grep -cxF 'CLAUDE.md' "$d/fresh/.gitignore")"
+PKG_REPOS_DIR="$d" bash "$SYNC" --check fresh >/dev/null
+check "a synced repo is in sync" "0" "$?"
+printf '# AGENTS.md\n\nAn older head.\n\n## This project\n\nBuild with make.\n' >"$d/own/AGENTS.md"
+cp "$HEADS/CONTRIBUTING.md" "$d/own/CONTRIBUTING.md"
+printf '\nTag a release by hand.\n' >>"$d/own/CONTRIBUTING.md"
+PKG_REPOS_DIR="$d" bash "$SYNC" own >"$d/log"
+check "sync exits clean on a repo with its own part" "0" "$?"
+if cmp -s -n "$(wc -c <"$HEADS/AGENTS.md")" "$HEADS/AGENTS.md" "$d/own/AGENTS.md"; then same=yes; else same=no; fi
+check "an older head is rewritten" "yes" "$same"
+check "the repo's own part is kept" "Build with make." "$(tail -n 1 "$d/own/AGENTS.md")"
+check "a file that already begins with the head is left alone" "Tag a release by hand." "$(tail -n 1 "$d/own/CONTRIBUTING.md")"
+for name in AGENTS.md CONTRIBUTING.md; do
+  if cmp -s -n "$(wc -c <"$HEADS/$name")" "$HEADS/$name" "$HEADS/../$name"; then same=yes; else same=no; fi
+  check "the standard's own $name begins with its head" "yes" "$same"
+done
+printf '# Contributing\n\nSend a patch.\n' >"$d/unmergeable/CONTRIBUTING.md"
+PKG_REPOS_DIR="$d" bash "$SYNC" unmergeable >"$d/log"
+check "a rules file with no This project heading fails the sync" "1" "$?"
+check "and it is named" "1" "$(grep -c 'MERGE  unmergeable/CONTRIBUTING.md' "$d/log")"
+check "and its content is untouched" "Send a patch." "$(tail -n 1 "$d/unmergeable/CONTRIBUTING.md")"
+
+echo "Test 39: sync-meta.sh names a repo that lacks a label and creates only the missing ones"
+d="$WORK/t40"
+mkdir -p "$d/repos/plain/.git" "$d/repos/plain/.github" "$d/bin"
+git -C "$d/repos/plain" init -q
+git -C "$d/repos/plain" remote add origin https://github.com/owner/plain.git
+printf '{"description":"Plain packaged for NixOS","topics":["nix"]}\n' >"$d/repos/plain/.github/update.json"
+cat >"$d/bin/gh" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >>"$GH_CALLS"
+case "$1 $2" in
+"repo view") printf '{"description":"Plain packaged for NixOS","repositoryTopics":[{"name":"nix"}]}\n' ;;
+"label list") cat "$GH_LABELS" ;;
+esac
+SH
+chmod +x "$d/bin/gh"
+printf 'type/bug\ntype/feature\ntype/task\nlater\n' >"$d/labels"
+GH_CALLS="$d/calls" GH_LABELS="$d/labels" PATH="$d/bin:$PATH" PKG_REPOS_DIR="$d/repos" bash "$HEADS/../sync-meta.sh" --check plain >"$d/log" 2>&1
+check "a repo lacking one label is drift" "1" "$?"
+check "and the drift is named as labels" "1" "$(grep -c 'DRIFT  plain \[labels\]' "$d/log")"
+: >"$d/calls"
+GH_CALLS="$d/calls" GH_LABELS="$d/labels" PATH="$d/bin:$PATH" PKG_REPOS_DIR="$d/repos" bash "$HEADS/../sync-meta.sh" plain >"$d/log" 2>&1
+check "the missing label is created" "1" "$(grep -c '^label create waiting ' "$d/calls")"
+check "and no label that exists is created again" "1" "$(grep -c '^label create ' "$d/calls")"
+printf 'waiting\n' >>"$d/labels"
+GH_CALLS="$d/calls" GH_LABELS="$d/labels" PATH="$d/bin:$PATH" PKG_REPOS_DIR="$d/repos" bash "$HEADS/../sync-meta.sh" --check plain >"$d/log" 2>&1
+check "a repo with every label is in sync" "0" "$?"
+
+echo "Test 40: fleet-roll's restore removes a file the sync wrote, also one the restored ignore list hides again"
+d="$WORK/t41"
+mkdir -p "$d/repo"
+git -C "$d/repo" init -q
+printf 'result\nAGENTS.md\n' >"$d/repo/.gitignore"
+git -C "$d/repo" add .gitignore
+git -C "$d/repo" -c user.name=t -c user.email=t@t commit -qm base
+printf 'result\n' >"$d/repo/.gitignore"
+printf 'head\n' >"$d/repo/AGENTS.md"
+printf 'head\n' >"$d/repo/CONTRIBUTING.md"
+(
+  eval "$(sed -n '/^restore() {$/,/^}$/p' "$HEADS/../scripts/fleet-roll.sh")"
+  restore "$d/repo"
+)
+check "the rule file the old ignore list hides is gone" "absent" "$([ -e "$d/repo/AGENTS.md" ] && echo present || echo absent)"
+check "the other written file is gone" "absent" "$([ -e "$d/repo/CONTRIBUTING.md" ] && echo present || echo absent)"
+check "the ignore list is the committed one again" "1" "$(grep -cxF 'AGENTS.md' "$d/repo/.gitignore")"
+check "and the repo is clean" "" "$(git -C "$d/repo" status --porcelain --ignored)"
+
+echo "Test 41: the Track work section holds the words the owner fixed"
+track_words() {
+  awk '/^## Track work$/{on=1; print; next} on && /^## /{exit} on' "$1" | tr -s '[:space:]' ' ' | sed 's/ $//' | sha256sum | cut -d' ' -f1
+}
+fixed=8bb269ac1f36ff69c0b12836ca8689a684f2d50b0bef501c014cbac900074aee
+check "heads/CONTRIBUTING.md carries them; a change needs his word and this value in the same commit" "$fixed" "$(track_words "$HEADS/CONTRIBUTING.md")"
+sed 's/two cases only/three cases only/' "$HEADS/CONTRIBUTING.md" >"$WORK/t39.md"
+if [ "$(track_words "$WORK/t39.md")" = "$fixed" ]; then rc=same; else rc=differs; fi
+check "one changed word gives another value" "differs" "$rc"
+sed 's/^- An open task is an issue in the repo it belongs to. /- An open task is an issue in the repo it belongs to.\n  /' "$HEADS/CONTRIBUTING.md" >"$WORK/t39.md"
+check "another line wrap gives the same value" "$fixed" "$(track_words "$WORK/t39.md")"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

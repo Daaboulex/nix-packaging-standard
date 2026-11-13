@@ -58,7 +58,7 @@ consumers_need_roll() {
     echo "release: synced-files.json at $2 names no file" >&2
     return 0
   }
-  ! git -C "$STD" diff --quiet "$1" "$2" -- "${carried[@]}" .gitignore synced-files.json
+  ! git -C "$STD" diff --quiet "$1" "$2" -- "${carried[@]}" .gitignore synced-files.json heads
 }
 
 eval_checks() {
@@ -287,7 +287,7 @@ main() {
   echo
   echo "released $version: origin/release is $sha"
   if [ "$roll_needed" -eq 1 ]; then
-    echo "What consumers carry changed since $prev; each consumer fails std-conformance or std-devstate at its next lock refresh until rolled:"
+    echo "What consumers carry changed since $prev; each consumer fails std-conformance, std-rule-files or std-devstate at its next lock refresh until rolled:"
     echo "  PKG_REPOS_DIR=$repos_dir $STD/scripts/fleet-roll.sh --execute --notes <file>"
   fi
   if [ "$update_changed" -eq 1 ]; then

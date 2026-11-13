@@ -185,6 +185,21 @@
                   firstParty.std-no-retired-copies.present
                   [ updateCaller ]
                 )
+                (expect "a consumer must carry the task form"
+                  (lib.elem ".github/ISSUE_TEMPLATE/task.yml" current.std-conformance.required)
+                  true
+                )
+                (expect "a consumer carrying both rule files with the standard's head has nothing named"
+                  current.std-rule-files.found
+                  {
+                    missing = [ ];
+                    stale = [ ];
+                  }
+                )
+                (expect "a missing rule file and one with another head are each named" stale.std-rule-files.found {
+                  missing = [ "CONTRIBUTING.md" ];
+                  stale = [ "AGENTS.md" ];
+                })
                 (expect "a consumer declaring both systems lints on x86_64-linux" (
                   both.x86_64-linux ? pre-commit
                 ) true)

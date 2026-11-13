@@ -83,6 +83,16 @@ Every consumer repo follows these. Metadata (description + topics) is declared i
   lock bump by filing an issue, so every repo keeps GitHub Issues enabled — a
   disabled-Issues repo would swallow those failures silently. `fleet-audit`
   enforces this.
+- **Rule files**: every repo carries an `AGENTS.md` and a `CONTRIBUTING.md`.
+  Each begins with the standard's own text (`heads/`), which `std-rule-files`
+  holds it to, and keeps the repo's own rules under `## This project`.
+  `AGENTS.md` is the one file written for an assistant that is tracked;
+  `CLAUDE.md` and `GEMINI.md` stay on the ignore list.
+- **Where things live**: why a repo exists is the README's first sentence. A
+  decision's reason is the commit body, and a decision that shapes the project
+  also gets one short file in `docs/`. Open work is one issue per matter, made
+  from the bug, request or task form, whose labels `sync-meta.sh` creates.
+  What was done is the git history. `CONTRIBUTING.md` says the rest.
 - **License**: the repo's `LICENSE` is **MIT** — it licenses *your* Nix packaging
   code, which is permissive and reusable. The packaged software's licence is
   declared in the derivation's `meta.license`, which **must be accurate**. Two
@@ -224,17 +234,18 @@ against the tree:
   A flake that names no module gets neither the check nor the app.
 - **No history.** A page says what is true now. What a release changed lives
   in its tag message.
-- **A file for an assistant is the exception.** The README is the one source,
-  for a person and a tool alike. Where a repository keeps a `CLAUDE.md`,
-  `AGENTS.md` or `GEMINI.md`, it holds only what the code cannot show and
-  stays at 200 lines or under (`check-assistant-files`). A rule that must
-  hold becomes a hook or a check, never a sentence in that file.
+- **A file for an assistant stays short.** The README is the one source, for
+  a person and a tool alike. `AGENTS.md` holds only what the code cannot show,
+  stays at 200 lines or under, and names no path under `/home` and no personal
+  email address (`check-assistant-files`, which reads `CONTRIBUTING.md` as
+  well). A rule that must hold becomes a hook or a check, never a sentence in
+  that file.
 
 ## `flakeModules`
 
 | Module | Provides |
 | --- | --- |
-| `base` | git-hooks gate (every hook in the table below), `formatter`, `devShells.default`, every declared package aliased into `checks` on the systems its `meta.platforms` supports (so `nix flake check` BUILDS it), and these checks: `std-conformance` (synced files byte-match the canonical), `std-no-retired-copies` (no script copy the workflows no longer read), `std-follows-release` (`inputs.std.url` is the `release` branch, `releaseUrl`), `std-update-json` (`.github/update.json` satisfies the schema), `std-devstate` (the baseline `.gitignore` entries are present), `std-devshell-order` (every dev shell pins `PRE_COMMIT_HOME` before it installs the hooks), `std-homestate` (no `home.file` in the home root), `std-meta-maintainers` (maintainers carry the nixpkgs shape), `std-no-fail-open` (no shell shape that reports success while doing nothing), `std-no-deprecated-system` (no `pkgs.system` read), `std-no-host-profile` (no path under the host's profile), and, where the flake names a module under `std.option-reference`, `std-option-reference` (`docs/OPTIONS.md` is what the modules declare, and the README links to it) |
+| `base` | git-hooks gate (every hook in the table below), `formatter`, `devShells.default`, every declared package aliased into `checks` on the systems its `meta.platforms` supports (so `nix flake check` BUILDS it), and these checks: `std-conformance` (synced files byte-match the canonical), `std-no-retired-copies` (no script copy the workflows no longer read), `std-rule-files` (`AGENTS.md` and `CONTRIBUTING.md` begin with the standard's heads), `std-follows-release` (`inputs.std.url` is the `release` branch, `releaseUrl`), `std-update-json` (`.github/update.json` satisfies the schema), `std-devstate` (the baseline `.gitignore` entries are present), `std-devshell-order` (every dev shell pins `PRE_COMMIT_HOME` before it installs the hooks), `std-homestate` (no `home.file` in the home root), `std-meta-maintainers` (maintainers carry the nixpkgs shape), `std-no-fail-open` (no shell shape that reports success while doing nothing), `std-no-deprecated-system` (no `pkgs.system` read), `std-no-host-profile` (no path under the host's profile), and, where the flake names a module under `std.option-reference`, `std-option-reference` (`docs/OPTIONS.md` is what the modules declare, and the README links to it) |
 
 The hooks `base` installs, rendered from `flake-modules/hooks.nix`:
 
@@ -304,9 +315,11 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `flake-modules/option-reference.nix` | *(imported by `base`; retired copy `scripts/update-readme-options.sh`)* | Write and check `docs/OPTIONS.md` from the modules a flake names under `std.option-reference` |
 | `.envrc` | `.envrc` | `use flake`, so nix-direnv carries the dev-state pins into every entry point |
 | `.editorconfig` | `.editorconfig` | The fleet's editor defaults |
+| `.github/ISSUE_TEMPLATE/bug.yml`, `.github/ISSUE_TEMPLATE/request.yml`, `.github/ISSUE_TEMPLATE/task.yml`, `.github/ISSUE_TEMPLATE/config.yml` | the same paths | The bug, request and task forms, and blank issues off |
+| `heads/AGENTS.md`, `heads/CONTRIBUTING.md` | the top of `AGENTS.md` and `CONTRIBUTING.md` | The rules every repo shares; `sync.sh` writes a missing file and rewrites only the top of an existing one, and `std-rule-files` holds a repo to it |
 | `update.schema.json` | *(reference, not synced)* | JSON Schema for `update.json` |
 | `sync.sh` | *(run from here)* | Write the synced files into repos and delete the retired copies |
-| `sync-meta.sh` | *(run from here)* | Apply repo description + topics from `update.json` to GitHub |
+| `sync-meta.sh` | *(run from here)* | Apply repo description + topics from `update.json` to GitHub, and create the labels the issue forms name |
 | `scripts/release.sh` | *(run from here)* | The only way `release` moves: CI on the commit, then the fleet check, then the tag and the fast-forward |
 | `scripts/fleet-audit.sh` | *(run from here)* | The fleet's green/red oracle: conformance + metadata + archetype + branches + issues + CI, local and remote |
 | `scripts/fleet-roll.sh` | *(run from here)* | Adopt the `release` head across every consumer: pin, lock, sync from that commit, install the adopted release's hook set (the gitignored config link is removed first, so git-hooks.nix installs even where only the hook is gone), build, commit, push, each repo restored on any failure; `--build-on-ci` evaluates every declared system and leaves the build to each repo's CI on push |
@@ -577,9 +590,11 @@ export PKG_REPOS_DIR=/path/to/repos   # directory holding the packaging clones
 ```
 
 `sync.sh` copies each synced file and deletes each retired copy; a `custom`-type
-repo keeps its own `scripts/update.sh`. Enforcement is the per-repo
-`std-conformance` and `std-no-retired-copies` checks; `sync.sh --check` is the
-same comparison locally.
+repo keeps its own `scripts/update.sh`. It writes a missing `AGENTS.md` or
+`CONTRIBUTING.md`, rewrites only what stands above `## This project` in an
+existing one, and fails on one that has no such heading. Enforcement is the
+per-repo `std-conformance`, `std-no-retired-copies` and `std-rule-files`
+checks; `sync.sh --check` is the same comparison locally.
 
 ## Releasing
 
@@ -607,8 +622,9 @@ only, and every consumer left out with `--skip`. One failing consumer refuses
 the release.
 
 When a release changes what consumers carry (every file `synced-files.json`
-names, the map itself, or the baseline `.gitignore`), each consumer's next lock
-refresh fails `std-conformance` or `std-devstate` until it is rolled, so
+names, the map itself, a file under `heads/`, or the baseline `.gitignore`),
+each consumer's next lock refresh fails `std-conformance`, `std-rule-files`
+or `std-devstate` until it is rolled, so
 `release.sh` names the roll to run: `scripts/fleet-roll.sh --execute --notes
 <file>`. Everything else, every workflow and script change, reaches the fleet
 on its next run. A roll left to run unattended adds `--build-on-ci`: each repo

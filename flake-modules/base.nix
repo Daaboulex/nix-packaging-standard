@@ -80,6 +80,30 @@ in
           "${dst} is a retired copy: the workflows run the standard's own script at the commit that defines them, so this file is never read; delete it";
       retiredPresent = builtins.filter (dst: builtins.pathExists (src + "/${dst}")) retired;
 
+      ruleHeads = {
+        "AGENTS.md" = ../heads/AGENTS.md;
+        "CONTRIBUTING.md" = ../heads/CONTRIBUTING.md;
+      };
+      ruleFiles = {
+        missing = builtins.filter (name: !builtins.pathExists (src + "/${name}")) (
+          builtins.attrNames ruleHeads
+        );
+        stale = builtins.filter (
+          name:
+          builtins.pathExists (src + "/${name}")
+          && !lib.hasPrefix (builtins.readFile ruleHeads.${name}) (builtins.readFile (src + "/${name}"))
+        ) (builtins.attrNames ruleHeads);
+      };
+      ruleFileErrors =
+        map (
+          name:
+          "${name} is missing: sync.sh writes the standard's heads/${name}; this repo's own rules go under its This project heading"
+        ) ruleFiles.missing
+        ++ map (
+          name:
+          "${name} does not begin with the standard's heads/${name}: sync.sh rewrites everything above the This project heading and keeps what is below it"
+        ) ruleFiles.stale;
+
       inherit (import ../lib.nix) releaseUrl;
       declaredStdUrl = ((import (src + "/flake.nix")).inputs.std or { }).url or "(no std input)";
 
@@ -162,6 +186,14 @@ in
                 ) retiredPresent
                 + "\nexit 1\n"
             );
+
+        std-rule-files = pkgs.runCommand "std-rule-files" { passthru.found = ruleFiles; } (
+          if ruleFileErrors == [ ] then
+            ''touch "$out"''
+          else
+            lib.concatMapStringsSep "\n" (e: "echo ${lib.escapeShellArg "::error::${e}"}") ruleFileErrors
+            + "\nexit 1\n"
+        );
 
         std-follows-release =
           pkgs.runCommand "std-follows-release" { passthru.declared = declaredStdUrl; }

@@ -7,6 +7,7 @@ REPOS_DIR="${PKG_REPOS_DIR:?set PKG_REPOS_DIR to the directory holding the packa
 
 declare -A FILES=()
 declare -a RETIRED=()
+declare -a RETIRED_IGNORES=(AGENTS.md)
 while IFS=$'\t' read -r dst src; do
   if [ -z "$src" ]; then
     RETIRED+=("$dst")
@@ -37,6 +38,7 @@ if [ ${#targets[@]} -eq 0 ]; then
 fi
 
 drift=0
+unmerged=0
 for repo in "${targets[@]}"; do
   dir="$REPOS_DIR/$repo"
   if [ "$dir" -ef "$STD" ]; then
@@ -70,6 +72,31 @@ for repo in "${targets[@]}"; do
     fi
   done
 
+  for name in AGENTS.md CONTRIBUTING.md; do
+    head="$STD/heads/$name"
+    dst="$dir/$name"
+    if [ -f "$dst" ] && cmp -s -n "$(wc -c <"$head")" "$head" "$dst"; then
+      continue
+    fi
+    drift=1
+    if [ "$CHECK" -eq 1 ]; then
+      echo "DRIFT  $repo/$name"
+    elif [ ! -f "$dst" ]; then
+      cp "$head" "$dst"
+      echo "synced $repo/$name (new: this repo's own rules go under This project)"
+    elif grep -qx '## This project' "$dst"; then
+      {
+        cat "$head"
+        sed '1,/^## This project$/d' "$dst"
+      } >"$dst.new"
+      mv "$dst.new" "$dst"
+      echo "synced $repo/$name (head rewritten, This project kept)"
+    else
+      unmerged=1
+      echo "MERGE  $repo/$name has no This project heading: move its content under one by hand, then sync again"
+    fi
+  done
+
   retire=("${RETIRED[@]}")
   if [ "$rtype" = none ]; then
     retire+=(".github/workflows/update.yml")
@@ -91,6 +118,17 @@ for repo in "${targets[@]}"; do
 
   gi="$dir/.gitignore"
   [ -f "$gi" ] || : >"$gi"
+  for line in "${RETIRED_IGNORES[@]}"; do
+    grep -qxF "$line" "$gi" || continue
+    drift=1
+    if [ "$CHECK" -eq 1 ]; then
+      echo "DRIFT  $repo/.gitignore still ignores: $line"
+    else
+      grep -vxF "$line" "$gi" >"$gi.new" || true
+      mv "$gi.new" "$gi"
+      echo "healed $repo/.gitignore -= $line"
+    fi
+  done
   while IFS= read -r line; do
     case "$line" in "" | "#"*) continue ;; esac
     grep -qxF "$line" "$gi" && continue
@@ -110,6 +148,11 @@ if [ "$CHECK" -eq 1 ]; then
     exit 0
   fi
   echo "drift detected: run sync.sh to fix"
+  exit 1
+fi
+if [ "$unmerged" -eq 1 ]; then
+  echo
+  echo "a rules file could not be merged: see the MERGE lines above"
   exit 1
 fi
 echo
