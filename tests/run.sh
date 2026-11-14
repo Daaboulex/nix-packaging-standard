@@ -1393,6 +1393,17 @@ privately missing "$good" "$d/words/absent"
 check "a private list that is configured and missing refuses the commit" "1" "$?"
 privately onci 'feat(std): add stuff\n\nbuilt on Grandpiano today\n\nTest: none, docs\n' "$d/words/list" true
 check "in CI no private name is read, so the same message passes" "0" "$?"
+printf 'grand-piano 88\n' >"$d/words/spaced"
+privately joined 'feat(std): add stuff\n\nbuilt with the GrandPiano88 here\n\nTest: none, docs\n' "$d/words/spaced"
+check "a listed word written without its separators is refused" "1" "$?"
+privately commas 'feat(std): add stuff\n\nthe Grand Piano, 88 was what it ran with\n\nTest: none, docs\n' "$d/words/spaced"
+check "a listed word written with other separators is refused" "1" "$?"
+privately apart 'feat(std): add stuff\n\nthe grand plan keeps a piano of 88 keys\n\nTest: none, docs\n' "$d/words/spaced"
+check "the parts of a listed word spread over a sentence pass" "0" "$?"
+message hwaddress 'feat(std): add stuff\n\nthe frame came from aa:bb:cc:dd:ee:ff then\n\nTest: none, docs\n'
+check "a network hardware address is refused" "1" "$?"
+message clocktime 'feat(std): add stuff\n\nthe log line reads 12:30:45 and the ratio 16:9\n\nTest: none, docs\n'
+check "a clock time and a ratio are not a hardware address" "0" "$?"
 host=$(uname -n | tr '[:upper:]' '[:lower:]')
 part=$(tr '.-' '\n' <<<"$host" | awk 'length($0) >= 5 && /[a-z]/' | grep -vxE 'local|localhost|localdomain|nixos|linux|ubuntu|debian|server|desktop|laptop|github' | head -1)
 if [ -n "$part" ] && [ -z "${GITHUB_ACTIONS:-}" ]; then

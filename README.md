@@ -136,9 +136,12 @@ Every consumer repo follows these. Metadata (description + topics) is declared i
   made: this computer's own name and the machines in its Nix builders file,
   whole and in parts of five characters or more, plus the words in the file
   `git config std.privateWords` names, one per line, for what cannot be
-  derived. A name inside an identifier (`ryzen_smu`) passes. A configured
+  derived. A name inside an identifier (`ryzen_smu`) passes. A word is
+  matched in any spelling of its separators: a listed `grand-piano 88`
+  also refuses `GrandPiano88` and `Grand Piano, 88`. A configured
   list that cannot be read refuses the commit. In CI nothing is derived:
-  a runner knows no private name.
+  a runner knows no private name. A network hardware address, six pairs
+  of hex digits, is refused everywhere.
 
   A name is kept out before it is public or not at all, and CI runs after
   the push. So the same check runs twice on the committing computer:

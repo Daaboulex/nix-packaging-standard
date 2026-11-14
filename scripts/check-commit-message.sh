@@ -126,12 +126,29 @@ for line in "${rest[@]:2}"; do
     refuse "the Test: line says where it ran (on ${BASH_REMATCH[2]}${BASH_REMATCH[3]}); name what ran, not the machine"
   fi
 done
+any_spelling() {
+  local word="$1" pattern="" char i
+  for ((i = 0; i < ${#word}; i++)); do
+    char=${word:i:1}
+    case "$char" in
+    [-._\ ,]) pattern+='[-._ ,]*' ;;
+    [[:alnum:]]) pattern+="$char" ;;
+    *) pattern+="\\$char" ;;
+    esac
+  done
+  printf '%s' "$pattern"
+}
 for word in "${private[@]}"; do
-  [ -n "$word" ] || continue
-  if [[ $message =~ (^|[^[:alnum:]_-])"$word"([^[:alnum:]_-]|$) ]]; then
+  [[ $word =~ [[:alnum:]] ]] || continue
+  spelled="(^|[^[:alnum:]_-])$(any_spelling "$word")([^[:alnum:]_-]|\$)"
+  if [[ $message =~ $spelled ]]; then
     refuse "names $word, a machine this computer builds on or a word in its private list; say it without the name"
   fi
 done
+hardware_address='(^|[^[:xdigit:]:-])([[:xdigit:]]{2}[:-]){5}[[:xdigit:]]{2}([^[:xdigit:]:-]|$)'
+if [[ $message =~ $hardware_address ]]; then
+  refuse "holds a network hardware address; a message never carries one"
+fi
 email='[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}'
 trailer='Co-Authored-By|Generated with|noreply@anthropic\.com'
 if [[ $message =~ $email ]]; then
