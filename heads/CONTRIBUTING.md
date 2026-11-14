@@ -42,8 +42,9 @@ Open an issue with the bug, request or task form.
   wrong line is deleted or fixed when seen.
 - An open point is written as the question that is open, never as an errand: no line about a person
   asking, waiting on or confirming something with someone else.
-- Nothing that exists only on your own machine goes into the project: no personal names, addresses,
-  machines, hardware, paths, tools or habits.
+- Nothing that exists only on your own machine goes into the project, or into an issue, a pull
+  request or a comment on one: no personal names, addresses, machines, hardware, paths, tools or
+  habits.
 - Never hide an error. Read a result from the check's own exit code.
 
 ## Improve these rules
