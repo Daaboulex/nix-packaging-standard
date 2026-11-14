@@ -34,6 +34,8 @@ Open an issue with the bug, request or task form.
 - Run `nix flake check` before you commit. A red `main` is fixed before anything else.
 - The commit message says why the change was made. A decision that shapes the project also gets
   one short file in `docs/`.
+- A fix names the cause it removes. When a later fix names another cause for the same failure, the
+  earlier fix comes out in that change unless it is proven on its own. Unmeasured is not proven.
 - A doc says only what the code cannot: a decision, a fact about an outside system, or a trap no
   check catches. It never repeats what the code, a check's message or a command's usage says, and
   never copies state such as counts, versions or what runs where: that is read at its source. A
