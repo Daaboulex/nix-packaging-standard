@@ -1967,6 +1967,14 @@ check "one changed word gives another value" "differs" "$rc"
 sed 's/^- An open task is an issue in the repo it belongs to. /- An open task is an issue in the repo it belongs to.\n  /' "$HEADS/CONTRIBUTING.md" >"$WORK/t39.md"
 check "another line wrap gives the same value" "$fixed" "$(track_words "$WORK/t39.md")"
 
+standard_root="${HEADS%/heads}"
+echo "Test 42: a repo carries main, and testing for a next release, and no other branch"
+check "main and testing are no extra branch" "" "$(printf 'main\ntesting\n' | bash "$standard_root/scripts/extra-branches.sh")"
+check "any other branch is named" "exp/try update/pkg-1.2" "$(printf 'main\nexp/try\ntesting\nupdate/pkg-1.2\n' | bash "$standard_root/scripts/extra-branches.sh" | tr '\n' ' ' | sed 's/ $//')"
+check "a branch that only starts like testing is named" "testing-old" "$(printf 'main\ntesting-old\n' | bash "$standard_root/scripts/extra-branches.sh")"
+check "the CI every repo carries runs on a push to testing" "1" "$(grep -c 'branches: \[main, master, testing\]' "$standard_root/callers/ci.yml")"
+check "the audit reads the same list" "1" "$(grep -c 'scripts/extra-branches.sh' "$standard_root/scripts/fleet-audit.sh")"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

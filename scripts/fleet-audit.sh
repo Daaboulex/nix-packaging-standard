@@ -624,7 +624,7 @@ if [ "$DO_REMOTE" -eq 1 ]; then
     fi
   fi
 
-  hdr "remote: branches normalized (single main, no stale update/*)"
+  hdr "remote: branches normalized (main, testing for a next release, no stale update/*)"
   for repo in "${CONSUMERS[@]}"; do
     has_remote "$repo" || {
       warn "$repo: no git remote - remote checks skipped (local-only repo)"
@@ -638,9 +638,9 @@ if [ "$DO_REMOTE" -eq 1 ]; then
       red "$repo: no branches returned (unexpected empty result)"
       continue
     fi
-    extra="$(grep -vxE 'main' <<<"$branches" || true)"
+    extra="$(bash "$STD/scripts/extra-branches.sh" <<<"$branches")"
     if [ -z "$extra" ]; then
-      ok "$repo: single 'main' branch"
+      ok "$repo: only $(tr '\n' ' ' <<<"$branches" | sed 's/ $//')"
     else
       red "$repo: stale/extra branches: $(tr '\n' ' ' <<<"$extra")"
     fi

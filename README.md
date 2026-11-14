@@ -73,8 +73,11 @@ paths below.
 Every consumer repo follows these. Metadata (description + topics) is declared in
 `.github/update.json` and applied with `sync-meta.sh`, so it can't silently drift.
 
-- **Default branch**: `main`, and a single branch — the Maintenance
-  cleanup job prunes stale `update/*` branches.
+- **Branches**: `main`, and no other. The one exception is `testing`, for a
+  project that has a release out while the next one is in work; CI runs on
+  a push to it as it does on `main`. `scripts/extra-branches.sh` names
+  every other branch, `fleet-audit` reds it, and the Maintenance cleanup
+  job prunes stale `update/*` branches.
 - **No per-repo dependabot**: GitHub Actions are pinned by SHA in this
   standard's reusable workflows and bumped here by dependabot; a consumer's
   callers pin no action, so a consumer `.github/dependabot.yml` has nothing to
