@@ -503,7 +503,8 @@ most instead of burning the six-hour default; `std-every-job-has-a-timeout`
 refuses a job without one.
 
 The commit-message hook can be skipped locally, so the build job runs it
-again over every commit of the push or pull request
+again over every commit of the push or pull request that the default branch
+does not hold yet
 (`scripts/check-commit-messages-ci.sh`): through the `std-check-commit-messages`
 app, with the consumer's own `args`, on the system that has the app, and
 through the standard's own checker, without those `args`, when the consumer's

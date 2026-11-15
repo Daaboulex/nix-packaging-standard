@@ -5,14 +5,22 @@ base=$1
 head=$2
 shift 2
 
-remote=${PRE_COMMIT_REMOTE_NAME:-}
+held=()
+holder=""
+if [ -n "${PRE_COMMIT_REMOTE_NAME:-}" ]; then
+  held=("--remotes=$PRE_COMMIT_REMOTE_NAME")
+  holder=$PRE_COMMIT_REMOTE_NAME
+elif [ -n "${STD_JUDGED_REF:-}" ] && git rev-parse --verify --quiet "$STD_JUDGED_REF^{commit}" >/dev/null; then
+  held=("$STD_JUDGED_REF")
+  holder=$STD_JUDGED_REF
+fi
 commits=()
 if [ -n "$base" ] && git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
   mapfile -t commits < <(git rev-list --reverse "$base..$head")
-  if [ -n "$remote" ] && [ "${#commits[@]}" != 0 ]; then
-    mapfile -t commits < <(git rev-list --reverse "$base..$head" --not "--remotes=$remote")
+  if [ -n "$holder" ] && [ "${#commits[@]}" != 0 ]; then
+    mapfile -t commits < <(git rev-list --reverse "$base..$head" --not "${held[@]}")
     if [ "${#commits[@]}" = 0 ]; then
-      echo "every commit after '$base' up to $head is already on $remote; nothing new to check"
+      echo "every commit after '$base' up to $head is already on $holder; nothing new to check"
       exit 0
     fi
   fi

@@ -1466,6 +1466,14 @@ g update-ref refs/remotes/origin/main HEAD
 pushed origin "$first" HEAD
 check "a range the remote holds in full passes and says so" "0 1" "$? $(grep -c 'already on origin' "$d/log")"
 g update-ref -d refs/remotes/origin/main
+judged() { (cd "$d" && STD_JUDGED_REF=$1 bash "$RANGE" "$2" "$3" bash "$CHECKER" buildhost >"$d/log" 2>&1); }
+g update-ref refs/heads/default "$bad"
+judged refs/heads/default "$first" HEAD
+check "CI on another branch does not judge again what the default branch holds" "0 0 1" \
+  "$? $(grep -c '^FAIL ' "$d/log") $(grep -c '^ok ' "$d/log")"
+judged refs/heads/nosuchbranch "$first" HEAD
+check "a judged ref that does not exist leaves the whole range to judge" "1" "$?"
+g update-ref -d refs/heads/default
 git -C "$d" -c user.name=t -c user.email=someone@example.org commit -q --allow-empty -F "$WORK/t27/good"
 range HEAD~1 HEAD
 check "a commit whose author address is not a GitHub noreply address is refused" "1" "$?"
@@ -1536,6 +1544,26 @@ SH
   check "the newest tag itself is refused" "refused" "$r"
   if newer_than_every_tag v2.10.0; then r=newer; else r=refused; fi
   check "a version older than the newest tag is refused, compared as versions" "refused" "$r"
+
+  git init -q --bare "$d/remote.git"
+  git -C "$STD" remote add origin "$d/remote.git"
+  git -C "$STD" config user.name t
+  git -C "$STD" config user.email t@t
+  cat >"$d/remote.git/hooks/update" <<'SH'
+#!/bin/sh
+[ "$1" = refs/heads/release ] && exit 1
+exit 0
+SH
+  chmod +x "$d/remote.git/hooks/update"
+  echo notes >"$d/tagmsg"
+  sha=$(git -C "$STD" rev-parse HEAD)
+  if (publish "$STD" v3.0.0 "$d/tagmsg" "$sha") >"$d/publish.log" 2>&1; then rc=0; else rc=1; fi
+  check "a refused branch move leaves no tag on the remote and none here" "1 0 0" \
+    "$rc $(git -C "$d/remote.git" tag -l v3.0.0 | wc -l) $(git -C "$STD" tag -l v3.0.0 | wc -l)"
+  rm "$d/remote.git/hooks/update"
+  if (publish "$STD" v3.0.0 "$d/tagmsg" "$sha") >"$d/publish.log" 2>&1; then rc=0; else rc=1; fi
+  check "the tag and the release branch arrive together" "0 1 $sha" \
+    "$rc $(git -C "$d/remote.git" tag -l v3.0.0 | wc -l) $(git -C "$d/remote.git" rev-parse --verify -q refs/heads/release)"
 
   g() { git -C "$STD" -c user.name=t -c user.email=t@t "$@"; }
   mkdir -p "$STD/callers"

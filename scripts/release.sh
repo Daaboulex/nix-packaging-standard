@@ -73,6 +73,14 @@ refuse() {
   exit 1
 }
 
+publish() {
+  git -C "$1" tag -a "$2" -F "$3" "$4" || refuse "could not create the tag"
+  if ! git -C "$1" push --atomic origin "refs/tags/$2" "$4:refs/heads/release"; then
+    git -C "$1" tag -d "$2" >/dev/null
+    refuse "nothing was pushed: the tag $2 and the release branch move together or not at all, and the local tag is removed again"
+  fi
+}
+
 main() {
   local version="" dry=0 arg notes=""
   declare -a skip=()
@@ -278,11 +286,7 @@ main() {
     rm -rf "$work"
     exit 0
   fi
-  git -C "$STD" tag -a "$version" -F "$msg" "$sha" || refuse "could not create the tag"
-  git -C "$STD" push origin "refs/tags/$version" || refuse "the tag $version was created locally but not pushed"
-  if ! git -C "$STD" push origin "$sha:refs/heads/release"; then
-    refuse "$version is pushed but the release branch did not move; push it with: git -C $STD push origin $sha:refs/heads/release"
-  fi
+  publish "$STD" "$version" "$msg" "$sha"
   rm -rf "$work"
   echo
   echo "released $version: origin/release is $sha"
