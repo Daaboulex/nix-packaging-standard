@@ -1412,6 +1412,26 @@ if [ -n "$part" ] && [ -z "${GITHUB_ACTIONS:-}" ]; then
 else
   ok "this computer's name has no part to refuse, or this is CI, where no private name exists"
 fi
+readme_repo() {
+  mkdir -p "$d/$1"
+  (cd "$d/$1" && git init -q . 2>/dev/null && printf '%b' "$2" >README.md && git add README.md)
+  printf '%b' "$3" >"$d/$1.msg"
+  (cd "$d/$1" && env -u GITHUB_ACTIONS bash "$CHECKER" "$d/$1.msg" >"$d/$1.log" 2>&1)
+}
+if [ -n "$part" ] && [ -z "${GITHUB_ACTIONS:-}" ]; then
+  readme_repo subject "# tool\n\nA tuner for the $part line of chips.\n" "feat(std): add stuff\n\nmeasured on $part today\n\nTest: none, docs\n"
+  check "a part of this computer's name that the repo's README uses passes there" "0" "$?"
+  readme_repo inname "# tool\n\nBuilt on $host only.\n" "feat(std): add stuff\n\nmeasured on $part today\n\nTest: none, docs\n"
+  check "a README that holds the part only inside the full name keeps it refused" "1" "$?"
+  if [ "$host" != "$part" ]; then
+    readme_repo fullname "# tool\n\nA tuner for the $part line of chips.\n" "feat(std): add stuff\n\nmeasured on $host today\n\nTest: none, docs\n"
+    check "the full name is refused even where the README uses a part of it" "1" "$?"
+  else
+    ok "this computer's name has one part, so there is no full name to tell apart"
+  fi
+else
+  ok "no part of a computer's name to weigh against a README here"
+fi
 
 echo "Test 28: check-commit-range refuses a bad message anywhere in the pushed range and names its commit"
 RANGE="$STD/scripts/check-commit-range.sh"

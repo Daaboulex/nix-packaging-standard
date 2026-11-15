@@ -85,8 +85,13 @@ if [[ $message =~ $first_person ]]; then
   refuse "speaks in the first person (${BASH_REMATCH[2]}); say what the change does and why"
 fi
 
+tracked_readme=$(git cat-file -p :README.md 2>/dev/null || true)
+readme_uses_word() {
+  [ -n "$tracked_readme" ] && [ -n "$1" ] &&
+    grep -qiE "(^|[^[:alnum:]_-])$1([^[:alnum:]_-]|\$)" <<<"$tracked_readme"
+}
 private_words() {
-  local name file
+  local name file part
   [ -z "${GITHUB_ACTIONS:-}" ] || return 0
   {
     uname -n
@@ -96,7 +101,9 @@ private_words() {
   } | tr '[:upper:]' '[:lower:]' | while IFS= read -r name; do
     [ -n "$name" ] || continue
     printf '%s\n%s\n' "$name" "${name%%.*}"
-    tr '.-' '\n' <<<"$name"
+    while IFS= read -r part; do
+      readme_uses_word "$part" || printf '%s\n' "$part"
+    done < <(tr '.-' '\n' <<<"$name")
   done | awk 'length($0) >= 5 && /[a-z]/ && !seen[$0]++' |
     grep -vxE 'local|localhost|localdomain|nixos|linux|ubuntu|debian|server|desktop|laptop|github' || true
   file=$(git config --get std.privateWords || true)
