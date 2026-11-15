@@ -5,9 +5,17 @@ base=$1
 head=$2
 shift 2
 
+remote=${PRE_COMMIT_REMOTE_NAME:-}
 commits=()
 if [ -n "$base" ] && git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
   mapfile -t commits < <(git rev-list --reverse "$base..$head")
+  if [ -n "$remote" ] && [ "${#commits[@]}" != 0 ]; then
+    mapfile -t commits < <(git rev-list --reverse "$base..$head" --not "--remotes=$remote")
+    if [ "${#commits[@]}" = 0 ]; then
+      echo "every commit after '$base' up to $head is already on $remote; nothing new to check"
+      exit 0
+    fi
+  fi
 fi
 if [ "${#commits[@]}" = 0 ]; then
   echo "no commit after '$base' up to $head is known here; checking $head alone"

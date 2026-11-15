@@ -1454,6 +1454,18 @@ range 0000000000000000000000000000000000000000 HEAD~1
 check "an unknown base checks the head commit alone, and a bad one fails" "1" "$?"
 range "$first" nosuchcommit
 check "a head that is no commit fails" "1" "$?"
+bad=$(g rev-parse HEAD~1)
+pushed() { (cd "$d" && PRE_COMMIT_REMOTE_NAME=$1 bash "$RANGE" "$2" "$3" bash "$CHECKER" buildhost >"$d/log" 2>&1); }
+g update-ref refs/remotes/origin/main "$bad"
+pushed origin "$first" HEAD
+check "a bad commit the remote already holds on another branch is not judged again" "0 0 1" \
+  "$? $(grep -c '^FAIL ' "$d/log") $(grep -c '^ok ' "$d/log")"
+pushed elsewhere "$first" HEAD
+check "a remote that does not hold it still refuses it" "1" "$?"
+g update-ref refs/remotes/origin/main HEAD
+pushed origin "$first" HEAD
+check "a range the remote holds in full passes and says so" "0 1" "$? $(grep -c 'already on origin' "$d/log")"
+g update-ref -d refs/remotes/origin/main
 git -C "$d" -c user.name=t -c user.email=someone@example.org commit -q --allow-empty -F "$WORK/t27/good"
 range HEAD~1 HEAD
 check "a commit whose author address is not a GitHub noreply address is refused" "1" "$?"

@@ -149,9 +149,10 @@ Every consumer repo follows these. Metadata (description + topics) is declared i
   A name is kept out before it is public or not at all, and CI runs after
   the push. So the same check runs twice on the committing computer:
   `check-commit-message` at the commit and `check-pushed-commits` at the
-  push, over every outgoing commit, which also catches a commit made with
-  the hook skipped. Both, and CI after them, refuse a commit whose author or
-  committer address is not a GitHub noreply address, without printing it.
+  push, over every outgoing commit the remote does not hold yet, which also
+  catches a commit made with the hook skipped. Both, and CI after them,
+  refuse a commit whose author or committer address is not a GitHub noreply
+  address, without printing it.
   A consumer may still list words as the hook's `args`
   (`pre-commit.settings.hooks.check-commit-message.args = [ "word" ];`);
   that list is public, so it is for words that are not private.
@@ -1366,7 +1367,8 @@ plus a `CHANGELOG.md`).
   (>30 days).
 - A Maintenance refresh that changes no input and heals no fix builds nothing:
   the committed lock is the one that was verified when it was pushed, so the
-  verify and publish jobs are skipped and no open issue is touched.
+  verify job is skipped and nothing is pushed. An open `maintenance` issue is
+  closed, because the lock it asked for is already on the branch.
 - Every verify job restores the Nix store of the newest earlier run for its
   runner and saves it again under the new lock, so CI on the pushed commit
   starts from the store the verification built.
