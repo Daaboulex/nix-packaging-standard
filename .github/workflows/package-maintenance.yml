@@ -202,6 +202,9 @@ jobs:
 
   publish:
     needs: [prepare, verify]
+    if: >-
+      always() && needs.prepare.result == 'success'
+      && (needs.verify.result == 'success' || needs.verify.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -234,9 +237,15 @@ jobs:
 
       - name: Close the maintenance issues this clean run resolves
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9 (node24)
+        env:
+          CHANGED: ${{ needs.prepare.outputs.changed }}
         with:
           script: |
             const titleBase = 'Maintenance: flake.lock update';
+            const run = `[run ${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`;
+            const body = process.env.CHANGED === 'true'
+              ? `Resolved: the scheduled lock refresh built clean in ${run}.`
+              : `Resolved: the lock on the default branch already holds every input the refresh sets, so ${run} had nothing left to update.`;
             const open = await github.rest.issues.listForRepo({
               owner: context.repo.owner, repo: context.repo.repo,
               labels: 'maintenance', state: 'open'
@@ -246,7 +255,7 @@ jobs:
               await github.rest.issues.createComment({
                 owner: context.repo.owner, repo: context.repo.repo,
                 issue_number: issue.number,
-                body: `Resolved: the scheduled lock refresh built clean in [run ${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}).`
+                body
               });
               await github.rest.issues.update({
                 owner: context.repo.owner, repo: context.repo.repo,
