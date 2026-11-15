@@ -154,7 +154,7 @@
                   yq -r '.jobs | to_entries
                     | map(select((.value.steps // []) | map(.name // "") | any_c(test("^Close the .* issues"))))
                     | map(select((.value.needs // []) | length > 0))
-                    | map(select((.value.if // "") | contains("always()") | not))
+                    | map(select((.value.if // "") | (contains("always()") or contains("!cancelled()")) | not))
                     | .[].key' "$1"
                 }
                 bad=0
@@ -165,7 +165,7 @@
                     bad=1
                   fi
                 done
-                printf 'jobs:\n  kept:\n    needs: [build]\n    if: always() && needs.build.result != %s\n    steps:\n      - name: Close the failure issues this run resolves\n  dropped:\n    needs: [build]\n    steps:\n      - name: Close the failure issues this run resolves\n' "'failure'" > twin.yml
+                printf 'jobs:\n  kept:\n    needs: [build]\n    if: always() && needs.build.result != %s\n    steps:\n      - name: Close the failure issues this run resolves\n  held:\n    needs: [build]\n    if: "!cancelled() && needs.build.result != %s"\n    steps:\n      - name: Close the failure issues this run resolves\n  dropped:\n    needs: [build]\n    steps:\n      - name: Close the failure issues this run resolves\n' "'failure'" "'failure'" > twin.yml
                 if [ "$(skippable twin.yml)" != dropped ]; then
                   echo "  FAIL the check does not name the skippable job of its twin, so it proves nothing"
                   bad=1

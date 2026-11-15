@@ -203,7 +203,7 @@ jobs:
   publish:
     needs: [prepare, verify]
     if: >-
-      always() && needs.prepare.result == 'success'
+      !cancelled() && needs.prepare.result == 'success'
       && (needs.verify.result == 'success' || needs.verify.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 15
