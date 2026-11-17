@@ -54,3 +54,4 @@ __pycache__/
 node_modules/
 .venv/
 venv/
+!tests/fixtures/consumer-stale/CLAUDE.md

@@ -1374,7 +1374,7 @@ refused "a date standing alone" date 'feat(std): add stuff\n\nmeasured on 2026-1
 refused "a date that ends a sentence" dateend 'feat(std): add stuff\n\nthe table was read on 2026-11-12.\n\nTest: none, docs\n' 'holds a date'
 message dateglued 'feat(std): add stuff\n\nmoves to 2026.4.5-unstable-2026-11-15 and reads\nlog-2026-11-15.txt under the tag v2026-11-15\n\nTest: none, docs\n'
 check "a date inside a version, a file name or a tag passes" "0" "$?"
-scanner=$(command -v ripsecrets)
+scanner=$(command -v ripsecrets) || scanner="$(nix build --no-link --print-out-paths --inputs-from "$STD" 'nixpkgs#ripsecrets')/bin/ripsecrets"
 secretly() {
   printf '%b' "$2" >"$d/$1"
   SECRET_SCANNER=$scanner bash "$CHECKER" buildhost "$d/$1" >"$d/$1.log" 2>&1
