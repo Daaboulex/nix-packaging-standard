@@ -1370,6 +1370,10 @@ message onpush 'feat(std): add stuff\n\nbody\n\nTest: the workflow on push, and 
 check "a Test: line saying on push or on a system passes" "0" "$?"
 message bodym1 'feat(std): add stuff\n\nthe M1 page size is 16K, so the build sets it\n\nTest: none, docs\n'
 check "a chip named in the body as a fact about the code passes" "0" "$?"
+refused "a date standing alone" date 'feat(std): add stuff\n\nmeasured on 2026-11-12 with both radios capped\n\nTest: none, docs\n' 'holds a date'
+refused "a date that ends a sentence" dateend 'feat(std): add stuff\n\nthe table was read on 2026-11-12.\n\nTest: none, docs\n' 'holds a date'
+message dateglued 'feat(std): add stuff\n\nmoves to 2026.4.5-unstable-2026-11-15 and reads\nlog-2026-11-15.txt under the tag v2026-11-15\n\nTest: none, docs\n'
+check "a date inside a version, a file name or a tag passes" "0" "$?"
 scanner=$(command -v ripsecrets)
 secretly() {
   printf '%b' "$2" >"$d/$1"

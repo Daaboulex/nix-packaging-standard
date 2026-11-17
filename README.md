@@ -135,8 +135,10 @@ Every consumer repo follows these. Metadata (description + topics) is declared i
   place (`on the M1`, `on the host`). `Test:` names what ran. These rules were
   measured against 3983 commits of the fleet before they were written: each
   matched narration only. Words that also occur in honest prose (`the user`,
-  `we`, `our`, `agent`, a step number, a date) are not refused, because a
-  check that refuses a true sentence gets worked around.
+  `we`, `our`, `agent`, a step number) are not refused, because a check that
+  refuses a true sentence gets worked around. A date written as
+  year-month-day and standing alone is refused, since the commit itself says
+  when; one inside a version, a file name or a tag passes.
 
   Machine and person names never enter a repository, a test or CI, so no
   list of them is published. The check derives them where the commit is

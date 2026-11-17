@@ -156,6 +156,10 @@ hardware_address='(^|[^[:xdigit:]:-])([[:xdigit:]]{2}[:-]){5}[[:xdigit:]]{2}([^[
 if [[ $message =~ $hardware_address ]]; then
   refuse "holds a network hardware address; a message never carries one"
 fi
+lone_date='(^|[^[:alnum:]._-])[0-9]{4}-[0-9]{2}-[0-9]{2}($|[^[:alnum:]._-]|\.($|[^[:alnum:]]))'
+if [[ $message =~ $lone_date ]]; then
+  refuse "holds a date; a message never carries one"
+fi
 if [ -n "${SECRET_SCANNER:-}" ]; then
   scanned=$(mktemp)
   printf '%s\n' "$message" >"$scanned"
