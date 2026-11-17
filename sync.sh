@@ -7,7 +7,7 @@ REPOS_DIR="${PKG_REPOS_DIR:?set PKG_REPOS_DIR to the directory holding the packa
 
 declare -A FILES=()
 declare -a RETIRED=()
-declare -a RETIRED_IGNORES=(AGENTS.md)
+declare -a RETIRED_IGNORES=(AGENTS.md '!tests/fixtures/consumer-stale/CLAUDE.md')
 while IFS=$'\t' read -r dst src; do
   if [ -z "$src" ]; then
     RETIRED+=("$dst")

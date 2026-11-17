@@ -1296,6 +1296,10 @@ if cmp -s "$STD/callers/ci.yml" "$d/firstparty/.github/workflows/ci.yml"; then s
 check "a first-party repo still gets the CI caller" "yes" "$same"
 if cmp -s "$STD/.github/ISSUE_TEMPLATE/task.yml" "$d/plain/.github/ISSUE_TEMPLATE/task.yml"; then same=yes; else same=no; fi
 check "a repo gets the task form" "yes" "$same"
+check "a repo is given no ignore line about the standard's own tree" "0" "$(grep -cE '^!|(^|/)tests/' "$d/plain/.gitignore")"
+printf '!tests/fixtures/consumer-stale/CLAUDE.md\n' >>"$d/plain/.gitignore"
+PKG_REPOS_DIR="$d" bash "$SYNC" plain >"$d/log"
+check "such a line an earlier release wrote is taken out again" "0" "$(grep -cxF '!tests/fixtures/consumer-stale/CLAUDE.md' "$d/plain/.gitignore")"
 PKG_REPOS_DIR="$d" bash "$SYNC" --check plain custom firstparty >/dev/null
 check "a synced repo is in sync" "0" "$?"
 printf 'not json\n' >"$d/plain/.github/update.json"
