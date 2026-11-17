@@ -156,6 +156,14 @@ hardware_address='(^|[^[:xdigit:]:-])([[:xdigit:]]{2}[:-]){5}[[:xdigit:]]{2}([^[
 if [[ $message =~ $hardware_address ]]; then
   refuse "holds a network hardware address; a message never carries one"
 fi
+if [ -n "${SECRET_SCANNER:-}" ]; then
+  scanned=$(mktemp)
+  printf '%s\n' "$message" >"$scanned"
+  if ! "$SECRET_SCANNER" --strict-ignore "$scanned" >/dev/null; then
+    refuse "holds what reads as a key or a token; a message never carries one"
+  fi
+  rm -f "$scanned"
+fi
 email='[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}'
 trailer='Co-Authored-By|Generated with|noreply@anthropic\.com'
 if [[ $message =~ $email ]]; then

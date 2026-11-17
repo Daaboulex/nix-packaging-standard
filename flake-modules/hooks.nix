@@ -91,10 +91,19 @@ in
     files = "(^|/)(CLAUDE|AGENTS|GEMINI|CONTRIBUTING)\\.md$";
     language = "system";
   };
+  check-no-errands = {
+    enable = true;
+    name = "check-no-errands";
+    entry = "bash ${../scripts/check-no-errands.sh}";
+    files = "\\.md$";
+    language = "system";
+  };
+  ripsecrets.enable = true;
+  check-added-large-files.enable = true;
   check-commit-message = {
     enable = true;
     name = "check-commit-message";
-    entry = "bash ${../scripts/check-commit-message.sh}";
+    entry = "${pkgs.coreutils}/bin/env SECRET_SCANNER=${lib.getExe pkgs.ripsecrets} bash ${../scripts/check-commit-message.sh}";
     language = "system";
     stages = [ "commit-msg" ];
   };
@@ -102,6 +111,7 @@ in
     enable = true;
     name = "check-pushed-commits";
     entry = "${pkgs.writeShellScript "check-pushed-commits" ''
+      export SECRET_SCANNER=${lib.getExe pkgs.ripsecrets}
       exec bash ${../scripts/check-commit-range.sh} "''${PRE_COMMIT_FROM_REF:-}" "''${PRE_COMMIT_TO_REF:-HEAD}" bash ${../scripts/check-commit-message.sh}
     ''}";
     language = "system";

@@ -1,0 +1,3 @@
+# Rules
+
+Read AGENTS.md.

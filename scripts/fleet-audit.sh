@@ -681,6 +681,8 @@ if [ "$DO_REMOTE" -eq 1 ]; then
     fi
     other="$(printf '%s' "$issues" | jq -r '[.[] | select((.labels // []) | map(.name) | (index("maintenance") // index("update-failed")) | not) | "#\(.number) \(.title)"] | join("; ")')"
     [ -n "$other" ] && info "$repo: open bug report(s), not a plumbing failure: $other"
+    untyped="$(printf '%s' "$issues" | jq -r -f "$STD/scripts/untyped-issues.jq")"
+    [ -n "$untyped" ] && info "$repo: open issue(s) without exactly one type label: $untyped"
   done
 
   never_started_for_billing() {

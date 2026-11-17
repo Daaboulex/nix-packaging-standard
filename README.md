@@ -90,7 +90,11 @@ Every consumer repo follows these. Metadata (description + topics) is declared i
   Each begins with the standard's own text (`heads/`), which `std-rule-files`
   holds it to, and keeps the repo's own rules under `## This project`.
   `AGENTS.md` is the one file written for an assistant that is tracked;
-  `CLAUDE.md` and `GEMINI.md` stay on the ignore list.
+  `CLAUDE.md` and `GEMINI.md` stay on the ignore list, and `std-rule-files`
+  refuses a `CLAUDE.md` tracked at the top of a repo.
+- **Keys and large files**: at the commit `ripsecrets` refuses a file that
+  holds what reads as a key or a token, and `check-added-large-files` refuses a
+  newly added file over 500 kB.
 - **Where things live**: why a repo exists is the README's first sentence. A
   decision's reason is the commit body, and a decision that shapes the project
   also gets one short file in `docs/`. Open work is one issue per matter, made
@@ -144,7 +148,8 @@ Every consumer repo follows these. Metadata (description + topics) is declared i
   also refuses `GrandPiano88` and `Grand Piano, 88`. A configured
   list that cannot be read refuses the commit. In CI nothing is derived:
   a runner knows no private name. A network hardware address, six pairs
-  of hex digits, is refused everywhere.
+  of hex digits, is refused everywhere, and so is what reads as a key or a
+  token, which the refusal does not print.
 
   A name is kept out before it is public or not at all, and CI runs after
   the push. So the same check runs twice on the committing computer:
@@ -247,6 +252,9 @@ against the tree:
   email address (`check-assistant-files`, which reads `CONTRIBUTING.md` as
   well). A rule that must hold becomes a hook or a check, never a sentence in
   that file.
+- **An open point is a question, never an errand.** `check-no-errands` refuses
+  a line in a Markdown file that says who asks, waits for or confirms
+  something with someone. Fenced blocks and inline code are not read.
 
 ## `flakeModules`
 
@@ -259,7 +267,7 @@ The hooks `base` installs, rendered from `flake-modules/hooks.nix`:
 <!-- BEGIN generated:hooks -->
 | When | Hooks |
 |---|---|
-| at the commit | `actionlint`, `check-assistant-files`, `check-merge-conflicts`, `check-readme-sections`, `check-shell-pipelines`, `deadnix`, `end-of-file-fixer`, `lychee`, `mixed-line-endings`, `nixfmt`, `ruff`, `ruff-format`, `rumdl`, `shfmt`, `statix`, `taplo`, `trim-trailing-whitespace`, `typos` |
+| at the commit | `actionlint`, `check-added-large-files`, `check-assistant-files`, `check-merge-conflicts`, `check-no-errands`, `check-readme-sections`, `check-shell-pipelines`, `deadnix`, `end-of-file-fixer`, `lychee`, `mixed-line-endings`, `nixfmt`, `ripsecrets`, `ruff`, `ruff-format`, `rumdl`, `shfmt`, `statix`, `taplo`, `trim-trailing-whitespace`, `typos` |
 | on the commit message | `check-commit-message` |
 | at the push | `check-pushed-commits`, `std-home-proof` |
 <!-- END generated:hooks -->
@@ -713,11 +721,14 @@ It checks, per consumer (every dir with a `.github/update.json`):
   sync, no roll and no audit), a single `main` branch (no stale `update/*`),
   zero open automation issues, and a green latest run that did work of CI /
   Maintenance / Update on `main` (a day its cadence skipped is not a run, and a
-  first-party repo has no Update to judge).
+  first-party repo has no Update to judge). An open issue from a person that
+  does not carry exactly one type label is named, without failing the audit.
 
 A repo with no git remote (an unpushed WIP) is audited locally and skipped
 remotely. The standard itself, the private `site` registry, and the owner's
-GitHub profile carry no `update.json` and are out of scope by construction.
+GitHub profile carry no `update.json` and are out of scope by construction;
+`sync-meta.sh` still holds the standard's own repo to the labels, because it
+carries the issue forms.
 
 ## Self-contained dev state
 

@@ -54,9 +54,13 @@ fi
 drift=0
 for repo in "${targets[@]}"; do
   uj="$REPOS_DIR/$repo/.github/update.json"
-  [ -f "$uj" ] || continue
-  desc=$(jq -r '.description // empty' "$uj")
-  want_topics=$(jq -r '.topics[]?' "$uj" | sort)
+  [ -f "$uj" ] || [ -f "$REPOS_DIR/$repo/.github/ISSUE_TEMPLATE/task.yml" ] || continue
+  desc=""
+  want_topics=""
+  if [ -f "$uj" ]; then
+    desc=$(jq -r '.description // empty' "$uj")
+    want_topics=$(jq -r '.topics[]?' "$uj" | sort)
+  fi
 
   # An unpushed WIP has no remote to carry metadata, and fleet-audit skips such
   # a repo's remote half too -- reporting it as drift would be a red nothing can

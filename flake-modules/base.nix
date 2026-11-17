@@ -93,6 +93,7 @@ in
           builtins.pathExists (src + "/${name}")
           && !lib.hasPrefix (builtins.readFile ruleHeads.${name}) (builtins.readFile (src + "/${name}"))
         ) (builtins.attrNames ruleHeads);
+        assistantOwn = builtins.filter (name: builtins.pathExists (src + "/${name}")) [ "CLAUDE.md" ];
       };
       ruleFileErrors =
         map (
@@ -102,7 +103,11 @@ in
         ++ map (
           name:
           "${name} does not begin with the standard's heads/${name}: sync.sh rewrites everything above the This project heading and keeps what is below it"
-        ) ruleFiles.stale;
+        ) ruleFiles.stale
+        ++ map (
+          name:
+          "${name} is tracked at the top of the repo: the rules for people and assistants live in AGENTS.md and CONTRIBUTING.md, so move what it holds there and delete it"
+        ) ruleFiles.assistantOwn;
 
       inherit (import ../lib.nix) releaseUrl;
       declaredStdUrl = ((import (src + "/flake.nix")).inputs.std or { }).url or "(no std input)";

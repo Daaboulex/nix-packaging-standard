@@ -228,12 +228,17 @@
                   {
                     missing = [ ];
                     stale = [ ];
+                    assistantOwn = [ ];
                   }
                 )
-                (expect "a missing rule file and one with another head are each named" stale.std-rule-files.found {
-                  missing = [ "CONTRIBUTING.md" ];
-                  stale = [ "AGENTS.md" ];
-                })
+                (expect "a missing rule file, one with another head and a tracked CLAUDE.md are each named"
+                  stale.std-rule-files.found
+                  {
+                    missing = [ "CONTRIBUTING.md" ];
+                    stale = [ "AGENTS.md" ];
+                    assistantOwn = [ "CLAUDE.md" ];
+                  }
+                )
                 (expect "a consumer declaring both systems lints on x86_64-linux" (
                   both.x86_64-linux ? pre-commit
                 ) true)

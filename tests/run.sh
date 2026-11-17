@@ -1370,6 +1370,17 @@ message onpush 'feat(std): add stuff\n\nbody\n\nTest: the workflow on push, and 
 check "a Test: line saying on push or on a system passes" "0" "$?"
 message bodym1 'feat(std): add stuff\n\nthe M1 page size is 16K, so the build sets it\n\nTest: none, docs\n'
 check "a chip named in the body as a fact about the code passes" "0" "$?"
+scanner=$(command -v ripsecrets)
+secretly() {
+  printf '%b' "$2" >"$d/$1"
+  SECRET_SCANNER=$scanner bash "$CHECKER" buildhost "$d/$1" >"$d/$1.log" 2>&1
+}
+token="ghp""_$(printf 'aB3dE5%.0s' 1 2 3 4 5 6)"
+secretly token "feat(std): add stuff\n\nthe runner reads $token here\n\nTest: none, docs\n"
+check "a token in the message is refused" "1" "$?"
+check "and the token itself is not printed" "0" "$(grep -c "$token" "$d/token.log")"
+secretly hashes 'feat(std): add stuff\n\nmoves the lock to 9d4b71d and to\nsha256-ThkfL3D/FhCiZFc9+3BtxwuMmpuK+/bGtXCSo1+yVew=\n\nTest: none, docs\n'
+check "a commit id and a source hash are not a token" "0" "$?"
 mkdir -p "$d/words"
 printf 'grandpiano\n' >"$d/words/list"
 privately() {
@@ -1912,6 +1923,53 @@ check "a GitHub noreply address passes" "0" "$?"
 bash "$ASSIST" "$HEADS/AGENTS.md" "$HEADS/CONTRIBUTING.md" >"$d/log" 2>&1
 check "the standard's own heads pass" "0" "$?"
 
+echo "Test 36b: check-no-errands refuses a line about who asks or waits, and reads no code"
+ERRANDS="$HEADS/../scripts/check-no-errands.sh"
+printf '# Notes\n\nOpen: does the vendor ship the 16K build?\n' >"$d/open.md"
+bash "$ERRANDS" "$d/open.md" >"$d/log" 2>&1
+check "an open point written as its question passes" "0" "$?"
+printf '# Notes\n\nSam will ask the vendor about the 16K build.\n' >"$d/errand.md"
+bash "$ERRANDS" "$d/errand.md" >"$d/log" 2>&1
+check "a line about someone asking someone is refused" "1" "$?"
+check "and it is named with its file and line" "1" "$(grep -c 'errand.md:3: ' "$d/log")"
+printf '# Notes\n\nWaiting for the answer from upstream before the next release.\n' >"$d/waiting.md"
+bash "$ERRANDS" "$d/waiting.md" >"$d/log" 2>&1
+check "a line about waiting for an answer is refused" "1" "$?"
+cat >"$d/code.md" <<'MD'
+# Notes
+
+```sh
+echo "will ask the server"
+```
+
+~~~
+will ask the server
+~~~
+
+The flag `will ask` prompts.
+MD
+bash "$ERRANDS" "$d/code.md" >"$d/log" 2>&1
+check "the same words in a fenced block of either kind or in inline code pass" "0" "$?"
+bash "$ERRANDS" "$HEADS/AGENTS.md" "$HEADS/CONTRIBUTING.md" "$HEADS/../README.md" >"$d/log" 2>&1
+check "the standard's own rules and README pass" "0" "$?"
+
+echo "Test 36c: untyped-issues.jq names an open issue from a person that has no single type"
+UNTYPED="$HEADS/../scripts/untyped-issues.jq"
+cat >"$d/issues.json" <<'JSON'
+[
+  {"number": 1, "title": "typed", "labels": [{"name": "type/bug"}, {"name": "waiting"}]},
+  {"number": 2, "title": "bare", "labels": []},
+  {"number": 3, "title": "old label", "labels": [{"name": "bug"}]},
+  {"number": 4, "title": "two types", "labels": [{"name": "type/bug"}, {"name": "type/task"}]},
+  {"number": 5, "title": "a failed refresh", "labels": [{"name": "maintenance"}]},
+  {"number": 6, "title": "a failed update", "labels": [{"name": "update-failed"}]}
+]
+JSON
+check "one without a type, one with an old label and one with two types are named, the automation's own are not" \
+  "#2 bare; #3 old label; #4 two types" "$(jq -r -f "$UNTYPED" "$d/issues.json")"
+echo '[{"number": 1, "title": "typed", "labels": [{"name": "type/task"}]}]' >"$d/typed.json"
+check "a repo whose issues all carry one type names nothing" "" "$(jq -r -f "$UNTYPED" "$d/typed.json")"
+
 echo "Test 37: check-readme-sections holds a title and an install section, and asks for no marker"
 readme_case() { # readme_case <name> <line>...  -> runs the hook in a directory holding that README
   d="$WORK/t37-$1"
@@ -1995,6 +2053,14 @@ check "and no label that exists is created again" "1" "$(grep -c '^label create 
 printf 'waiting\n' >>"$d/labels"
 GH_CALLS="$d/calls" GH_LABELS="$d/labels" PATH="$d/bin:$PATH" PKG_REPOS_DIR="$d/repos" bash "$HEADS/../sync-meta.sh" --check plain >"$d/log" 2>&1
 check "a repo with every label is in sync" "0" "$?"
+mkdir -p "$d/repos/forms/.github/ISSUE_TEMPLATE"
+git -C "$d/repos/forms" init -q
+git -C "$d/repos/forms" remote add origin https://github.com/owner/forms.git
+: >"$d/repos/forms/.github/ISSUE_TEMPLATE/task.yml"
+printf 'type/bug\n' >"$d/labels"
+GH_CALLS="$d/calls" GH_LABELS="$d/labels" PATH="$d/bin:$PATH" PKG_REPOS_DIR="$d/repos" bash "$HEADS/../sync-meta.sh" --check forms >"$d/log" 2>&1
+check "a repo that carries the issue forms and no update.json is held to the labels too" "1" "$?"
+check "and its drift is named as labels" "1" "$(grep -c 'DRIFT  forms \[labels\]' "$d/log")"
 
 echo "Test 40: fleet-roll's restore removes a file the sync wrote, also one the restored ignore list hides again"
 d="$WORK/t41"
