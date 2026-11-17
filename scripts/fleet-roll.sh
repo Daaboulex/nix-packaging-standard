@@ -143,6 +143,22 @@ fail_repo() {
   FAILED_REPOS+=("$1")
 }
 
+why_push_failed() {
+  local why
+  why=$(grep -m1 -E "^(remote: )?(error|fatal|! \[)" "$1" | sed 's/^[[:space:]]*//')
+  if grep -qE '\.Failed$|hook declined' "$1"; then
+    why="this repo's own pre-push hook refused it: ${why:-see the output above}"
+  fi
+  printf '%s' "${why:-no error text captured}"
+}
+
+remote_holds_head() {
+  local head remote
+  head=$(git -C "$1" rev-parse HEAD)
+  remote=$(git -C "$1" ls-remote origin refs/heads/main 2>/dev/null | cut -f1)
+  [ -n "$remote" ] && [ "$remote" = "$head" ]
+}
+
 restore() {
   local dir="$1" f
   local -a written=()
@@ -464,14 +480,15 @@ for repo in "${TARGETS[@]}"; do
     perr=$(mktemp)
     git -C "$dir" push origin main 2>&1 | tee "$perr"
     prc=${PIPESTATUS[0]}
+    if [ "$prc" -ne 0 ] && remote_holds_head "$dir"; then
+      note "the push reported an error, but the remote holds the commit: $(why_push_failed "$perr")"
+      prc=0
+    fi
     if [ "$prc" -ne 0 ]; then
       git -C "$dir" reset --hard --quiet HEAD~1
-      why=$(grep -m1 -E "^(remote: )?(error|fatal|! \[)" "$perr" | sed 's/^[[:space:]]*//')
-      if grep -qE "pre-push|hook declined|std-home-proof" "$perr"; then
-        why="this repo's own pre-push hook refused it: ${why:-see the output above}"
-      fi
+      why=$(why_push_failed "$perr")
       rm -f "$perr"
-      fail_repo "$repo" "push failed: ${why:-no error text captured}; commit undone, nothing left behind"
+      fail_repo "$repo" "push failed: $why; commit undone, nothing left behind"
       continue
     fi
     rm -f "$perr"

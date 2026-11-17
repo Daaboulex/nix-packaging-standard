@@ -2097,6 +2097,37 @@ check "one changed word gives another value" "differs" "$rc"
 sed 's/^- An open task is an issue in the repo it belongs to. /- An open task is an issue in the repo it belongs to.\n  /' "$HEADS/CONTRIBUTING.md" >"$WORK/t39.md"
 check "another line wrap gives the same value" "$fixed" "$(track_words "$WORK/t39.md")"
 
+echo "Test 41b: fleet-roll names a failed push by its cause, and a push the remote took counts as pushed"
+d="$WORK/t41b"
+mkdir -p "$d"
+cat >"$d/network" <<'LOG'
+std-home-proof...........................................................Passed
+error: RPC failed; curl 56 Recv failure: Connection reset by peer
+LOG
+cat >"$d/hook" <<'LOG'
+std-home-proof...........................................................Failed
+error: failed to push some refs
+LOG
+git init -q --bare "$d/remote.git"
+git init -q -b main "$d/clone"
+git -C "$d/clone" remote add origin "$d/remote.git"
+git -C "$d/clone" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
+git -C "$d/clone" push -q origin main
+(
+  eval "$(sed -n '/^why_push_failed() {$/,/^}$/p' "$HEADS/../scripts/fleet-roll.sh")"
+  eval "$(sed -n '/^remote_holds_head() {$/,/^}$/p' "$HEADS/../scripts/fleet-roll.sh")"
+  check "a network failure after the hooks passed is not blamed on a hook" \
+    "error: RPC failed; curl 56 Recv failure: Connection reset by peer" "$(why_push_failed "$d/network")"
+  check "a failed hook is named as the hook" "1" "$(why_push_failed "$d/hook" | grep -c 'pre-push hook refused')"
+  if remote_holds_head "$d/clone"; then r=held; else r=missing; fi
+  check "a commit the remote holds counts as pushed" "held" "$r"
+  git -C "$d/clone" -c user.name=t -c user.email=t@t commit -q --allow-empty -m next
+  if remote_holds_head "$d/clone"; then r=held; else r=missing; fi
+  check "a commit the remote does not hold does not" "missing" "$r"
+  printf '%s %s\n' "$pass" "$fail" >"$d/counts"
+)
+read -r pass fail <"$d/counts"
+
 standard_root="${HEADS%/heads}"
 echo "Test 42: a repo carries main, and testing for a next release, and no other branch"
 check "main and testing are no extra branch" "" "$(printf 'main\ntesting\n' | bash "$standard_root/scripts/extra-branches.sh")"
