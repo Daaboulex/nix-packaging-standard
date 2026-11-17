@@ -36,6 +36,9 @@ Open an issue with the bug, request or task form.
   one short file in `docs/`.
 - A fix names the cause it removes. When a later fix names another cause for the same failure, the
   earlier fix comes out in that change unless it is proven on its own. Unmeasured is not proven.
+- What differs from one delivery, machine or target to the next is declared once as data, or read
+  from the machine where it can be. The code that uses it is written once for any value and names
+  none.
 - A test that uses one shared thing, such as a device, a lock or a fixed path or port, runs alone
   behind a lock. Every other test runs on as many workers as the free cores and memory allow, and
   a parallel run counts only once it gave the same result as the sequential one.
@@ -67,3 +70,5 @@ Changing the standard:
 - What stands above This project in `heads/AGENTS.md` and `heads/CONTRIBUTING.md` is what every
   repo carries. Its Track work section is fixed: `tests/run.sh` holds its words to one value, and a
   change needs the owner's word and that value in the same commit.
+- A tool starts in the project that wants it, in that project's own flake. It moves into the
+  standard when a second project turns the same tool on.

@@ -402,6 +402,25 @@ in its own `perSystem`, never by patching the standard:
   config (lmstudio); standalone `pkgs` import with `config.allowUnfree = true`
   in `perSystem` (mesa-git).
 
+## Languages and their tools
+
+A tool starts in the repo that wants it, in that repo's own flake, and moves
+here when a second repo turns the same tool on.
+
+| Language | What the standard runs | Without a tool, and why |
+|---|---|---|
+| Nix | `nixfmt`, `deadnix`, `statix` | |
+| Shell | `shfmt`, and `shellcheck` as a report | |
+| Python | `ruff`, `ruff-format`, and reports for types, dead code, coverage and mutation | |
+| Markdown | `rumdl`, `lychee`, `typos`, `check-no-errands` | |
+| TOML | `taplo` | |
+| Workflow files | `actionlint` | |
+| C and C++ | `cppcheck` and PMD CPD as reports | no formatter or linter: one repo holds them |
+| Shader source, Meson build files | | one repo holds them |
+| TypeScript, JavaScript | | one repo each |
+| JSON | the update data is held to its schema | written by tools, and a formatter would fight the writer |
+| PowerShell, C#, HTML | | a handful of files |
+
 ## Code-quality detections
 
 A detection is an existing tool run over the repository as a flake check, switched on
