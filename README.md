@@ -99,6 +99,8 @@ Every consumer repo follows these. Metadata (description + topics) is declared i
   decision's reason is the commit body, and a decision that shapes the project
   also gets one short file in `docs/`. Open work is one issue per matter, made
   from the bug, request or task form, whose labels `sync-meta.sh` creates.
+  Every form opens with what we want to achieve; a task also says when it is
+  done.
   What was done is the git history. `CONTRIBUTING.md` says the rest.
 - **License**: the repo's `LICENSE` is **MIT** — it licenses *your* Nix packaging
   code, which is permissive and reusable. The packaged software's licence is
