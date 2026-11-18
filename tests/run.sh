@@ -2026,6 +2026,19 @@ check "one without a type, one with an old label and one with two types are name
   "#2 bare; #3 old label; #4 two types" "$(jq -r -f "$UNTYPED" "$d/issues.json")"
 echo '[{"number": 1, "title": "typed", "labels": [{"name": "type/task"}]}]' >"$d/typed.json"
 check "a repo whose issues all carry one type names nothing" "" "$(jq -r -f "$UNTYPED" "$d/typed.json")"
+UNSCOPED="$HEADS/../scripts/unscoped-issues.jq"
+cat >"$d/titles.json" <<'JSON'
+[
+  {"number": 1, "title": "overlay: the frame counter drifts", "labels": [{"name": "type/bug"}]},
+  {"number": 2, "title": "The frame counter drifts", "labels": [{"name": "type/bug"}]},
+  {"number": 3, "title": "MAKO, lsfg-vk: frame generation on another GPU", "labels": [{"name": "upstream"}]},
+  {"number": 4, "title": "Question: does it run on arm", "labels": []},
+  {"number": 5, "title": "see https://example.org/x for details", "labels": []},
+  {"number": 6, "title": "No part here", "labels": [{"name": "maintenance"}]}
+]
+JSON
+check "a title without a part and a colon is named, also when its only colon sits in a link, and the automation's own is not" \
+  "#2 The frame counter drifts; #5 see https://example.org/x for details" "$(jq -r -f "$UNSCOPED" "$d/titles.json")"
 
 echo "Test 37: check-readme-sections holds a title and an install section, and asks for no marker"
 readme_case() { # readme_case <name> <line>...  -> runs the hook in a directory holding that README
@@ -2099,7 +2112,7 @@ case "$1 $2" in
 esac
 SH
 chmod +x "$d/bin/gh"
-printf 'type/bug\ntype/feature\ntype/task\nlater\n' >"$d/labels"
+printf 'type/bug\ntype/feature\ntype/task\nlater\nupstream\n' >"$d/labels"
 GH_CALLS="$d/calls" GH_LABELS="$d/labels" PATH="$d/bin:$PATH" PKG_REPOS_DIR="$d/repos" bash "$HEADS/../sync-meta.sh" --check plain >"$d/log" 2>&1
 check "a repo lacking one label is drift" "1" "$?"
 check "and the drift is named as labels" "1" "$(grep -c 'DRIFT  plain \[labels\]' "$d/log")"
@@ -2110,6 +2123,16 @@ check "and no label that exists is created again" "1" "$(grep -c '^label create 
 printf 'waiting\n' >>"$d/labels"
 GH_CALLS="$d/calls" GH_LABELS="$d/labels" PATH="$d/bin:$PATH" PKG_REPOS_DIR="$d/repos" bash "$HEADS/../sync-meta.sh" --check plain >"$d/log" 2>&1
 check "a repo with every label is in sync" "0" "$?"
+printf 'type/bug\ntype/feature\ntype/task\nlater\nwaiting\n' >"$d/labels"
+GH_CALLS="$d/calls" GH_LABELS="$d/labels" PATH="$d/bin:$PATH" PKG_REPOS_DIR="$d/repos" bash "$HEADS/../sync-meta.sh" --check plain >"$d/log" 2>&1
+check "a repo without the label for a matter another project must change is drift" "1" "$?"
+printf 'upstream\nbug\nenhancement\n' >>"$d/labels"
+GH_CALLS="$d/calls" GH_LABELS="$d/labels" PATH="$d/bin:$PATH" PKG_REPOS_DIR="$d/repos" bash "$HEADS/../sync-meta.sh" --check plain >"$d/log" 2>&1
+check "a repo that still carries the forge's default labels is drift" "1" "$?"
+: >"$d/calls"
+GH_CALLS="$d/calls" GH_LABELS="$d/labels" PATH="$d/bin:$PATH" PKG_REPOS_DIR="$d/repos" bash "$HEADS/../sync-meta.sh" plain >"$d/log" 2>&1
+check "each default label it carries is removed" "2" "$(grep -cE '^label delete (bug|enhancement) ' "$d/calls")"
+check "and no label of the set is removed" "0" "$(grep -cE '^label delete (type/|later|waiting|upstream)' "$d/calls")"
 mkdir -p "$d/repos/forms/.github/ISSUE_TEMPLATE"
 git -C "$d/repos/forms" init -q
 git -C "$d/repos/forms" remote add origin https://github.com/owner/forms.git
@@ -2142,7 +2165,7 @@ echo "Test 41: the Track work section holds the words the owner fixed"
 track_words() {
   awk '/^## Track work$/{on=1; print; next} on && /^## /{exit} on' "$1" | tr -s '[:space:]' ' ' | sed 's/ $//' | sha256sum | cut -d' ' -f1
 }
-fixed=8bb269ac1f36ff69c0b12836ca8689a684f2d50b0bef501c014cbac900074aee
+fixed=aaa2d4ba212759c45833ba55dc40ca42263173daee06e02da4bdbddb8d1da803
 check "heads/CONTRIBUTING.md carries them; a change needs his word and this value in the same commit" "$fixed" "$(track_words "$HEADS/CONTRIBUTING.md")"
 sed 's/two cases only/three cases only/' "$HEADS/CONTRIBUTING.md" >"$WORK/t39.md"
 if [ "$(track_words "$WORK/t39.md")" = "$fixed" ]; then rc=same; else rc=differs; fi

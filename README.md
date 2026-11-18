@@ -338,7 +338,7 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `heads/AGENTS.md`, `heads/CONTRIBUTING.md` | the top of `AGENTS.md` and `CONTRIBUTING.md` | The rules every repo shares; `sync.sh` writes a missing file and rewrites only the top of an existing one, and `std-rule-files` holds a repo to it |
 | `update.schema.json` | *(reference, not synced)* | JSON Schema for `update.json` |
 | `sync.sh` | *(run from here)* | Write the synced files into repos and delete the retired copies |
-| `sync-meta.sh` | *(run from here)* | Apply repo description + topics from `update.json` to GitHub, and create the labels the issue forms name |
+| `sync-meta.sh` | *(run from here)* | Apply repo description + topics from `update.json` to GitHub, create the six labels the rules name (`type/bug`, `type/feature`, `type/task`, `later`, `waiting`, `upstream`) and remove the ones GitHub adds to a new repo |
 | `scripts/release.sh` | *(run from here)* | The only way `release` moves: CI on the commit, then the fleet check, then the tag and the fast-forward |
 | `scripts/fleet-audit.sh` | *(run from here)* | The fleet's green/red oracle: conformance + metadata + archetype + branches + issues + CI, local and remote |
 | `scripts/fleet-roll.sh` | *(run from here)* | Adopt the `release` head across every consumer: pin, lock, sync from that commit, install the adopted release's hook set (the gitignored config link is removed first, so git-hooks.nix installs even where only the hook is gone), build, commit, push, each repo restored on any failure; `--build-on-ci` evaluates every declared system and leaves the build to each repo's CI on push |

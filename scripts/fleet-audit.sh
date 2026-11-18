@@ -683,6 +683,8 @@ if [ "$DO_REMOTE" -eq 1 ]; then
     [ -n "$other" ] && info "$repo: open bug report(s), not a plumbing failure: $other"
     untyped="$(printf '%s' "$issues" | jq -r -f "$STD/scripts/untyped-issues.jq")"
     [ -n "$untyped" ] && info "$repo: open issue(s) without exactly one type label: $untyped"
+    unscoped="$(printf '%s' "$issues" | jq -r -f "$STD/scripts/unscoped-issues.jq")"
+    [ -n "$unscoped" ] && info "$repo: open issue(s) whose title names no part: $unscoped"
   done
 
   never_started_for_billing() {

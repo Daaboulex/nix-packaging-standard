@@ -36,7 +36,9 @@ LABELS=(
   "type/task|1d76db|Work to do, with when it counts as done"
   "later|c5def5|An idea nobody owes"
   "waiting|fbca04|Blocked on a person, a delivery or a decision"
+  "upstream|5319e7|Needs another project to change first"
 )
+FORGE_DEFAULT_LABELS=(bug documentation duplicate enhancement "good first issue" "help wanted" invalid question wontfix)
 
 CHECK=0
 declare -a targets=()
@@ -89,8 +91,13 @@ for repo in "${targets[@]}"; do
   for entry in "${LABELS[@]}"; do
     grep -qxF "${entry%%|*}" <<<"$live_labels" || missing_labels+=("$entry")
   done
+  default_labels=()
+  for name in "${FORGE_DEFAULT_LABELS[@]}"; do
+    grep -qxF "$name" <<<"$live_labels" && default_labels+=("$name")
+  done
   label_drift=0
   [ "${#missing_labels[@]}" -gt 0 ] && label_drift=1
+  [ "${#default_labels[@]}" -gt 0 ] && label_drift=1
 
   desc_drift=0
   topic_drift=0
@@ -119,6 +126,10 @@ for repo in "${targets[@]}"; do
     rest=${entry#*|}
     gh label create "$name" -R "$(gh_slug "$repo")" --color "${rest%%|*}" --description "${rest#*|}" >/dev/null &&
       echo "synced $repo label $name"
+  done
+  for name in "${default_labels[@]}"; do
+    gh label delete "$name" -R "$(gh_slug "$repo")" --yes >/dev/null &&
+      echo "removed $repo label $name"
   done
 done
 
