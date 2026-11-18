@@ -501,7 +501,14 @@ variable `RECLAIM_DISK` is `on` (a large source build otherwise exhausts the run
 ~14 GB default disk; the step takes one to five minutes on an x86_64 runner, longer
 than many repos' whole build, so it is opt-in), then builds every
 output the flake declares for each runner's system via `nix-fast-build
---skip-cached`. The matrix is not fixed: a plan job runs
+--skip-cached`. A push builds less when it can prove less is needed
+(`scripts/checks-to-build.sh`): only the checks whose derivation differs from
+the commit before the push, when that commit has a green CI run or was
+published by the automation after its own build. A push that changed only a
+rule file or an issue form then builds the checks that read those files and
+no package. Every other run builds every check: a pull request, a manual
+run, and a push whose commit before it is unknown, unproven or does not
+evaluate. The matrix is not fixed: a plan job runs
 `declared-runners.sh`, which names `ubuntu-latest` for `x86_64-linux`
 and `ubuntu-24.04-arm` for `aarch64-linux` among the systems the flake declares
 checks on, so no runner starts for an arch the repo does not build, and a flake

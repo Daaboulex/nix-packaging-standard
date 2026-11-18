@@ -1526,6 +1526,55 @@ ci fail "$first" HEAD
 st=$?
 check "a flake whose apps do not evaluate fails, never skips" "failed" "$(if [ "$st" -ne 0 ]; then echo failed; else echo passed; fi)"
 
+echo "Test 28c: CI builds only the checks a push changed, and every check when the commit before it is not proven"
+TODO="$STD/scripts/checks-to-build.sh"
+d="$WORK/t28c"
+mkdir -p "$d/bin" "$d/repo"
+git -C "$d/repo" init -q
+git -C "$d/repo" -c user.name=t -c user.email=1+t@users.noreply.github.com commit -q --allow-empty -m before
+proven=$(git -C "$d/repo" rev-parse HEAD)
+git -C "$d/repo" -c user.name=t -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -q --allow-empty -m refresh
+automated=$(git -C "$d/repo" rev-parse HEAD)
+git -C "$d/repo" -c user.name=t -c user.email=1+t@users.noreply.github.com commit -q --allow-empty -m now
+cat >"$d/bin/nix" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+*"rev="*)
+  [ "$BEFORE" = fail ] && exit 1
+  echo "$BEFORE"
+  ;;
+*)
+  [ "$NOW" = fail ] && exit 1
+  echo "$NOW"
+  ;;
+esac
+SH
+cat >"$d/bin/gh" <<'SH'
+#!/usr/bin/env bash
+[ "$GREEN_RUNS" = fail ] && exit 1
+echo "$GREEN_RUNS"
+SH
+chmod +x "$d/bin/nix" "$d/bin/gh"
+same='{"package":"/nix/store/a.drv","lint":"/nix/store/b.drv"}'
+moved='{"package":"/nix/store/a.drv","lint":"/nix/store/b2.drv","added":"/nix/store/n.drv"}'
+todo() { # todo <event> <base> <green runs> <before> <now>
+  (cd "$d/repo" && GITHUB_EVENT_NAME=$1 GITHUB_REPOSITORY=owner/repo GREEN_RUNS=$3 BEFORE=$4 NOW=$5 PATH="$d/bin:$PATH" \
+    bash "$TODO" "$2" x86_64-linux 2>"$d/why" | tr '\n' ' ' | sed 's/ $//')
+}
+check "a push that changed one check and added one builds those two" "added lint" "$(todo push "$proven" 1 "$same" "$moved")"
+check "a push that changed no check builds nothing" "" "$(todo push "$proven" 1 "$same" "$same")"
+check "a run that is not a push builds every check" "ALL" "$(todo pull_request "$proven" 1 "$same" "$moved")"
+check "a commit before the push that has no green run builds every check" "ALL" "$(todo push "$proven" 0 "$same" "$moved")"
+check "and the reason is said" "1" "$(grep -c 'no green CI run' "$d/why")"
+check "a forge that does not answer builds every check" "ALL" "$(todo push "$proven" fail "$same" "$moved")"
+check "a commit before the push that is not known here builds every check" "ALL" "$(todo push 0000000000000000000000000000000000000000 1 "$same" "$moved")"
+check "a commit before the push that does not evaluate builds every check" "ALL" "$(todo push "$proven" 1 fail "$moved")"
+check "a commit the automation published after its own build is proven without a run" "added lint" "$(todo push "$automated" 0 "$same" "$moved")"
+(cd "$d/repo" && GITHUB_EVENT_NAME=push GITHUB_REPOSITORY=owner/repo GREEN_RUNS=1 BEFORE=$same NOW=fail PATH="$d/bin:$PATH" \
+  bash "$TODO" "$proven" x86_64-linux >"$d/out" 2>/dev/null)
+check "a head that does not evaluate fails, and reports no check as unchanged" "1 0" "$? $(wc -c <"$d/out" | tr -d ' ')"
+check "the workflow reads that failure, never an empty list from a pipe" "0" "$(grep -c '< <(bash .*checks-to-build[.]sh' "$STD/.github/workflows/package-ci.yml")"
+
 echo "Test 26: release.sh builds only what the candidate changed, on the systems this host builds"
 d="$WORK/t26"
 mkdir -p "$d/bin"

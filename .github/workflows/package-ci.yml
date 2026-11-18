@@ -145,8 +145,21 @@ jobs:
             echo "::warning::$B derivations build from source -- a flake.lock bump moved ahead of cache.nixos.org. The store cache absorbs it after this run."
           fi
 
-      - name: Build every check declared for this system, retrying only a transient fetch failure
+      - name: Build the checks this push changed, or every check when the commit before it is not proven
+        env:
+          BASE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           SYS=$(nix eval --impure --raw --expr 'builtins.currentSystem')
-          RETRY_BACKOFFS="60 300" bash "$STD/retry-transient.sh" "$RUNNER_TEMP/build.log" 13200 -- \
-            nix run --inputs-from . nixpkgs#nix-fast-build -- --skip-cached --no-nom --flake ".#checks.$SYS"
+          todo=$(bash "$STD/scripts/checks-to-build.sh" "$BASE" "$SYS")
+          if [ "$todo" = ALL ]; then
+            RETRY_BACKOFFS="60 300" bash "$STD/retry-transient.sh" "$RUNNER_TEMP/build.log" 13200 -- \
+              nix run --inputs-from . nixpkgs#nix-fast-build -- --skip-cached --no-nom --flake ".#checks.$SYS"
+          elif [ -z "$todo" ]; then
+            echo "this push changed no check for $SYS, and the commit before it was built green, so nothing is built"
+          else
+            mapfile -t changed <<<"$todo"
+            echo "this push changed ${#changed[@]} check(s) for $SYS: ${changed[*]}"
+            RETRY_BACKOFFS="60 300" bash "$STD/retry-transient.sh" "$RUNNER_TEMP/build.log" 13200 -- \
+              nix build --no-link --keep-going --print-build-logs "${changed[@]/#/.#checks.$SYS.}"
+          fi
