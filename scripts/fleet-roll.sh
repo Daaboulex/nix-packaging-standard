@@ -24,6 +24,9 @@ fleet-roll - adopt the standard's release branch head across every consumer repo
   --sync         fast-forward a clone that is clean and strictly behind its
                  remote. A clone that is ahead, diverged or dirty is still a
                  failure; only a provably lossless fast-forward is taken.
+  --branch <name> roll into this branch of the named repos, which must be
+                 checked out there; main when the option is absent. For a
+                 repo whose next release is prepared on testing.
   repo...        restrict to these repos (default: every consumer).
 
 Scope: every directory under PKG_REPOS_DIR holding a .github/update.json.
@@ -44,6 +47,7 @@ EXECUTE=0
 SKIP_BUILD=0
 BUILD_ON_CI=0
 SYNC=0
+BRANCH=main
 NOTES=""
 declare -a TARGETS=()
 
@@ -60,6 +64,14 @@ while [ "$#" -gt 0 ]; do
   --notes)
     shift
     NOTES="${1:-}"
+    ;;
+  --branch)
+    shift
+    BRANCH="${1:-}"
+    [ -n "$BRANCH" ] || {
+      echo "fleet-roll: --branch requires the name of a branch" >&2
+      exit 2
+    }
     ;;
   -*)
     echo "fleet-roll: unknown option '$1'" >&2
@@ -154,7 +166,7 @@ why_push_failed() {
 remote_holds_head() {
   local head remote
   head=$(git -C "$1" rev-parse HEAD)
-  remote=$(git -C "$1" ls-remote origin refs/heads/main 2>/dev/null | cut -f1)
+  remote=$(git -C "$1" ls-remote origin "refs/heads/$BRANCH" 2>/dev/null | cut -f1)
   [ -n "$remote" ] && [ "$remote" = "$head" ]
 }
 
@@ -276,8 +288,8 @@ for repo in "${TARGETS[@]}"; do
     continue
   fi
   branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD)
-  if [ "$branch" != main ]; then
-    fail_repo "$repo" "on branch '$branch', expected main"
+  if [ "$branch" != "$BRANCH" ]; then
+    fail_repo "$repo" "on branch '$branch', expected $BRANCH"
     continue
   fi
   steplog="$LOGDIR/$repo.steps.log"
@@ -294,13 +306,13 @@ for repo in "${TARGETS[@]}"; do
       fail_repo "$repo" "cannot reach origin: $(tail -1 "$steplog")  log: $steplog"
       continue
     fi
-    counts=$(git -C "$dir" rev-list --left-right --count "origin/main...HEAD" 2>/dev/null) || counts=""
+    counts=$(git -C "$dir" rev-list --left-right --count "origin/$BRANCH...HEAD" 2>/dev/null) || counts=""
     behind=$(awk '{print $1}' <<<"$counts")
     ahead=$(awk '{print $2}' <<<"$counts")
     if [ "${behind:-1}" != 0 ] && [ "${ahead:-1}" = 0 ] && [ "$SYNC" -eq 1 ]; then
-      if git -C "$dir" merge --ff-only --quiet origin/main 2>/dev/null; then
+      if git -C "$dir" merge --ff-only --quiet "origin/$BRANCH" 2>/dev/null; then
         printf 'sync  %s: fast-forwarded %s commit(s)\n' "$repo" "$behind"
-        counts=$(git -C "$dir" rev-list --left-right --count "origin/main...HEAD" 2>/dev/null) || counts=""
+        counts=$(git -C "$dir" rev-list --left-right --count "origin/$BRANCH...HEAD" 2>/dev/null) || counts=""
         behind=$(awk '{print $1}' <<<"$counts")
         ahead=$(awk '{print $2}' <<<"$counts")
       else
@@ -309,7 +321,7 @@ for repo in "${TARGETS[@]}"; do
       fi
     fi
     if [ "${behind:-1}" != 0 ] || [ "${ahead:-1}" != 0 ]; then
-      fail_repo "$repo" "out of sync with origin/main (behind=${behind:-?} ahead=${ahead:-?}); --sync fast-forwards a clean clone that is only behind"
+      fail_repo "$repo" "out of sync with origin/$BRANCH (behind=${behind:-?} ahead=${ahead:-?}); --sync fast-forwards a clean clone that is only behind"
       continue
     fi
   fi
@@ -473,7 +485,7 @@ for repo in "${TARGETS[@]}"; do
       continue
     fi
     perr=$(mktemp)
-    git -C "$dir" push origin main 2>&1 | tee "$perr"
+    git -C "$dir" push origin "$BRANCH" 2>&1 | tee "$perr"
     prc=${PIPESTATUS[0]}
     if [ "$prc" -ne 0 ] && remote_holds_head "$dir"; then
       note "the push reported an error, but the remote holds the commit: $(why_push_failed "$perr")"

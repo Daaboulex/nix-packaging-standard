@@ -2192,6 +2192,7 @@ git -C "$d/clone" push -q origin main
 (
   eval "$(sed -n '/^why_push_failed() {$/,/^}$/p' "$HEADS/../scripts/fleet-roll.sh")"
   eval "$(sed -n '/^remote_holds_head() {$/,/^}$/p' "$HEADS/../scripts/fleet-roll.sh")"
+  eval "$(grep -x 'BRANCH=main' "$HEADS/../scripts/fleet-roll.sh")"
   check "a network failure after the hooks passed is not blamed on a hook" \
     "error: RPC failed; curl 56 Recv failure: Connection reset by peer" "$(why_push_failed "$d/network")"
   check "a failed hook is named as the hook" "1" "$(why_push_failed "$d/hook" | grep -c 'pre-push hook refused')"
@@ -2200,9 +2201,22 @@ git -C "$d/clone" push -q origin main
   git -C "$d/clone" -c user.name=t -c user.email=t@t commit -q --allow-empty -m next
   if remote_holds_head "$d/clone"; then r=held; else r=missing; fi
   check "a commit the remote does not hold does not" "missing" "$r"
+  git -C "$d/clone" switch -q -c testing
+  git -C "$d/clone" push -q origin testing
+  if BRANCH=testing remote_holds_head "$d/clone"; then r=held; else r=missing; fi
+  check "a roll into another branch asks the remote for that branch" "held" "$r"
+  if BRANCH=main remote_holds_head "$d/clone"; then r=held; else r=missing; fi
+  check "and the main branch there still does not hold it" "missing" "$r"
   printf '%s %s\n' "$pass" "$fail" >"$d/counts"
 )
 read -r pass fail <"$d/counts"
+
+echo "Test 41c: fleet-roll rolls into the branch it is given, main when none is"
+PKG_REPOS_DIR="$d" bash "$ROLL" --help >"$d/help"
+check "the usage names the option" "1" "$(grep -c -- '--branch <name>' "$d/help")"
+PKG_REPOS_DIR="$d" bash "$ROLL" --branch >"$d/out" 2>&1
+check "a branch option without a name is refused" "2 1" "$? $(grep -c 'requires the name of a branch' "$d/out")"
+check "no step names the main branch outright" "0" "$(grep -c 'origin/main\|push origin main\|refs/heads/main\|expected main' "$ROLL")"
 
 standard_root="${HEADS%/heads}"
 echo "Test 42: a repo carries main, and testing for a next release, and no other branch"
