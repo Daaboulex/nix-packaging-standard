@@ -500,8 +500,11 @@ guard, reclaims ~20 GB of preinstalled toolchains nix never uses when the reposi
 variable `RECLAIM_DISK` is `on` (a large source build otherwise exhausts the runner's
 ~14 GB default disk; the step takes one to five minutes on an x86_64 runner, longer
 than many repos' whole build, so it is opt-in), then builds every
-output the flake declares for each runner's system via `nix-fast-build
---skip-cached`. A push builds less when it can prove less is needed
+output the flake declares for each runner's system via `build-checks.sh`, the
+only caller of `nix-fast-build --skip-cached` in the standard, which sizes the
+evaluation workers to the available memory: nix-fast-build's own default is one
+worker per core, each growing to 4 GiB, which on a runner is all of its memory.
+A push builds less when it can prove less is needed
 (`scripts/checks-to-build.sh`): only the checks whose derivation differs from
 the commit before the push, when that commit has a green CI run or was
 published by the automation after its own build. A push that changed only a
@@ -564,7 +567,7 @@ repo README — declare the off-CI build, never silently drop coverage.
 On a dev host with binfmt emulation (qemu-aarch64 for image builds),
 `nix flake check` treats foreign arches as locally buildable and grinds
 their check set under emulation. Gate locally scoped to the native system
-(`nix-fast-build --flake .#checks.<system>`) and let each arch's native CI
+(`bash <standard>/build-checks.sh <system>` from the repo root) and let each arch's native CI
 runner validate its own leg.
 
 CI builds, it does not run. A runner has no GPU, no display and no KVM, so

@@ -847,18 +847,14 @@
               touch "$out"
             '';
 
+          checks.std-fast-build-sized-once = pkgs.runCommand "std-fast-build-sized-once" { tree = ./.; } ''
+            bash "$tree/scripts/check-fast-build-callers.sh" "$tree"
+            touch "$out"
+          '';
+
           checks.std-fleet-roll-build-is-bounded =
             pkgs.runCommand "std-fleet-roll-build-is-bounded" { roll = ./scripts/fleet-roll.sh; }
               ''
-                invocation=$(awk '/nix-fast-build --/,/flake "\.#checks/' "$roll")
-
-                grep -q -- '-j "\$FAST_BUILD_JOBS"' <<< "$invocation" \
-                  || { echo "fleet-roll invokes nix-fast-build without an explicit -j. Its -j DEFAULTS to nix's max-jobs, so on a max-jobs=0 host it starts zero build workers and then waits forever on a queue nothing drains: a silent hang, not an error"; exit 1; }
-
-                jobs=$(sed -n 's/^FAST_BUILD_JOBS=\''${FAST_BUILD_JOBS:-\([0-9]*\)}.*/\1/p' "$roll")
-                [ -n "$jobs" ] && [ "$jobs" -gt 0 ] \
-                  || { echo "FAST_BUILD_JOBS must default to a positive number; 0 is the hang"; exit 1; }
-
                 if ! grep -q 'stat -c %s "\$buildlog"' "$roll"; then
                   echo "the per-repo build is not bounded on SILENCE. A wall-clock bound cannot separate a heavy build from a hang: both occupy the same duration, so raising it kills healthy work and lowering it still misses stalls. Bound on absence of output"
                   exit 1

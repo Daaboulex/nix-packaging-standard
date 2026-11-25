@@ -114,7 +114,6 @@ retired=0
 failed=0
 declare -a FAILED_REPOS=()
 
-FAST_BUILD_JOBS=${FAST_BUILD_JOBS:-8}
 STALL_TIMEOUT=${STALL_TIMEOUT:-900}
 STALL_POLL=${STALL_POLL:-30}
 
@@ -393,14 +392,10 @@ for repo in "${TARGETS[@]}"; do
     fi
   elif [ "$SKIP_BUILD" -eq 0 ]; then
     buildlog="$LOGDIR/$repo.log"
-    # -j is nix-fast-build's own worker count, NOT nix's max-jobs, but it
-    # DEFAULTS to it: on a max-jobs=0 host it starts zero build workers and
-    # then waits on a queue nothing will ever drain. Never omit it, never 0.
     # Bound on SILENCE, not elapsed time: a heavy build and a hang are the same
     # duration, so only absence of output distinguishes them.
     build_one() {
-      (cd "$dir" && nix run --inputs-from . nixpkgs#nix-fast-build -- \
-        -j "$FAST_BUILD_JOBS" --skip-cached --no-nom --flake ".#checks.$sys") >"$buildlog" 2>&1 &
+      (cd "$dir" && bash "$STD/build-checks.sh" "$sys") >"$buildlog" 2>&1 &
       local bpid=$! last=-1 now quiet=0
       while kill -0 "$bpid" 2>/dev/null; do
         sleep "$STALL_POLL"

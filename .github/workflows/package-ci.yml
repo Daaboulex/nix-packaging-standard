@@ -154,7 +154,7 @@ jobs:
           todo=$(bash "$STD/scripts/checks-to-build.sh" "$BASE" "$SYS")
           if [ "$todo" = ALL ]; then
             RETRY_BACKOFFS="60 300" bash "$STD/retry-transient.sh" "$RUNNER_TEMP/build.log" 13200 -- \
-              nix run --inputs-from . nixpkgs#nix-fast-build -- --skip-cached --no-nom --flake ".#checks.$SYS"
+              bash "$STD/build-checks.sh" "$SYS"
           elif [ -z "$todo" ]; then
             echo "this push changed no check for $SYS, and the commit before it was built green, so nothing is built"
           else

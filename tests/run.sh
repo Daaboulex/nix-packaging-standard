@@ -2212,6 +2212,52 @@ check "a branch that only starts like testing is named" "testing-old" "$(printf 
 check "the CI every repo carries runs on a push to testing" "1" "$(grep -c 'branches: \[main, master, testing\]' "$standard_root/callers/ci.yml")"
 check "the audit reads the same list" "1" "$(grep -c 'scripts/extra-branches.sh' "$standard_root/scripts/fleet-audit.sh")"
 
+echo "Test 43: every check is built through build-checks.sh, its evaluation workers sized to the available memory"
+d="$WORK/t43"
+mkdir -p "$d/bin"
+cat >"$d/bin/nix" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" >"$NIX_ARGS"
+STUB
+chmod +x "$d/bin/nix"
+cores=$(nproc)
+sized() {
+  printf 'MemTotal: 99999999 kB\nMemAvailable: %s kB\n' "$1" >"$d/meminfo"
+  : >"$d/args"
+  (cd "$d" && PATH="$d/bin:$PATH" MEMINFO="$d/meminfo" NIX_ARGS="$d/args" bash "$standard_root/build-checks.sh" x86_64-linux >/dev/null 2>&1)
+  RC=$?
+}
+workers() { sed -n 's/.*--eval-workers \([0-9]*\).*/\1/p' "$d/args"; }
+sized $((5 * 1024 * 1024))
+check "less memory than one worker needs still evaluates on one" "1" "$(workers)"
+check "each worker restarts at its stated size" "1" "$(grep -c -- '--eval-max-memory-size 4096' "$d/args")"
+check "one build task per core" "1" "$(grep -c -- "-j $cores " "$d/args")"
+check "the checks of the system it is given are built" "1" "$(grep -c -- '--flake .#checks.x86_64-linux$' "$d/args")"
+sized $((12 * 1024 * 1024))
+check "a worker per 6 GiB available" "$((cores < 2 ? cores : 2))" "$(workers)"
+sized $((1024 * 1024 * 1024))
+check "never more workers than cores" "$cores" "$(workers)"
+printf 'MemTotal: 1 kB\n' >"$d/meminfo"
+(cd "$d" && PATH="$d/bin:$PATH" MEMINFO="$d/meminfo" NIX_ARGS="$d/args" bash "$standard_root/build-checks.sh" x86_64-linux >/dev/null 2>&1)
+check "a meminfo without MemAvailable is refused" "2" "$?"
+check "the standard builds through build-checks.sh alone" "0" "$(
+  bash "$standard_root/scripts/check-fast-build-callers.sh" "$standard_root" >/dev/null 2>&1
+  echo $?
+)"
+mkdir -p "$d/tree/scripts" "$d/tree/.github/workflows"
+cp "$standard_root/build-checks.sh" "$d/tree/"
+printf 'run: nix run --inputs-from . nixpkgs#nix-fast-build -- --flake .#checks.x\n' >"$d/tree/.github/workflows/ci.yml"
+check "a workflow running nix-fast-build itself is refused" "1" "$(
+  bash "$standard_root/scripts/check-fast-build-callers.sh" "$d/tree" >/dev/null 2>&1
+  echo $?
+)"
+rm "$d/tree/.github/workflows/ci.yml"
+sed -i "s/ --eval-workers \"\\\$workers\"//" "$d/tree/build-checks.sh"
+check "build-checks.sh without its worker count is refused" "1" "$(
+  bash "$standard_root/scripts/check-fast-build-callers.sh" "$d/tree" >/dev/null 2>&1
+  echo $?
+)"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

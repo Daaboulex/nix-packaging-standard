@@ -202,7 +202,7 @@ jobs:
         run: |
           SYS=$(nix eval --impure --raw --expr 'builtins.currentSystem')
           bash "$STD/retry-transient.sh" "$LOG" 13200 -- \
-            nix run --inputs-from . nixpkgs#nix-fast-build -- --skip-cached --no-nom --flake ".#checks.$SYS"
+            bash "$STD/build-checks.sh" "$SYS"
 
       - name: Keep the build log for the report
         if: failure()
