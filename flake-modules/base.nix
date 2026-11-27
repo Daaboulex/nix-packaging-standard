@@ -306,6 +306,14 @@ in
               touch "$out"
             '';
 
+        std-nix-blocks-parse =
+          pkgs.runCommand "std-nix-blocks-parse" { nativeBuildInputs = [ pkgs.nix ]; }
+            ''
+              cd ${src}
+              bash ${../scripts/check-nix-blocks.sh}
+              touch "$out"
+            '';
+
         std-meta-maintainers =
           let
             malformed = lib.concatLists (

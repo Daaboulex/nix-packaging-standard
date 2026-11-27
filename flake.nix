@@ -569,6 +569,25 @@
               touch "$out"
             '';
 
+          checks.std-nix-blocks-parse-fixtures =
+            let
+              on =
+                name: (baseOn (./tests/fixtures/nix-blocks + "/${name}") [ system ]).${system}.std-nix-blocks-parse;
+            in
+            pkgs.runCommand "std-nix-blocks-parse-fixtures"
+              { planted = pkgs.testers.testBuildFailure (on "planted"); }
+              ''
+                test -e ${on "control"}
+                for named in 'docs/install.md:5: this nix block parses neither' 'attribute-set-body/docs/install.md:8:29:'; do
+                  if ! grep -qF -- "$named" "$planted/testBuildFailure.log"; then
+                    echo "  FAIL std-nix-blocks-parse passes a nix block that does not parse, or refuses it without '$named':"
+                    cat "$planted/testBuildFailure.log"
+                    exit 1
+                  fi
+                done
+                touch "$out"
+              '';
+
           checks.std-readme-tables-current =
             let
               hooks = lib.filterAttrs (_: hook: hook.enable or false) (
