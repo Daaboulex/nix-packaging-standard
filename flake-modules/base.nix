@@ -148,7 +148,8 @@ in
               ];
               text = ''
                 PRE_COMMIT_HOME="$(git rev-parse --show-toplevel)/.devshell/pre-commit"
-                export PRE_COMMIT_HOME
+                PREK_HOME="$(git rev-parse --show-toplevel)/.devshell/prek"
+                export PRE_COMMIT_HOME PREK_HOME
                 set -- "$@" ${lib.getExe config.pre-commit.settings.package} run -c ${commitMessageHookConfig} --hook-stage commit-msg --commit-msg-filename
               ''
               + builtins.readFile ../scripts/check-commit-range.sh;
@@ -171,7 +172,7 @@ in
         # Self-contained dev state: shell-provided tools keep caches/homes in
         # the project's gitignored .devshell/, never $HOME. The pins run
         # BEFORE the hook install: inputsFrom would run git-hooks first and
-        # pre-commit install would write ~/.cache/pre-commit. Custom shells
+        # the hook tool would write its cache into the home. Custom shells
         # do the same: devStateHook, then the installation script.
         shellHook = (import ../lib.nix).devStateHook + config.pre-commit.installationScript;
       };
@@ -228,42 +229,37 @@ in
         # outputs and shell state out of the tree -- the dev shell writes tool
         # caches into .devshell/ by contract (lib.devStateHook), and a missing
         # ignore entry would let that state (or result symlinks) get committed.
-        # Every dev shell this repo defines must pin PRE_COMMIT_HOME before it
-        # installs the git hooks, or pre-commit writes ~/.cache/pre-commit
-        # first. std-home-proof catches that only when the write actually
-        # happens; this reads the composed hook, so a wrong order is caught
-        # before it bites and without entering the shell at all. The strings
-        # are compared in Nix and never written to the store, so a hook that
-        # interpolates a large package does not drag it into the check.
+        # Every dev shell this repo defines must run devStateHook before the
+        # hook tool git-hooks is configured with, or the tool writes its cache
+        # into the real home first. std-home-proof catches that only when the
+        # write actually happens; this reads the composed hook, so a wrong
+        # order is caught before it bites and without entering the shell at
+        # all. The strings are compared in Nix and never written to the store,
+        # so a hook that interpolates a large package does not drag it into
+        # the check.
         std-devshell-order =
           let
-            offence =
-              name: shell:
-              let
-                lines = lib.splitString "\n" (shell.shellHook or "");
-                lineOf =
-                  needle:
-                  lib.findFirst (x: x != null) null (
-                    lib.imap0 (i: l: if lib.hasInfix needle l then i + 1 else null) lines
+            tool = config.pre-commit.settings.package;
+            offending = lib.attrNames (
+              lib.filterAttrs (
+                _: shell:
+                let
+                  parts = lib.splitString (builtins.unsafeDiscardStringContext (lib.getExe tool)) (
+                    shell.shellHook or ""
                   );
-                installs = lineOf "pre-commit install";
-                pins = lineOf "PRE_COMMIT_HOME=";
-              in
-              if installs == null then
-                null
-              else if pins == null then
-                "devShell ${name} installs the git hooks but never pins PRE_COMMIT_HOME, so pre-commit writes the real home"
-              else if pins > installs then
-                "devShell ${name} installs the git hooks at line ${toString installs} but pins PRE_COMMIT_HOME only at line ${toString pins}, so pre-commit writes ~/.cache/pre-commit first; compose it with inputs.std.lib.mkDevShell"
-              else
-                null;
-            offences = lib.filter (x: x != null) (lib.mapAttrsToList offence config.devShells);
+                in
+                lib.length parts > 1 && !lib.hasInfix (import ../lib.nix).devStateHook (lib.head parts)
+              ) config.devShells
+            );
           in
-          pkgs.runCommand "std-devshell-order" { } (
-            if offences == [ ] then
+          pkgs.runCommand "std-devshell-order" { passthru = { inherit offending; }; } (
+            if offending == [ ] then
               ''touch "$out"''
             else
-              lib.concatMapStringsSep "\n" (o: "echo ${lib.escapeShellArg ("::error::" + o)}") offences
+              lib.concatMapStringsSep "\n" (
+                name:
+                "echo ${lib.escapeShellArg "::error::devShell ${name} runs ${tool.name} before inputs.std.lib.devStateHook has pinned its home, so it writes the real home; compose it with inputs.std.lib.mkDevShell"}"
+              ) offending
               + "\nexit 1\n"
           );
 

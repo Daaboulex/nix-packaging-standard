@@ -349,8 +349,8 @@ rec {
   # wires this into the default dev shell; a repo with custom shells sets
   # inputs.std.lib.mkDevShell, which composes it in the one correct order.
   # Setting shellHook alone is NOT enough beside inputsFrom = [
-  # config.pre-commit.devShell ]: that shell's hook installs pre-commit first
-  # and writes ~/.cache/pre-commit before PRE_COMMIT_HOME exists. nix-direnv
+  # config.pre-commit.devShell ]: that shell's hook runs the hook tool first,
+  # which writes its cache into the home before its pin exists. nix-direnv
   # (.envrc `use flake`) captures the exports for every in-project entry
   # point, not just `nix develop`. Deliberately NOT pinned here: CARGO_HOME
   # and HF_HOME (shared registry/model caches belong to the machine config,
@@ -361,6 +361,7 @@ rec {
     export NIX_CACHE_HOME="''${NIX_CACHE_HOME:-''${XDG_CACHE_HOME:-$HOME/.cache}/nix}"
     export XDG_CACHE_HOME="$DEVSHELL_STATE/cache"
     export PRE_COMMIT_HOME="$DEVSHELL_STATE/pre-commit"
+    export PREK_HOME="$DEVSHELL_STATE/prek"
     export RUFF_CACHE_DIR="$DEVSHELL_STATE/ruff"
     export MYPY_CACHE_DIR="$DEVSHELL_STATE/mypy"
     export PYTHONPYCACHEPREFIX="$DEVSHELL_STATE/pycache"
@@ -379,7 +380,7 @@ rec {
   # mkDevShell — a custom dev shell that cannot get the order wrong. The hook
   # tools arrive as packages instead of through
   # inputsFrom = [ config.pre-commit.devShell ], whose own shellHook runs first
-  # and installs pre-commit before the pins exist, writing ~/.cache/pre-commit.
+  # and runs the hook tool before the pins exist, writing its cache into the home.
   # Here devStateHook runs, then the installation script, then the caller's own
   # hook.
   mkDevShell =

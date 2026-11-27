@@ -201,6 +201,17 @@
                 commitMessageApp {
                   perSystem.pre-commit.settings.hooks = lib.mapAttrs (_: _: { enable = lib.mkForce false; }) hooks;
                 };
+              shellOrder =
+                compose:
+                (flakeOn ./tests/fixtures/consumer-current [ system ] {
+                  perSystem =
+                    { config, pkgs, ... }:
+                    {
+                      devShells.composed = pkgs.mkShell {
+                        shellHook = compose (import ./lib.nix).devStateHook config.pre-commit.installationScript;
+                      };
+                    };
+                }).checks.${system}.std-devshell-order.offending;
               expect =
                 what: got: want:
                 if got == want then null else "${what}: got ${builtins.toJSON got}, want ${builtins.toJSON want}";
@@ -273,6 +284,12 @@
                 (expect "and changes with its own stage's hooks off too, so it still runs them" (
                   commitMessageApp { } == commitMessageAppWithout standardHooks
                 ) false)
+                (expect "a dev shell that pins before the hook tool runs is not named" (shellOrder (
+                  pins: install: pins + install
+                )) [ ])
+                (expect "a dev shell that runs the hook tool before the pins is named" (shellOrder (
+                  pins: install: install + pins
+                )) [ "composed" ])
               ];
             in
             pkgs.runCommand "std-base-fixtures" { } (
@@ -1233,32 +1250,32 @@
               '';
 
           # The one composition rule custom shells got wrong: the pins must run
-          # BEFORE the hook install, or pre-commit writes ~/.cache/pre-commit
-          # before PRE_COMMIT_HOME exists and std-home-proof refuses the push.
+          # BEFORE the hook install, or the hook tool writes its cache into the
+          # home before its pin exists and std-home-proof refuses the push.
           checks.std-devshell-pins-before-hooks =
-            pkgs.runCommand "std-devshell-pins-before-hooks"
-              {
-                hook = ((import ./lib.nix).mkDevShell { inherit pkgs config; } { }).shellHook;
-              }
-              ''
-                printf '%s' "$hook" >hook.sh
-                pins=$(grep -n 'PRE_COMMIT_HOME=' hook.sh | head -1 | cut -d: -f1)
-                install=$(grep -n 'pre-commit install' hook.sh | head -1 | cut -d: -f1)
-                if [ -z "$pins" ]; then
-                  echo "mkDevShell composed a hook that never pins PRE_COMMIT_HOME, so every tool it starts writes the real home"
+            let
+              inherit (import ./lib.nix) devStateHook mkDevShell;
+              tool = config.pre-commit.settings.package;
+              parts =
+                lib.splitString (builtins.unsafeDiscardStringContext (lib.getExe tool))
+                  (mkDevShell { inherit pkgs config; } { }).shellHook;
+              failure =
+                if lib.length parts == 1 then
+                  "mkDevShell composed a hook that never runs ${tool.name}, so the repo's own gate would never be installed"
+                else if !lib.hasInfix devStateHook (lib.head parts) then
+                  "mkDevShell runs ${tool.name} before devStateHook has pinned its home, so it writes the real home"
+                else
+                  null;
+            in
+            pkgs.runCommand "std-devshell-pins-before-hooks" { } (
+              if failure == null then
+                ''touch "$out"''
+              else
+                ''
+                  echo ${lib.escapeShellArg failure}
                   exit 1
-                fi
-                if [ -z "$install" ]; then
-                  echo "mkDevShell composed a hook that never installs the git hooks, so the repo's own gate would never run"
-                  exit 1
-                fi
-                if [ "$pins" -ge "$install" ]; then
-                  echo "mkDevShell puts the hook install at line $install ahead of the pins at line $pins, so pre-commit writes ~/.cache/pre-commit before PRE_COMMIT_HOME exists"
-                  exit 1
-                fi
-
-                touch "$out"
-              '';
+                ''
+            );
 
           # The roll reported every failed push as a permissions problem, so a
           # pre-push hook refusing it (std-home-proof finding real home
