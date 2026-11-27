@@ -23,6 +23,16 @@ log() { echo "==> $*" >&2; }
 warn() { echo "::warning::$*" >&2; }
 err() { echo "::error::$*" >&2; }
 
+MODE=update
+case "${1-}" in
+"") ;;
+--check-config) MODE=check-config ;;
+*)
+  err "update.sh: argument '$1' is not --check-config"
+  exit 1
+  ;;
+esac
+
 # check_suite — run the flake check the way the build step is run, and report
 # what actually failed. A flake check BUILDS its check derivations, so a
 # builder failure surfaces here and never reaches the build step below;
@@ -265,6 +275,60 @@ if [ -n "$CURRENT_VERSION" ]; then
   fi
 fi
 
+LEDGER=""
+if [ "$TRACK_ONLY" = "true" ]; then
+  LEDGER=$(jq -c '.files // empty' "$TRACK_FILE")
+fi
+if [ -n "$LEDGER" ] && [ "$UPSTREAM_TYPE" != "github-commit" ]; then
+  err "trackOnly: '$TRACK_FILE' carries a file ledger, which is read against GitHub's compare and tree endpoints; upstream type '$UPSTREAM_TYPE' has neither"
+  output "updated" "false"
+  output "error_type" "config-error"
+  exit 1
+fi
+if [ "$VERSION_SCHEME" = "unstable-date" ] || [ "$VERSION_SCHEME" = "rev-only" ]; then
+  case "$UPSTREAM_TYPE" in
+  github-commit | gitlab-commit | gitea-commit | git-ls-remote) ;;
+  *)
+    err "versionScheme '$VERSION_SCHEME' requires a commit-tracked upstream type; upstream.type is '$UPSTREAM_TYPE'"
+    output "updated" "false"
+    output "error_type" "config-error"
+    exit 1
+    ;;
+  esac
+fi
+if [ -n "$VARIANT_ASSETS" ]; then
+  if [ "$UPSTREAM_TYPE" != "github-release" ]; then
+    err "variantAssets requires upstream.type 'github-release'; upstream.type is '$UPSTREAM_TYPE'"
+    output "error_type" "config-error"
+    exit 1
+  fi
+  VA_FILE=$(echo "$VARIANT_ASSETS" | jq -r '.sourceFile // "sources.nix"')
+  VA_PREFIX=$(echo "$VARIANT_ASSETS" | jq -r '.assetPrefix')
+  VA_SUFFIX=$(echo "$VARIANT_ASSETS" | jq -r '.assetSuffix // ".tar.xz"')
+  VA_DEFAULT=$(echo "$VARIANT_ASSETS" | jq -r '.defaultVariant // empty')
+  if [ ! -f "$VA_FILE" ] || ! grep -q 'std:variants-begin' "$VA_FILE" ||
+    ! grep -q 'std:variants-end' "$VA_FILE"; then
+    err "variantAssets: '$VA_FILE' needs both '# std:variants-begin' and '# std:variants-end' markers"
+    output "error_type" "config-error"
+    exit 1
+  fi
+fi
+PYREQ_FILE=$(echo "$CONFIG" | jq -r '.pythonRequirements.file // empty')
+if [ -n "$PYREQ_FILE" ]; then
+  PYREQ_ENV=$(echo "$CONFIG" | jq -r '.pythonRequirements.envFile // "package.nix"')
+  MARKER="# std:requirements-auto-add"
+  if ! grep -qF "$MARKER" "$PYREQ_ENV"; then
+    err "pythonRequirements set but $PYREQ_ENV has no '$MARKER' marker"
+    output "error_type" "config-error"
+    exit 1
+  fi
+fi
+
+if [ "$MODE" = check-config ]; then
+  log "Config valid: every check the updater makes before it fetches passed"
+  exit 0
+fi
+
 # --- Standard case: nix-update shim -------------------------------------
 # nix-update (Mic92) does the whole standard bump -- detect the latest forge
 # release/commit, rewrite the version, and recompute EVERY fixed-output hash
@@ -275,9 +339,8 @@ fi
 # namespace, and trackOnly. A plain repo is the shim: nix-update, then the
 # same verification chain. NIX_UPDATE lets the test suite stub the tool.
 NIX_UPDATE=${NIX_UPDATE:-"nix run --inputs-from . nixpkgs#nix-update --"}
-PYREQ_FILE_PRESENT=$(echo "$CONFIG" | jq -r '.pythonRequirements.file // empty')
 if [ -z "$VARIANT_ASSETS" ] && [ "$TRACK_ONLY" != "true" ] &&
-  [ -z "$PYREQ_FILE_PRESENT" ] && [ "$VERSION_SCHEME" = "literal" ] &&
+  [ -z "$PYREQ_FILE" ] && [ "$VERSION_SCHEME" = "literal" ] &&
   [ "$TAG_FILTER" = ".*" ] && [ "$DECLARED_HASHES" -gt 0 ]; then
   log "Standard case: delegating detection + hashes to nix-update"
   # --override-filename points nix-update at the file that holds the version
@@ -521,13 +584,6 @@ esac
 if [ "$TRACK_ONLY" = "true" ]; then
   NEW_REF="${FULL_REV:-$LATEST_VERSION}"
   output "new_version" "${NEW_REF:0:7}"
-  LEDGER=$(jq -c '.files // empty' "$TRACK_FILE")
-  if [ -n "$LEDGER" ] && [ "$UPSTREAM_TYPE" != "github-commit" ]; then
-    err "trackOnly: '$TRACK_FILE' carries a file ledger, which is read against GitHub's compare and tree endpoints; upstream type '$UPSTREAM_TYPE' has neither"
-    output "updated" "false"
-    output "error_type" "config-error"
-    exit 1
-  fi
   if [ "${CURRENT_VERSION:0:7}" = "${NEW_REF:0:7}" ] || [ "$CURRENT_VERSION" = "$NEW_REF" ]; then
     if [ -n "$LEDGER" ]; then
       TREE=$(fetch_latest "curl -sfL 'https://api.github.com/repos/$OWNER/$REPO/git/trees/$NEW_REF?recursive=1'") || {
@@ -608,12 +664,6 @@ fi
 # The rev (the real SHA) still tracks every commit. Comparison switches to the
 # rev, since the date string would otherwise differ every day and loop forever.
 if [ "$VERSION_SCHEME" = "unstable-date" ]; then
-  if [ -z "$FULL_REV" ]; then
-    err "versionScheme 'unstable-date' requires a commit-tracked upstream type"
-    output "updated" "false"
-    output "error_type" "config-error"
-    exit 1
-  fi
   CURRENT_REV=$(read_current_rev)
   if [ -n "$CURRENT_REV" ] && [ "$CURRENT_REV" = "$FULL_REV" ]; then
     log "Already up to date (rev $FULL_REV)"
@@ -666,12 +716,6 @@ fi
 # never gates. WRITE_VERSION drives the writer below.
 WRITE_VERSION=1
 if [ "$VERSION_SCHEME" = "rev-only" ]; then
-  if [ -z "$FULL_REV" ]; then
-    err "versionScheme 'rev-only' requires a commit-tracked upstream type"
-    output "updated" "false"
-    output "error_type" "config-error"
-    exit 1
-  fi
   WRITE_VERSION=0
   CURRENT_REV=$(read_current_rev)
   if [ -n "$CURRENT_REV" ] && [ "$CURRENT_REV" = "$FULL_REV" ]; then
@@ -799,21 +843,6 @@ fi
 # defaultVariant names the variant whose asset carries no `-<variant>` token,
 # exactly <assetPrefix><tag><assetSuffix>.
 if [ -n "$VARIANT_ASSETS" ]; then
-  if [ "$UPSTREAM_TYPE" != "github-release" ]; then
-    err "variantAssets requires upstream.type 'github-release'"
-    output "error_type" "config-error"
-    exit 1
-  fi
-  VA_FILE=$(echo "$VARIANT_ASSETS" | jq -r '.sourceFile // "sources.nix"')
-  VA_PREFIX=$(echo "$VARIANT_ASSETS" | jq -r '.assetPrefix')
-  VA_SUFFIX=$(echo "$VARIANT_ASSETS" | jq -r '.assetSuffix // ".tar.xz"')
-  VA_DEFAULT=$(echo "$VARIANT_ASSETS" | jq -r '.defaultVariant // empty')
-  if [ ! -f "$VA_FILE" ] || ! grep -q 'std:variants-begin' "$VA_FILE" ||
-    ! grep -q 'std:variants-end' "$VA_FILE"; then
-    err "variantAssets: '$VA_FILE' needs both '# std:variants-begin' and '# std:variants-end' markers"
-    output "error_type" "config-error"
-    exit 1
-  fi
   VA_ASSETS=$(echo "$RELEASES" | jq -c --arg t "$LATEST_TAG" 'map(select(.tag_name==$t))[0].assets // []')
   VA_MATCH="${VA_PREFIX}${LATEST_TAG}-"
   VA_BLOCK=""
@@ -1007,15 +1036,7 @@ fi
 # '# std:requirements-auto-add' marker. lib.requirementsCoveredCheck then
 # proves REAL coverage during the verification build below, so an unmappable
 # name (pypi name != nixpkgs attr) fails the run naming the requirement.
-PYREQ_FILE=$(echo "$CONFIG" | jq -r '.pythonRequirements.file // empty')
 if [ -n "$PYREQ_FILE" ]; then
-  PYREQ_ENV=$(echo "$CONFIG" | jq -r '.pythonRequirements.envFile // "package.nix"')
-  MARKER="# std:requirements-auto-add"
-  if ! grep -qF "$MARKER" "$PYREQ_ENV"; then
-    err "pythonRequirements set but $PYREQ_ENV has no '$MARKER' marker"
-    output "error_type" "config-error"
-    exit 1
-  fi
   if [ -z "${LATEST_TAG:-}" ]; then
     warn "pythonRequirements: no upstream tag resolved (non-tag upstream); skipping auto-add -- the coverage check still gates the build"
   else

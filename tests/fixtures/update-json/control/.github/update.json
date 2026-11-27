@@ -1,0 +1,7 @@
+{
+  "package": "demo",
+  "upstream": { "type": "github-release", "owner": "example", "repo": "demo" },
+  "packageFile": "package.nix",
+  "hashes": [ "hash" ],
+  "verify": { "check": "eval" }
+}

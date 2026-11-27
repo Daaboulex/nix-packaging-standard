@@ -3086,6 +3086,69 @@ echo own >"$RAN"
 SH
 updater_step "$d/locked"
 check "a custom repo still runs its own updater" "own" "$(cat "$d/ran" 2>/dev/null)"
+
+echo "Test 50: update.sh --check-config makes every check the updater makes before it fetches, and fetches and writes nothing"
+d="$WORK/t50"
+mkdir -p "$d/bin"
+cat >"$d/bin/curl" <<'SH'
+#!/usr/bin/env bash
+echo "${0##*/} $*" >>"$CALLS"
+exit 1
+SH
+for tool in git nix recorded-nix-update; do cp "$d/bin/curl" "$d/bin/$tool"; done
+printf '#!/usr/bin/env bash\nexit 0\n' >"$d/bin/sleep"
+chmod +x "$d/bin/"*
+validated() { # validated <tree>  -> RC; its outputs in <tree>.out, its calls in $d/calls, tree=same|changed in $d/tree
+  local before after
+  : >"$d/calls"
+  before=$(cd "$1" && find . -type f -exec sha256sum {} + | sort)
+  (cd "$1" && CALLS="$d/calls" GITHUB_OUTPUT="$1.out" PATH="$d/bin:$PATH" NIX_UPDATE=recorded-nix-update \
+    bash "$UPDATE" --check-config >"$1.log" 2>&1)
+  RC=$?
+  after=$(cd "$1" && find . -type f -exec sha256sum {} + | sort)
+  if [ "$before" = "$after" ]; then echo same >"$d/tree"; else echo changed >"$d/tree"; fi
+}
+verdict() { printf 'rc=%s error=%s calls=%s' "$RC" "$(grep -E '^error_type=' "$1.out" | tail -1 | cut -d= -f2-)" "$(wc -l <"$d/calls" | tr -d ' ')"; }
+tree_with() { # tree_with <name> <update.json> [<file> <content>]...  -> a fresh tree in $d/<name>
+  local t="$d/$1"
+  rm -rf "$t"
+  mkdir -p "$t/.github"
+  printf '%s\n' "$2" >"$t/.github/update.json"
+  shift 2
+  while [ "$#" -ge 2 ]; do
+    printf '%s\n' "$2" >"$t/$1"
+    shift 2
+  done
+}
+cp -r "$FIXTURES/update-json/control" "$d/valid"
+validated "$d/valid"
+check "a valid config passes, with no fetch and no file changed" "rc=0 error= calls=0 tree=same" "$(verdict "$d/valid") tree=$(cat "$d/tree")"
+cp -r "$FIXTURES/update-json/ambiguous" "$d/ambiguous"
+validated "$d/ambiguous"
+check "a bare hash field set in two files is refused as the updater refuses it" "rc=1 error=config-error calls=0" "$(verdict "$d/ambiguous")"
+check "and the refusal names both files" "1" "$(grep -cF "is set in more than one file (./package.nix ./wheel.nix" "$d/ambiguous.log")"
+release='"upstream": { "type": "github-release", "owner": "o", "repo": "r" }'
+tag='"upstream": { "type": "github-tag", "owner": "o", "repo": "r" }'
+variants='"versionFile": "sources.nix", "variantAssets": { "sourceFile": "sources.nix", "assetPrefix": "" }, "hashes": []'
+marked=$'{\n  version = "1.0";\n  # std:variants-begin\n  # std:variants-end\n}'
+tree_with rev-only-on-a-release '{ "package": "x", '"$release"', "versionScheme": "rev-only", "hashes": [ "hash" ] }' \
+  package.nix '{ version = "1.0"; rev = "aaaaaaa"; hash = "sha256-A"; }'
+tree_with unstable-date-on-a-tag '{ "package": "x", '"$tag"', "versionScheme": "unstable-date", "hashes": [ "hash" ] }' \
+  package.nix '{ version = "1.0-unstable-2026-01-01"; rev = "aaaaaaa"; hash = "sha256-A"; }'
+tree_with variants-on-a-tag '{ "package": "x", '"$tag"', '"$variants"' }' sources.nix "$marked"
+tree_with variants-without-markers '{ "package": "x", '"$release"', '"$variants"' }' sources.nix '{ version = "1.0"; }'
+tree_with requirements-without-marker '{ "package": "x", '"$release"', "hashes": [], "pythonRequirements": { "file": "requirements.txt", "envFile": "env.nix" } }' \
+  package.nix '{ version = "1.0"; }' env.nix 'ps: [ ps.requests ]'
+tree_with ledger-off-github '{ "package": "x", "upstream": { "type": "git-ls-remote", "url": "u" }, "trackOnly": true, "hashes": [] }' \
+  upstream-version.json '{ "commit": "aaaaaaa", "files": { "a.c": { "decision": "ported" } } }'
+for t in rev-only-on-a-release unstable-date-on-a-tag variants-on-a-tag variants-without-markers requirements-without-marker ledger-off-github; do
+  validated "$d/$t"
+  check "$t: refused as a config error before any fetch" "rc=1 error=config-error calls=0" "$(verdict "$d/$t")"
+done
+
+echo "Test 51: std-update-json runs the updater's own config checks on the repo"
+check "std-update-json runs update.sh --check-config" "1" "$(grep -cF "bash \${../update.sh} --check-config" "$standard_root/flake-modules/base.nix")"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

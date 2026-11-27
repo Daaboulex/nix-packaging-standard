@@ -555,6 +555,20 @@
               touch "$out"
             '';
 
+          checks.std-update-json-fixtures =
+            let
+              on =
+                name: (baseOn (./tests/fixtures/update-json + "/${name}") [ system ]).${system}.std-update-json;
+            in
+            pkgs.runCommand "std-update-json-fixtures" { } ''
+              test -e ${on "control"}
+              if ! grep -qF -- "is set in more than one file" ${pkgs.testers.testBuildFailure (on "ambiguous")}/testBuildFailure.log; then
+                echo "  FAIL std-update-json passes a bare hash field set in two files, which update.sh refuses before it fetches"
+                exit 1
+              fi
+              touch "$out"
+            '';
+
           checks.std-readme-tables-current =
             let
               hooks = lib.filterAttrs (_: hook: hook.enable or false) (

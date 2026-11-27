@@ -12,7 +12,8 @@
 #     nix-fast-build actually BUILD the package — nix#13470);
 #   - `std-conformance`: a hermetic check that the synced callers and
 #     dotfiles byte-match this standard's canonicals;
-#   - `std-update-json`: validates .github/update.json against the schema.
+#   - `std-update-json`: validates .github/update.json against the schema and
+#     runs every check update.sh makes before it fetches (--check-config).
 {
   inputs,
   lib,
@@ -291,9 +292,17 @@ in
           touch "$out"
         '';
         std-update-json =
-          pkgs.runCommand "std-update-json" { nativeBuildInputs = [ pkgs.check-jsonschema ]; }
+          pkgs.runCommand "std-update-json"
+            {
+              nativeBuildInputs = [
+                pkgs.check-jsonschema
+                pkgs.jq
+              ];
+            }
             ''
-              check-jsonschema --schemafile ${../update.schema.json} ${src + "/.github/update.json"}
+              check-jsonschema --schemafile ${../update.schema.json} ${src}/.github/update.json
+              cd ${src}
+              GITHUB_OUTPUT=$(mktemp) bash ${../update.sh} --check-config
               touch "$out"
             '';
 
