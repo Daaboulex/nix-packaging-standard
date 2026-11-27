@@ -3295,6 +3295,27 @@ check "a repo with no upstream is not" "0 " "$(rehearsed '{ "upstream": { "type"
 check "a repo with its own updater is not" "0 " "$(rehearsed '{ "upstream": { "type": "custom" } }')"
 check "a repo that only tracks its upstream is not" "0 " "$(rehearsed '{ "upstream": { "type": "github-commit" }, "trackOnly": true }')"
 check "and the log says why" "1" "$(grep -c 'nothing to rehearse' "$d/step.log")"
+
+echo "Test 57: a desktop verify that finds no desktop file fails the update"
+d="$WORK/t57"
+for build in bare shipped; do
+  mkdir -p "$d/$build/.github" "$d/$build/_out/bin"
+  cat >"$d/$build/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "git-ls-remote", "url": "u", "branch": "main" },
+  "packageFile": "version.json", "versionScheme": "rev-only",
+  "hashes": [], "verify": { "binary": null, "args": null, "check": "desktop" } }
+JSON
+  printf '{ "rev": "old0000000000000000000000000000000000000a", "version": "1.0", "date": "x" }\n' >"$d/$build/version.json"
+  ln -s _out "$d/$build/result"
+  : >"$d/$build/.nixflag"
+done
+mkdir -p "$d/shipped/_out/share/applications"
+: >"$d/shipped/_out/share/applications/com.core447.StreamController.desktop"
+STUB_GIT_REV="new2222222222222222222222222222222222222c" run_update "$d/bare"
+check "a build with no desktop file fails the update as a verification error" "1 verification-error" "$RC $(get "$d/bare" error_type)"
+STUB_GIT_REV="new2222222222222222222222222222222222222c" run_update "$d/shipped"
+check "a build that ships one passes" "0 " "$RC $(get "$d/shipped" error_type)"
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

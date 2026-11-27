@@ -1416,7 +1416,8 @@ doing any work.
 - **`verify.check`** is one of `elf` / `wrapper` / `desktop` / `eval`. `eval`
   (also the default when omitted) makes eval + a clean build the whole
   verification; the others additionally assert the named artifact exists under
-  `result/`. `verify.binary` (+ `verify.args`) instead runs a built binary.
+  `result/`, and a build that lacks it fails the update as `verification-error`.
+  `verify.binary` (+ `verify.args`) instead runs a built binary.
 
 ### Upstream types
 

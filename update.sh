@@ -185,8 +185,11 @@ verify_artifact() {
       exit 1
     }
   elif [ "$VERIFY_CHECK" = "desktop" ]; then
-    desktop=$(find result/share/applications/ -name "*.desktop" 2>/dev/null | head -1 || true)
-    [ -n "$desktop" ] || warn "No desktop file found"
+    if ! FOUND=$(find result/share/applications/ -name "*.desktop") || [ -z "$FOUND" ]; then
+      err "No desktop file found under result/share/applications"
+      output "error_type" "verification-error"
+      exit 1
+    fi
   fi
   rm -f result
 }
