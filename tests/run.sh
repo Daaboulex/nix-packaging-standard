@@ -2306,7 +2306,7 @@ check "main and testing are no extra branch" "" "$(printf 'main\ntesting\n' | ba
 check "any other branch is named" "exp/try update/pkg-1.2" "$(printf 'main\nexp/try\ntesting\nupdate/pkg-1.2\n' | bash "$standard_root/scripts/extra-branches.sh" | tr '\n' ' ' | sed 's/ $//')"
 check "a branch that only starts like testing is named" "testing-old" "$(printf 'main\ntesting-old\n' | bash "$standard_root/scripts/extra-branches.sh")"
 check "the CI every repo carries runs on a push to testing" "1" "$(grep -c 'branches: \[main, master, testing\]' "$standard_root/callers/ci.yml")"
-check "the audit reads the same list" "1" "$(grep -c 'scripts/extra-branches.sh' "$standard_root/scripts/fleet-audit.sh")"
+check "the audit reads the same list, for GitHub and for the clone" "2" "$(grep -c 'scripts/extra-branches.sh' "$standard_root/scripts/fleet-audit.sh")"
 
 echo "Test 43: every check is built through build-checks.sh, its evaluation workers sized to the available memory"
 d="$WORK/t43"
@@ -2359,6 +2359,143 @@ check "build-checks.sh without its worker count is refused" "1" "$(
   bash "$standard_root/scripts/check-fast-build-callers.sh" "$d/tree" >/dev/null 2>&1
   echo $?
 )"
+
+echo "Test 44: fleet-audit names a lock behind the release, extra local branches and remotes, unpushed commits and a clone behind GitHub"
+d="$WORK/t44"
+mkdir -p "$d/bin" "$d/repos" "$d/gh/repos/owner/std/branches"
+cat >"$d/bin/gh" <<'SH'
+#!/usr/bin/env bash
+[ "$1" = api ] || exit 1
+shift
+expr=.
+while [ $# -gt 0 ]; do
+  case "$1" in
+  --jq)
+    expr=$2
+    shift
+    ;;
+  --paginate) ;;
+  *) endpoint=$1 ;;
+  esac
+  shift
+done
+[ -f "$GH_DATA/$endpoint" ] || {
+  echo "gh: Not Found (HTTP 404)" >&2
+  exit 1
+}
+jq -r "$expr" "$GH_DATA/$endpoint"
+SH
+printf '#!/usr/bin/env bash\nexit 0\n' >"$d/bin/sleep"
+chmod +x "$d/bin/gh" "$d/bin/sleep"
+pinned=1111111111111111111111111111111111111111
+released=2222222222222222222222222222222222222222
+printf '{"commit":{"sha":"%s"}}\n' "$released" >"$d/gh/repos/owner/std/branches/release"
+printf '[{"name":"v1.1.0","commit":{"sha":"%s"}},{"name":"v1.0.0","commit":{"sha":"%s"}}]\n' "$released" "$pinned" >"$d/gh/repos/owner/std/tags"
+g() { git -C "$d/repos/$1" -c user.name=t -c user.email=t@t "${@:2}"; }
+consumer() { # consumer <name> <locked std rev>  -> a clone of owner/<name> with one commit on main
+  mkdir -p "$d/repos/$1/.github" "$d/gh/repos/owner/$1"
+  git init -q -b main "$d/repos/$1"
+  printf '{"upstream":{"type":"none"}}\n' >"$d/repos/$1/.github/update.json"
+  printf '{"nodes":{"std":{"locked":{"owner":"owner","repo":"std","rev":"%s","type":"github"},"original":{"owner":"owner","repo":"std","ref":"release","type":"github"}}}}\n' "$2" >"$d/repos/$1/flake.lock"
+  g "$1" add -A
+  g "$1" commit -qm base
+  g "$1" remote add origin "https://github.com/owner/$1.git"
+}
+on_github() { # on_github <name> <main sha>  -> GitHub holds main at that commit
+  printf '[{"name":"main","commit":{"sha":"%s"}}]\n' "$2" >"$d/gh/repos/owner/$1/branches"
+}
+consumer steady "$released"
+on_github steady "$(g steady rev-parse HEAD)"
+consumer trailing "$pinned"
+on_github trailing "$(g trailing rev-parse HEAD)"
+consumer cluttered "$released"
+on_github cluttered "$(g cluttered rev-parse HEAD)"
+g cluttered branch merged
+g cluttered switch -q -c old-default
+g cluttered commit -q --allow-empty -m kept
+g cluttered switch -q main
+g cluttered remote add fork https://github.com/someone/cluttered.git
+consumer ahead "$released"
+on_github ahead "$(g ahead rev-parse HEAD)"
+g ahead commit -q --allow-empty -m one
+g ahead commit -q --allow-empty -m two
+consumer unfetched "$released"
+on_github unfetched 3333333333333333333333333333333333333333
+consumer unmerged "$released"
+g unmerged commit -q --allow-empty -m upstream
+on_github unmerged "$(g unmerged rev-parse HEAD)"
+g unmerged update-ref refs/remotes/origin/main HEAD
+g unmerged reset -q --hard HEAD~1
+audit() { (cd "$d" && PATH="$d/bin:$PATH" GH_DATA="$d/gh" GH_OWNER=owner PKG_REPOS_DIR="$d/repos" bash "$standard_root/scripts/fleet-audit.sh" "$@" >"$d/log" 2>&1); }
+audit --skip-nix steady trailing cluttered ahead unfetched unmerged
+check "a lock behind the release is named with the release it pins and the one the branch is at" "1" \
+  "$(grep -c '^FAIL  trailing: flake.lock pins owner/std at v1.0.0 while its release branch is at v1.1.0$' "$d/log")"
+check "a local branch other than the allowed ones is named, merged or not" "1" \
+  "$(grep -c '^FAIL  cluttered: extra local branch(es): merged old-default$' "$d/log")"
+check "a remote other than origin is named" "1" "$(grep -c '^FAIL  cluttered: remote(s) other than origin: fork$' "$d/log")"
+check "commits on main that GitHub does not hold are named with their count" "1" \
+  "$(grep -c '^FAIL  ahead: local main holds 2 commit(s) no branch on GitHub holds$' "$d/log")"
+check "so are those of a local branch GitHub does not have" "1" \
+  "$(grep -c '^FAIL  cluttered: local old-default holds 1 commit(s) no branch on GitHub holds$' "$d/log")"
+check "a branch GitHub already holds is not named as unpushed" "0" "$(grep -c '^FAIL  cluttered: local merged' "$d/log")"
+check "a clone behind GitHub's main is named with the count" "1" \
+  "$(grep -c "^FAIL  unmerged: local main is 1 commit(s) behind GitHub's main$" "$d/log")"
+check "a clone that lacks the commit GitHub's main is at is named behind, and nothing is counted" "1 0" \
+  "$(grep -c "^FAIL  unfetched: GitHub's main points at a commit this clone has not fetched" "$d/log") $(grep -c '^FAIL  unfetched: local main' "$d/log")"
+check "a clone in step with GitHub on the current release is not named" "0" \
+  "$(grep -cE '^FAIL  steady: (flake.lock|extra local|remote\(s\)|local |GitHub)' "$d/log")"
+audit --local --skip-nix ahead
+check "a --local run compares nothing with GitHub" "0" "$(grep -c 'holds 2 commit(s)' "$d/log")"
+
+echo "Test 45: the fleet watch names a repo it could not read, sweeps on, and dates its issue"
+d="$WORK/t45"
+mkdir -p "$d"
+sed -n '/^ *script: |$/,$p' "$standard_root/.github/workflows/fleet-watch.yml" | sed '1d; s/^            //' >"$d/sweep.js"
+cat >"$d/run.js" <<'JS'
+const fs = require('fs');
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const sweep = new AsyncFunction('github', 'context', fs.readFileSync(process.argv[2], 'utf8'));
+const content = (o) => ({ data: { content: Buffer.from(JSON.stringify(o)).toString('base64') } });
+const written = [];
+const github = {
+  paginate: async () => [
+    { name: 'unreadable', full_name: 'owner/unreadable', default_branch: 'main', archived: false },
+    { name: 'red', full_name: 'owner/red', default_branch: 'main', archived: false }
+  ],
+  rest: {
+    repos: {
+      listForUser: () => {},
+      getContent: async ({ path }) => content(path === 'flake.lock'
+        ? { nodes: { std: { original: { ref: 'release' } } } }
+        : { upstream: { type: 'none' } })
+    },
+    issues: {
+      listForRepo: async () => ({ data: [] }),
+      create: async ({ body }) => written.push(body),
+      update: async ({ body }) => written.push(body),
+      createComment: async () => {}
+    },
+    actions: {
+      listWorkflowRuns: async ({ repo }) => {
+        if (repo === 'unreadable') throw Object.assign(new Error('Server Error'), { status: 502 });
+        return { data: { workflow_runs: [{ event: 'push', head_repository: { full_name: `owner/${repo}` }, status: 'completed', conclusion: 'failure', created_at: new Date().toISOString() }] } };
+      }
+    }
+  }
+};
+sweep(github, { repo: { owner: 'owner', repo: 'standard' } }).then(
+  () => process.stdout.write(written.join('\n')),
+  (e) => {
+    console.error(`the sweep stopped: ${e.message}`);
+    process.exit(1);
+  }
+);
+JS
+node "$d/run.js" "$d/sweep.js" >"$d/body" 2>"$d/err"
+check "one repo that cannot be read does not stop the sweep" "0 " "$? $(tr '\n' ' ' <"$d/err")"
+check "it is named as unread, with the error" "1" "$(grep -c '^- unreadable: unread on this sweep (HTTP 502: Server Error)$' "$d/body")"
+check "and the sweep goes on to the next repo" "1" "$(grep -c '^- red: ci.yml = failure$' "$d/body")"
+check "the issue carries the time of its sweep" "1" "$(grep -cE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}' "$d/body")"
 
 echo
 echo "------------------------------------------"

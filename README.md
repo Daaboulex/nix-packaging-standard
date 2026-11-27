@@ -704,8 +704,9 @@ when every one passes **in a full run**.
 
 It is **coverage-honest**: a run reports `FLEET GREEN` only when it exercised
 *every* certification dimension -- the local half (conformance, metadata, eval,
-arch) **and** the remote half (open issues, branches, and CI-green, the only
-proof that builds realize and that no failure issue is open). A partial run
+arch) **and** the remote half (open issues, branches, each clone against GitHub,
+each lock against the release, and CI-green, the only proof that builds realize
+and that no failure issue is open). A partial run
 (`--local`, `--remote`, `--skip-nix`, or one where the network never reached the
 remote half) reports `FLEET PARTIAL`, names what it did not audit, and never
 claims certification. Exit codes are tri-state so a caller can tell the states
@@ -726,7 +727,9 @@ export PKG_REPOS_DIR=/path/to/repos
 It checks, per consumer (every dir with a `.github/update.json`):
 
 - **local** -- `sync.sh --check` (synced files byte-match), `sync-meta.sh
-  --check` (GitHub metadata matches `update.json`), a known `upstream.type`,
+  --check` (GitHub metadata matches `update.json`), a clone with no local
+  branch beyond those `scripts/extra-branches.sh` allows and no remote but
+  `origin`, a known `upstream.type`,
   complete metadata (`description` + `topics`), the first-party discipline (a
   self-owned version + a `CHANGELOG.md`, and a python app wires the
   single-package site-packages gate), architecture honesty (every canonical
@@ -751,7 +754,13 @@ It checks, per consumer (every dir with a `.github/update.json`):
 - **remote** (`gh`) -- every repo on GitHub carrying `.github/update.json` has a
   clone under `PKG_REPOS_DIR` (a full sweep only: the fleet is what GitHub holds,
   not what happens to be cloned, and a consumer nobody cloned is reached by no
-  sync, no roll and no audit), a single `main` branch (no stale `update/*`),
+  sync, no roll and no audit), only `main`, and `testing` for a next release
+  (no stale `update/*`), a clone that holds what GitHub holds (no local commit
+  that no GitHub branch holds, no local branch behind its GitHub namesake; the
+  audit never fetches, so a clone that lacks the commit a GitHub branch points
+  at is named behind and its own commits are counted after its next fetch), a
+  `flake.lock` whose `std` input pins the head of the branch it follows (one
+  that trails is named with the release it pins and the one the branch is at),
   zero open automation issues, and a green latest run that did work of CI /
   Maintenance / Update on `main` (a day its cadence skipped is not a run, and a
   first-party repo has no Update to judge). An open issue from a person that

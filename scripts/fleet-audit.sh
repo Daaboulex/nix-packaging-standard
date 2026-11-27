@@ -153,6 +153,21 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     info "repair: run 'nix develop --command true' in the repo, or 'direnv allow' once to gcroot the devshell"
   fi
 
+  hdr "local clones carry only the allowed branches and the origin remote"
+  for repo in "${CONSUMERS[@]}"; do
+    dir="$REPOS_DIR/$repo"
+    if ! local_branches="$(git -C "$dir" for-each-ref --format='%(refname:lstrip=2)' refs/heads/)" ||
+      ! remotes="$(git -C "$dir" remote)"; then
+      red "$repo: could not read the clone's branches and remotes"
+      continue
+    fi
+    extra="$(bash "$STD/scripts/extra-branches.sh" <<<"$local_branches")"
+    others="$(grep -vxF origin <<<"$remotes")"
+    [ -z "$extra" ] || red "$repo: extra local branch(es): ${extra//$'\n'/ }"
+    [ -z "$others" ] || red "$repo: remote(s) other than origin: ${others//$'\n'/ }"
+    [ -n "$extra$others" ] || ok "$repo: no extra local branch or remote"
+  done
+
   hdr "metadata drift (sync-meta.sh --check)"
   # sync-meta compares update.json to LIVE GitHub metadata, so it only applies
   # to repos that have a remote -- a local-only WIP (no origin) has nothing to
@@ -624,26 +639,82 @@ if [ "$DO_REMOTE" -eq 1 ]; then
     fi
   fi
 
-  hdr "remote: branches normalized (main, testing for a next release, no stale update/*)"
+  hdr "remote: branches normalized (main, testing for a next release, no stale update/*), and the clone holds what GitHub holds"
   for repo in "${CONSUMERS[@]}"; do
     has_remote "$repo" || {
       warn "$repo: no git remote - remote checks skipped (local-only repo)"
       continue
     }
-    if ! branches="$(gh_try api "repos/$(gh_slug "$repo")/branches" --jq '.[].name')"; then
+    if ! heads="$(gh_try api "repos/$(gh_slug "$repo")/branches" --jq '.[] | "\(.name) \(.commit.sha)"')"; then
       red "$repo: could not list branches (gh error: $(gherr))"
       continue
     fi
-    if [ -z "$branches" ]; then
+    if [ -z "$heads" ]; then
       red "$repo: no branches returned (unexpected empty result)"
       continue
     fi
+    branches="$(cut -d' ' -f1 <<<"$heads")"
     extra="$(bash "$STD/scripts/extra-branches.sh" <<<"$branches")"
     if [ -z "$extra" ]; then
       ok "$repo: only $(tr '\n' ' ' <<<"$branches" | sed 's/ $//')"
     else
       red "$repo: stale/extra branches: $(tr '\n' ' ' <<<"$extra")"
     fi
+    dir="$REPOS_DIR/$repo"
+    held=$fails
+    shas=()
+    unfetched=0
+    while read -r name sha; do
+      shas+=("$sha")
+      if ! git -C "$dir" rev-parse -q --verify "$sha^{commit}" >/dev/null; then
+        red "$repo: GitHub's $name points at a commit this clone has not fetched, so the clone is behind; its unpushed commits are counted once it has"
+        unfetched=1
+      elif git -C "$dir" rev-parse -q --verify "refs/heads/$name" >/dev/null; then
+        if ! behind="$(git -C "$dir" rev-list --count "refs/heads/$name..$sha")"; then
+          red "$repo: could not count the commits local $name lacks"
+        elif [ "$behind" -gt 0 ]; then
+          red "$repo: local $name is $behind commit(s) behind GitHub's $name"
+        fi
+      fi
+    done <<<"$heads"
+    [ "$unfetched" -eq 0 ] || continue
+    if ! local_branches="$(git -C "$dir" for-each-ref --format='%(refname:lstrip=2)' refs/heads/)"; then
+      red "$repo: could not list the clone's branches"
+      continue
+    fi
+    while read -r b; do
+      [ -n "$b" ] || continue
+      if ! ahead="$(git -C "$dir" rev-list --count "refs/heads/$b" --not "${shas[@]}")"; then
+        red "$repo: could not count the commits of local $b that GitHub lacks"
+      elif [ "$ahead" -gt 0 ]; then
+        red "$repo: local $b holds $ahead commit(s) no branch on GitHub holds"
+      fi
+    done <<<"$local_branches"
+    [ "$fails" -eq "$held" ] && ok "$repo: the clone holds what GitHub holds and nothing more"
+  done
+
+  hdr "remote: each flake.lock pins the head of the branch its std input follows"
+  for repo in "${CONSUMERS[@]}"; do
+    if ! pin="$(jq -er '.nodes.std | select(.locked.owner and .locked.repo and .locked.rev and .original.ref) | "\(.locked.owner)/\(.locked.repo) \(.original.ref) \(.locked.rev)"' "$REPOS_DIR/$repo/flake.lock")"; then
+      red "$repo: flake.lock has no std input locked from a GitHub branch"
+      continue
+    fi
+    read -r src ref rev <<<"$pin"
+    if ! head="$(gh_try api "repos/$src/branches/$ref" --jq '.commit.sha')"; then
+      red "$repo: could not read the head of $src $ref (gh error: $(gherr))"
+      continue
+    fi
+    if [ "$rev" = "$head" ]; then
+      ok "$repo: flake.lock pins the head of $src $ref"
+      continue
+    fi
+    if ! tags="$(gh_try api --paginate "repos/$src/tags" --jq '.[] | "\(.commit.sha) \(.name)"')"; then
+      red "$repo: could not list the tags of $src (gh error: $(gherr))"
+      continue
+    fi
+    pinned="$(awk -v sha="$rev" '$1 == sha { printf "%s%s", sep, $2; sep = " " }' <<<"$tags")"
+    current="$(awk -v sha="$head" '$1 == sha { printf "%s%s", sep, $2; sep = " " }' <<<"$tags")"
+    red "$repo: flake.lock pins $src at ${pinned:-$rev} while its $ref branch is at ${current:-$head}"
   done
 
   hdr "remote: Issues enabled + no unresolved automation report"
@@ -781,7 +852,7 @@ if [ "$fails" -gt 0 ]; then
 fi
 if [ "$fully_certified" -ne 1 ]; then
   missing=""
-  [ "$DO_REMOTE" -ne 1 ] && missing="$missing remote(open-issues,branches,CI-green=build+issue proof)"
+  [ "$DO_REMOTE" -ne 1 ] && missing="$missing remote(open-issues,branches,clone-vs-GitHub,lock-vs-release,CI-green=build+issue proof)"
   [ "$DO_LOCAL" -ne 1 ] && missing="$missing local(conformance,metadata,eval,arch)"
   [ "$NIX_MODE" = "skip" ] && missing="$missing nix(eval,arch,off-CI-surface,flake-check)"
   echo "FLEET PARTIAL (local checks clean; NOT fully certified)"

@@ -1232,6 +1232,7 @@
                 nil
                 nixfmt
                 jq
+                nodejs
                 shellcheck
                 check-jsonschema
                 config.pre-commit.settings.package
