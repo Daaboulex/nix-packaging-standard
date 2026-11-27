@@ -73,6 +73,28 @@ rec {
       ok = builtins.seq hm.activationPackage.drvPath "instantiated";
     } ''echo "$ok" > "$out"'';
 
+  assertionRefusalCheck =
+    {
+      pkgs,
+      name,
+      assertions,
+      message,
+    }:
+    let
+      failed = map (a: a.message) (builtins.filter (a: !a.assertion) assertions);
+      found =
+        if failed == [ ] then "no failed assertion" else "the failed assertions ${builtins.toJSON failed}";
+    in
+    pkgs.runCommand name { } (
+      if builtins.any (pkgs.lib.hasInfix message) failed then
+        ''echo ${pkgs.lib.escapeShellArg "${name}: refused by the assertion containing '${message}'"} > "$out"''
+      else
+        ''
+          echo ${pkgs.lib.escapeShellArg "${name}: expected a failed assertion containing '${message}', found ${found}"}
+          exit 1
+        ''
+    );
+
   # Eval-only gate for a PACKAGE whose closure is not on cache.nixos.org and
   # cannot build on a free CI runner (CUDA/ROCm toolchains, very large builds).
   # Same idiom as the module checks: force the derivation's full build graph to

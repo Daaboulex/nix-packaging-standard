@@ -655,6 +655,95 @@
             touch "$out"
           '';
 
+          checks.std-assertion-refusal-check =
+            let
+              inherit (import ./lib.nix) assertionRefusalCheck;
+              named = "fixture: the named refusal";
+              evaluated =
+                settings:
+                (lib.evalModules {
+                  modules = [
+                    (inputs.nixpkgs + "/nixos/modules/misc/assertions.nix")
+                    (
+                      { config, ... }:
+                      {
+                        options.fixture = {
+                          mode = lib.mkOption { type = lib.types.str; };
+                          build = lib.mkOption { type = lib.types.str; };
+                        };
+                        config.assertions = [
+                          {
+                            assertion = config.fixture.mode != "refused";
+                            message = named;
+                          }
+                          {
+                            assertion = config.fixture.mode != "other";
+                            message = "fixture: another refusal";
+                          }
+                        ];
+                      }
+                    )
+                    { fixture = settings; }
+                  ];
+                }).config;
+              built =
+                mode:
+                evaluated {
+                  inherit mode;
+                  build = "built";
+                };
+              unrelated = evaluated {
+                mode = "plain";
+                build = lib.mkMerge [
+                  "one"
+                  "two"
+                ];
+              };
+              throwsOnBuild = evaluation: !(builtins.tryEval evaluation.fixture.build).success;
+              checked =
+                evaluation:
+                assertionRefusalCheck {
+                  inherit pkgs;
+                  name = "fixture-refusal";
+                  inherit (evaluation) assertions;
+                  message = named;
+                };
+              refused = say: evaluation: has: {
+                inherit say;
+                test = "grep -qF -- ${lib.escapeShellArg has} ${pkgs.testers.testBuildFailure (checked evaluation)}/testBuildFailure.log";
+              };
+              cases = [
+                {
+                  say = "the old shape, a refusal read as any evaluation failure, passes on an unrelated failure";
+                  test = lib.boolToString (throwsOnBuild unrelated);
+                }
+                (refused "the helper fails on that unrelated failure and says it found no failed assertion"
+                  unrelated
+                  "fixture-refusal: expected a failed assertion containing '${named}', found no failed assertion"
+                )
+                (refused "the helper fails on another refusal and names it" (built "other")
+                  ''fixture-refusal: expected a failed assertion containing '${named}', found the failed assertions ["fixture: another refusal"]''
+                )
+                {
+                  say = "the helper passes on the refusal it names";
+                  test = "test -e ${checked (built "refused")}";
+                }
+              ];
+            in
+            pkgs.runCommand "std-assertion-refusal-check" { } ''
+              bad=0
+              ${lib.concatMapStringsSep "\n" (case: ''
+                if ${case.test}; then
+                  echo ${lib.escapeShellArg "  ok   ${case.say}"}
+                else
+                  echo ${lib.escapeShellArg "  FAIL ${case.say}"}
+                  bad=1
+                fi
+              '') cases}
+              [ "$bad" = 0 ] || exit 1
+              touch "$out"
+            '';
+
           # patchAssertions is a shell string, so nothing type-checks it: this
           # exercises every primitive both ways. A helper that cannot fail is
           # exactly the defect it exists to prevent.
