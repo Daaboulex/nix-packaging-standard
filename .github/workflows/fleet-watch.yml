@@ -71,7 +71,19 @@ jobs:
                     const own = runs.data.workflow_runs.filter(x =>
                       x.event !== 'pull_request'
                       && x.head_repository && x.head_repository.full_name === r.full_name);
-                    const run = own.find(x => x.conclusion !== 'skipped');
+                    let run;
+                    for (const x of own) {
+                      if (x.conclusion === 'skipped') continue;
+                      if (wf !== 'ci.yml' && x.conclusion === 'success') {
+                        const { data } = await github.rest.actions.listJobsForWorkflowRun({
+                          owner, repo: r.name, run_id: x.id, per_page: 100
+                        });
+                        const cadenceGateAlone = data.jobs.filter(j => j.conclusion !== 'skipped').length === 1;
+                        if (cadenceGateAlone) continue;
+                      }
+                      run = x;
+                      break;
+                    }
                     const days = own.length > 0 ? (Date.now() - Date.parse(own[0].created_at)) / 86400000 : 0;
                     if (wf !== 'ci.yml' && days > 3) verdict = `no run for ${Math.floor(days)} days, so its daily schedule no longer fires`;
                     else if (run) verdict = run.conclusion || run.status;

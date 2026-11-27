@@ -1,0 +1,27 @@
+{
+  "runs": [
+    {"conclusion":"success","createdAt":"2026-11-27T13:29:35Z","databaseId":46007554801,"event":"schedule","status":"completed"},
+    {"conclusion":"success","createdAt":"2026-11-26T13:32:26Z","databaseId":45830121153,"event":"schedule","status":"completed"},
+    {"conclusion":"success","createdAt":"2026-11-25T13:53:08Z","databaseId":45628131885,"event":"schedule","status":"completed"},
+    {"conclusion":"success","createdAt":"2026-11-24T14:33:08Z","databaseId":45415350218,"event":"schedule","status":"completed"},
+    {"conclusion":"success","createdAt":"2026-11-23T14:01:01Z","databaseId":45189687426,"event":"schedule","status":"completed"},
+    {"conclusion":"failure","createdAt":"2026-11-22T12:17:02Z","databaseId":45021468461,"event":"schedule","status":"completed"},
+    {"conclusion":"success","createdAt":"2026-11-21T12:06:34Z","databaseId":44902263824,"event":"schedule","status":"completed"},
+    {"conclusion":"success","createdAt":"2026-11-20T12:29:49Z","databaseId":44736246499,"event":"schedule","status":"completed"},
+    {"conclusion":"success","createdAt":"2026-11-19T12:29:47Z","databaseId":44524398628,"event":"schedule","status":"completed"},
+    {"conclusion":"success","createdAt":"2026-11-18T12:39:23Z","databaseId":44305991914,"event":"schedule","status":"completed"},
+    {"conclusion":"success","createdAt":"2026-11-17T12:46:23Z","databaseId":44086274391,"event":"schedule","status":"completed"},
+    {"conclusion":"success","createdAt":"2026-11-16T12:26:01Z","databaseId":43866522318,"event":"schedule","status":"completed"},
+    {"conclusion":"failure","createdAt":"2026-11-15T11:45:01Z","databaseId":43710414877,"event":"schedule","status":"completed"},
+    {"conclusion":"success","createdAt":"2026-11-14T11:12:37Z","databaseId":43588936231,"event":"schedule","status":"completed"},
+    {"conclusion":"success","createdAt":"2026-11-13T11:51:41Z","databaseId":43420408060,"event":"schedule","status":"completed"}
+  ],
+  "jobs": {
+    "46007554801": [{"id":140534473788,"name":"gate","conclusion":"success"},{"id":140534571372,"name":"cleanup","conclusion":"skipped"},{"id":140534571634,"name":"prepare","conclusion":"skipped"},{"id":140534571640,"name":"publish","conclusion":"skipped"},{"id":140534572063,"name":"verify","conclusion":"skipped"},{"id":140534572807,"name":"report","conclusion":"skipped"}],
+    "45830121153": [{"id":139944391270,"name":"gate","conclusion":"success"},{"id":139944437211,"name":"prepare","conclusion":"skipped"},{"id":139944437675,"name":"cleanup","conclusion":"skipped"},{"id":139944437727,"name":"verify","conclusion":"skipped"},{"id":139944438763,"name":"publish","conclusion":"skipped"},{"id":139944439063,"name":"report","conclusion":"skipped"}],
+    "45628131885": [{"id":139253720804,"name":"gate","conclusion":"success"},{"id":139253802930,"name":"cleanup","conclusion":"skipped"},{"id":139253803222,"name":"verify","conclusion":"skipped"},{"id":139253803980,"name":"prepare","conclusion":"skipped"},{"id":139253804322,"name":"publish","conclusion":"skipped"},{"id":139253804326,"name":"report","conclusion":"skipped"}],
+    "45415350218": [{"id":138519945733,"name":"gate","conclusion":"success"},{"id":138520018971,"name":"cleanup","conclusion":"skipped"},{"id":138520020581,"name":"prepare","conclusion":"skipped"},{"id":138520020830,"name":"verify","conclusion":"skipped"},{"id":138520021091,"name":"publish","conclusion":"skipped"},{"id":138520021193,"name":"report","conclusion":"skipped"}],
+    "45189687426": [{"id":137744420462,"name":"gate","conclusion":"success"},{"id":137744483315,"name":"cleanup","conclusion":"skipped"},{"id":137744484062,"name":"prepare","conclusion":"skipped"},{"id":137744484257,"name":"verify","conclusion":"skipped"},{"id":137744485539,"name":"report","conclusion":"skipped"},{"id":137744485890,"name":"publish","conclusion":"skipped"}],
+    "45021468461": [{"id":137205116707,"name":"gate","conclusion":"success"},{"id":137205139020,"name":"cleanup","conclusion":"success"},{"id":137205139051,"name":"prepare","conclusion":"failure"},{"id":137205277717,"name":"report","conclusion":"success"},{"id":137205278643,"name":"verify","conclusion":"skipped"},{"id":137205279172,"name":"publish","conclusion":"skipped"}]
+  }
+}

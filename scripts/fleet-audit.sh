@@ -800,6 +800,19 @@ if [ "$DO_REMOTE" -eq 1 ]; then
       fi
       scheduled=true
       [ "$wf" != ci.yml ] || scheduled=false
+      if [ "$scheduled" = true ]; then
+        while read -r id conclusion; do
+          [ "$conclusion" = success ] || break
+          if ! cadence_gate_alone="$(gh_try api "repos/$(gh_slug "$repo")/actions/runs/$id/jobs?per_page=100" \
+            --jq '[.jobs[] | select(.conclusion != "skipped")] | length == 1')"; then
+            red "$repo: could not list the jobs of run $id of '$wf' (gh error: $(gherr))"
+            repo_ok=0
+            continue 2
+          fi
+          [ "$cadence_gate_alone" = true ] || break
+          runs="$(jq --argjson id "$id" 'map(if .databaseId == $id then .conclusion = "skipped" else . end)' <<<"$runs")"
+        done < <(jq -r '.[] | select(.event != "pull_request" and .conclusion != "skipped") | "\(.databaseId) \(.conclusion)"' <<<"$runs")
+      fi
       latest="$(jq -r --argjson now "$(date +%s)" --argjson scheduled "$scheduled" \
         -f "$STD/scripts/latest-worked-run.jq" <<<"$runs")"
       case "$latest" in

@@ -776,8 +776,9 @@ It checks, per consumer (every dir with a `.github/update.json`):
   `flake.lock` whose `std` input pins the head of the branch it follows (one
   that trails is named with the release it pins and the one the branch is at),
   zero open automation issues, and a green latest run that did work of CI /
-  Maintenance / Update on `main` (a day its cadence skipped is not a run, and a
-  first-party repo has no Update to judge). An open issue from a person that
+  Maintenance / Update on `main` (a day its cadence skipped is not a run, also
+  when its cadence gate ran alone and the run reads success, and a first-party
+  repo has no Update to judge). An open issue from a person that
   does not carry exactly one type label is named, without failing the audit.
 
 A repo with no git remote (an unpushed WIP) is audited locally and skipped

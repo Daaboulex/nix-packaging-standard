@@ -3316,6 +3316,92 @@ STUB_GIT_REV="new2222222222222222222222222222222222222c" run_update "$d/bare"
 check "a build with no desktop file fails the update as a verification error" "1 verification-error" "$RC $(get "$d/bare" error_type)"
 STUB_GIT_REV="new2222222222222222222222222222222222222c" run_update "$d/shipped"
 check "a build that ships one passes" "0 " "$RC $(get "$d/shipped" error_type)"
+
+echo "Test 58: a failed Maintenance stays named while the days after it ran only the cadence gate"
+d="$WORK/t58"
+gate_runs="$standard_root/tests/fixtures/cadence-gate-runs.json"
+mkdir -p "$d/bin" "$d/repos/corecycler/.github"
+cat >"$d/bin/gh" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2" in
+"run list")
+  while [ $# -gt 0 ]; do
+    [ "$1" = --workflow ] && wf=$2
+    shift
+  done
+  if [ "$wf" = maintenance.yml ]; then
+    jq '.runs' "$GATE_RUNS"
+  else
+    echo '[{"event":"push","status":"completed","conclusion":"success","databaseId":1,"createdAt":"2026-11-27T10:00:00Z"}]'
+  fi
+  ;;
+"api repos/owner/corecycler/actions/runs/"*)
+  id=${2#repos/owner/corecycler/actions/runs/}
+  jq -r --arg id "${id%%/*}" "{jobs: .jobs[\$id]} | $4" "$GATE_RUNS"
+  ;;
+*)
+  echo "gh: Not Found (HTTP 404)" >&2
+  exit 1
+  ;;
+esac
+SH
+cat >"$d/bin/date" <<SH
+#!/usr/bin/env bash
+[ "\$*" = +%s ] || exit 1
+echo $(date -u -d 2026-11-27T14:00:00Z +%s)
+SH
+printf '#!/usr/bin/env bash\nexit 0\n' >"$d/bin/sleep"
+chmod +x "$d/bin/gh" "$d/bin/date" "$d/bin/sleep"
+git init -q -b main "$d/repos/corecycler"
+printf '{"upstream":{"type":"none"}}\n' >"$d/repos/corecycler/.github/update.json"
+git -C "$d/repos/corecycler" remote add origin https://github.com/owner/corecycler.git
+(cd "$d" && PATH="$d/bin:$PATH" GATE_RUNS="$gate_runs" GH_OWNER=owner PKG_REPOS_DIR="$d/repos" \
+  bash "$standard_root/scripts/fleet-audit.sh" --remote --skip-nix corecycler >"$d/log" 2>&1)
+check "the audit names the failed refresh, not the gate-only days after it" "1 0" \
+  "$(grep -c "^FAIL  corecycler: workflow 'maintenance.yml' latest run on main = failure$" "$d/log") $(grep -c 'green on main' "$d/log")"
+sed -n '/^ *script: |$/,$p' "$standard_root/.github/workflows/fleet-watch.yml" | sed '1d; s/^            //' >"$d/sweep.js"
+cat >"$d/run.js" <<'JS'
+const fs = require('fs');
+const fixture = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+Date.now = () => Date.parse('2026-11-27T14:00:00Z');
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const sweep = new AsyncFunction('github', 'context', fs.readFileSync(process.argv[2], 'utf8'));
+const content = (o) => ({ data: { content: Buffer.from(JSON.stringify(o)).toString('base64') } });
+const own = { full_name: 'owner/corecycler' };
+const written = [];
+const github = {
+  paginate: async () => [{ name: 'corecycler', full_name: 'owner/corecycler', default_branch: 'main', archived: false }],
+  rest: {
+    repos: {
+      listForUser: () => {},
+      getContent: async ({ path }) => content(path === 'flake.lock'
+        ? { nodes: { std: { original: { ref: 'release' } } } }
+        : { upstream: { type: 'none' } })
+    },
+    issues: {
+      listForRepo: async () => ({ data: [] }),
+      create: async ({ body }) => written.push(body),
+      update: async ({ body }) => written.push(body),
+      createComment: async () => {}
+    },
+    actions: {
+      listWorkflowRuns: async ({ workflow_id }) => ({ data: { workflow_runs: workflow_id === 'maintenance.yml'
+        ? fixture.runs.map(x => ({ id: x.databaseId, event: x.event, status: x.status, conclusion: x.conclusion, created_at: x.createdAt, head_repository: own }))
+        : [{ id: 1, event: 'push', status: 'completed', conclusion: 'success', created_at: '2026-11-27T10:00:00Z', head_repository: own }] } }),
+      listJobsForWorkflowRun: async ({ run_id }) => ({ data: { jobs: fixture.jobs[run_id] } })
+    }
+  }
+};
+sweep(github, { repo: { owner: 'owner', repo: 'standard' } }).then(
+  () => process.stdout.write(written.join('\n')),
+  (e) => {
+    console.error(`the sweep stopped: ${e.message}`);
+    process.exit(1);
+  }
+);
+JS
+node "$d/run.js" "$d/sweep.js" "$gate_runs" >"$d/body" 2>"$d/err"
+check "the fleet watch names it too" "0 1" "$? $(grep -c '^- corecycler: maintenance.yml = failure$' "$d/body")"
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"
