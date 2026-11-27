@@ -812,32 +812,44 @@ if [ -n "$VARIANT_ASSETS" ]; then
   VA_MATCH="${VA_PREFIX}${LATEST_TAG}-"
   VA_BLOCK=""
   VA_COUNT=0
+  declare -A VA_URL=() VA_NAMED_BY_ASSET=()
   while IFS=$'\t' read -r a_name a_url; do
     [ -n "$a_name" ] || continue
     if [ -n "$VA_DEFAULT" ] && [ "$a_name" = "${VA_PREFIX}${LATEST_TAG}${VA_SUFFIX}" ]; then
-      variant="$VA_DEFAULT"
-    else
-      case "$a_name" in
-      "$VA_MATCH"*"$VA_SUFFIX") ;;
-      *) continue ;;
-      esac
-      variant="${a_name#"$VA_MATCH"}"
-      variant="${variant%"$VA_SUFFIX"}"
-      case "$variant" in
-      "" | *[!A-Za-z0-9_]*) continue ;;
-      esac
+      [ -n "${VA_NAMED_BY_ASSET[$VA_DEFAULT]:-}" ] || VA_URL[$VA_DEFAULT]=$a_url
+      continue
     fi
+    case "$a_name" in
+    "$VA_MATCH"*"$VA_SUFFIX") ;;
+    *) continue ;;
+    esac
+    variant="${a_name#"$VA_MATCH"}"
+    variant="${variant%"$VA_SUFFIX"}"
+    case "$variant" in
+    "" | *[!A-Za-z0-9_]*) continue ;;
+    esac
+    VA_URL[$variant]=$a_url
+    VA_NAMED_BY_ASSET[$variant]=1
+  done < <(echo "$VA_ASSETS" | jq -r '.[] | [.name, .browser_download_url] | @tsv')
+  while IFS= read -r variant; do
+    [ -n "$variant" ] || continue
+    a_url=${VA_URL[$variant]}
     log "variant '$variant': prefetch $a_url"
-    v_hash=$(nix store prefetch-file --unpack --hash-type sha256 --json "$a_url" 2>/dev/null | jq -r '.hash // empty' || true)
-    if [ -z "$v_hash" ]; then
+    if ! v_prefetched=$(nix store prefetch-file --unpack --hash-type sha256 --json "$a_url"); then
       err "variantAssets: prefetch failed for $a_url"
+      output "error_type" "hash-extraction"
+      exit 1
+    fi
+    v_hash=$(jq -r '.hash // empty' <<<"$v_prefetched")
+    if [ -z "$v_hash" ]; then
+      err "variantAssets: the prefetch of $a_url returned no hash"
       output "error_type" "hash-extraction"
       exit 1
     fi
     printf -v VA_BLOCK '%s    %s = {\n      url = "%s";\n      hash = "%s";\n    };\n' \
       "$VA_BLOCK" "$variant" "$a_url" "$v_hash"
     VA_COUNT=$((VA_COUNT + 1))
-  done < <(echo "$VA_ASSETS" | jq -r '.[] | [.name, .browser_download_url] | @tsv')
+  done < <(printf '%s\n' "${!VA_URL[@]}" | sort)
   if [ "$VA_COUNT" -eq 0 ]; then
     VA_WANTED="'${VA_MATCH}*${VA_SUFFIX}'"
     [ -n "$VA_DEFAULT" ] && VA_WANTED="$VA_WANTED or '${VA_PREFIX}${LATEST_TAG}${VA_SUFFIX}'"

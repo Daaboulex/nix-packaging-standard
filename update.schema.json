@@ -281,7 +281,7 @@
         "defaultVariant": {
           "type": "string",
           "pattern": "^[A-Za-z0-9_]+$",
-          "description": "Variant name for the asset that carries no `-<variant>` token, i.e. exactly `<assetPrefix><tag><assetSuffix>`. Omit when every asset is variant-tagged."
+          "description": "Variant name for the asset that carries no `-<variant>` token, i.e. exactly `<assetPrefix><tag><assetSuffix>`. An asset that carries the same variant's token takes its place. Omit when every asset is variant-tagged."
         }
       }
     },

@@ -104,6 +104,7 @@ cat >"$BIN/nix" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
   *"prefetch-file"*)
+    [ -n "${STUB_PREFETCH_FAIL:-}" ] && { echo "stub: the prefetch says why it failed" >&2; exit 1; }
     printf '{"hash":"sha256-%s="}\n' \
       "$(printf '%s' "${@: -1}" | sha256sum | cut -c1-43)"
     exit 0 ;;
@@ -146,6 +147,7 @@ run_update() { # run_update <repodir>  -> sets RC; outputs in <repodir>/out.env
       STUB_CURL_TAGS_FILE="${STUB_CURL_TAGS_FILE:-}" \
       STUB_NIX_MISMATCH="${STUB_NIX_MISMATCH:-}" STUB_NIX_FLAG="$dir/.nixflag" \
       STUB_CHECKS_FAIL="${STUB_CHECKS_FAIL:-}" \
+      STUB_PREFETCH_FAIL="${STUB_PREFETCH_FAIL:-}" \
       STUB_GIT_TAGS="${STUB_GIT_TAGS:-}" \
       STUB_GIT_FAIL_ONCE="${STUB_GIT_FAIL_ONCE:-}" \
       bash "$UPDATE" >"$dir/log" 2>&1
@@ -751,6 +753,7 @@ cat >"$d/sources.nix" <<'NIX'
   # std:variants-end
 }
 NIX
+cp "$d/sources.nix" "$d/sources.nix.before"
 : >"$d/package.nix"
 : >"$d/.nixflag"
 STUB_CURL_FILE="$d/releases.json" run_update "$d"
@@ -772,6 +775,40 @@ want=$(
 NIX
 )
 check "each variant holds its own asset's URL and hash" "$want" "$(sed -n '/std:variants-begin/,/std:variants-end/p' "$d/sources.nix")"
+
+echo "Test 14c: an asset that names its variant wins over the untagged one"
+d="$WORK/t14c"
+mkdir -p "$d/.github"
+cp "$WORK/t14/.github/update.json" "$d/.github/update.json"
+u="https://example.invalid/GE-Proton11-3/GE-Proton11-3.tar.gz"
+for order in tagged-first untagged-first; do
+  tagged="{ \"name\": \"GE-Proton11-3-x86_64.tar.gz\", \"browser_download_url\": \"$x\" }"
+  untagged="{ \"name\": \"GE-Proton11-3.tar.gz\", \"browser_download_url\": \"$u\" }"
+  case "$order" in
+  tagged-first) assets="$tagged, $untagged" ;;
+  untagged-first) assets="$untagged, $tagged" ;;
+  esac
+  printf '[ { "tag_name": "GE-Proton11-3", "draft": false, "prerelease": false, "assets": [ %s ] } ]\n' "$assets" >"$d/releases.json"
+  cp "$WORK/t14b/sources.nix.before" "$d/sources.nix"
+  : >"$d/package.nix"
+  : >"$d/.nixflag"
+  STUB_CURL_FILE="$d/releases.json" run_update "$d"
+  check "$order: run succeeds" "0" "$RC"
+  check "$order: the variant is written once" "1" "$(grep -c '^    x86_64 = {$' "$d/sources.nix")"
+  check "$order: from the asset that names it" "1" "$(grep -cF "url = \"$x\";" "$d/sources.nix")"
+done
+
+echo "Test 14d: a failed prefetch shows the prefetch's own error"
+d="$WORK/t14d"
+mkdir -p "$d/.github"
+cp "$WORK/t14/.github/update.json" "$d/.github/update.json"
+cp "$WORK/t14b/releases.json" "$d/releases.json"
+cp "$WORK/t14b/sources.nix.before" "$d/sources.nix"
+: >"$d/package.nix"
+STUB_CURL_FILE="$d/releases.json" STUB_PREFETCH_FAIL=1 run_update "$d"
+check "run fails" "1" "$RC"
+check "error_type hash-extraction" "hash-extraction" "$(get "$d" error_type)"
+check "the prefetch's own line reaches the log" "1" "$(grep -c 'stub: the prefetch says why it failed' "$d/log")"
 
 # ---- Test 15: tagFilter match beyond the first page -------------------------
 # A single-page fetch made a tracked namespace invisible when upstream pushes a
