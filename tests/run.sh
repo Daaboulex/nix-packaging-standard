@@ -2305,6 +2305,12 @@ check "the standard builds through build-checks.sh alone" "0" "$(
 )"
 mkdir -p "$d/tree/scripts" "$d/tree/.github/workflows"
 cp "$standard_root/build-checks.sh" "$d/tree/"
+mkdir -p "$d/tree/.devshell/work/copy"
+cp "$standard_root/build-checks.sh" "$d/tree/.devshell/work/copy/"
+check "a copy under the ignored dev state is not a caller" "0" "$(
+  bash "$standard_root/scripts/check-fast-build-callers.sh" "$d/tree" >/dev/null 2>&1
+  echo $?
+)"
 printf 'run: nix run --inputs-from . nixpkgs#nix-fast-build -- --flake .#checks.x\n' >"$d/tree/.github/workflows/ci.yml"
 check "a workflow running nix-fast-build itself is refused" "1" "$(
   bash "$standard_root/scripts/check-fast-build-callers.sh" "$d/tree" >/dev/null 2>&1

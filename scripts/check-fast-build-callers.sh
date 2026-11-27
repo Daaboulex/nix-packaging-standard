@@ -9,7 +9,7 @@ root=$1
 
 found=$(cd "$root" && grep -rlE '#nix-fast-build|nix-fast-build[[:space:]]+-' \
   --include='*.sh' --include='*.yml' --include='*.yaml' --include='*.nix' \
-  --exclude-dir=tests --exclude-dir=.git .)
+  --exclude-dir=tests --exclude-dir=.git --exclude-dir=.devshell --exclude-dir=.direnv .)
 rc=$?
 [ "$rc" -le 1 ] || {
   echo "check-fast-build-callers: grep failed with exit $rc reading $root" >&2
