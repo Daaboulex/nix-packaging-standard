@@ -84,6 +84,8 @@ if [ -n "${STUB_CURL_PAGE_DIR:-}" ]; then
 fi
 cat "$STUB_CURL_FILE"
 SH
+STUB_REAL_GIT=$(command -v git)
+export STUB_REAL_GIT
 cat >"$BIN/git" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = "ls-remote" ] && [ -n "${STUB_GIT_FAIL_ONCE:-}" ] && [ -f "$STUB_GIT_FAIL_ONCE" ]; then
@@ -98,7 +100,7 @@ if [ "${1:-}" = "ls-remote" ]; then
   printf '%s\trefs/heads/main\n' "$STUB_GIT_REV"
   exit 0
 fi
-exit 0
+exec "$STUB_REAL_GIT" "$@"
 SH
 cat >"$BIN/nix" <<'SH'
 #!/usr/bin/env bash
@@ -138,7 +140,7 @@ SH
 printf '#!/usr/bin/env bash\nexit 0\n' >"$BIN/sleep"
 chmod +x "$BIN/curl" "$BIN/git" "$BIN/nix" "$BIN/file" "$BIN/sleep"
 
-run_update() { # run_update <repodir>  -> sets RC; outputs in <repodir>/out.env
+run_update() { # run_update <repodir> [<update.sh argument>]  -> sets RC; outputs in <repodir>/out.env
   local dir="$1"
   (
     cd "$dir" && GITHUB_OUTPUT="$dir/out.env" PATH="$BIN:$PATH" \
@@ -150,7 +152,7 @@ run_update() { # run_update <repodir>  -> sets RC; outputs in <repodir>/out.env
       STUB_PREFETCH_FAIL="${STUB_PREFETCH_FAIL:-}" \
       STUB_GIT_TAGS="${STUB_GIT_TAGS:-}" \
       STUB_GIT_FAIL_ONCE="${STUB_GIT_FAIL_ONCE:-}" \
-      bash "$UPDATE" >"$dir/log" 2>&1
+      bash "$UPDATE" "${@:2}" >"$dir/log" 2>&1
   )
   RC=$?
 }
@@ -2972,7 +2974,7 @@ check "each stage of the Maintenance refresh names its class" "6" "$(grep -cE 's
 check "Maintenance classifies with the class of the step that failed" "1" "$(grep -cF "classify-build-failure.sh\" /tmp/lock-build.log \"\$STEP_CLASS\"" "$mwf")"
 check "Update classifies as an update, with the class of the step that failed" "1" "$(grep -cF "classify-build-failure.sh\" --update /tmp/update.log \"\$ERROR_TYPE\"" "$uwf")"
 check "the Update title carries the classifier's class" "1" "$(grep -cF "title=\"Update \$pkg\$versions: \$FAIL_CLASS\"" "$uwf")"
-check "a Maintenance job whose runner is alive always sends a log" "2" "$(grep -cF "run: touch \"\$LOG\"" "$mwf")"
+check "a Maintenance job whose runner is alive always sends a log" "3" "$(grep -cF "run: touch \"\$LOG\"" "$mwf")"
 check "an Update verify job whose runner is alive always sends a log" "1" "$(grep -cF "run: touch \"\$LOG\"" "$uwf")"
 check "a Maintenance job that failed and sent no log is runner-lost" "1" "$(grep -cE '^ +echo "runner-lost: ' "$mwf")"
 check "an Update verify job that failed and sent no log is runner-lost" "1" "$(grep -cE '^ +echo "runner-lost: ' "$uwf")"
@@ -3149,6 +3151,150 @@ done
 echo "Test 51: std-update-json runs the updater's own config checks on the repo"
 check "std-update-json runs update.sh --check-config" "1" "$(grep -cF "bash \${../update.sh} --check-config" "$standard_root/flake-modules/base.nix")"
 
+committed() { # committed <dir>  -> the dir as a git repository with every file committed
+  git -C "$1" init -q
+  git -C "$1" add -A
+  git -C "$1" -c user.name=t -c user.email=t@localhost commit -qm pinned
+}
+classified() { # classified <log> <class of the step that failed>  -> the class the report would carry
+  (GITHUB_OUTPUT="$WORK/classified.env" bash "$CLASSIFY" "$1" "$2" >/dev/null 2>&1)
+  grep -E '^class=' "$WORK/classified.env" | tail -1 | cut -d= -f2-
+  rm -f "$WORK/classified.env"
+}
+
+echo "Test 52: --rehearse walks nix-update from another version to the one pinned, and the tree must come back as committed"
+d="$WORK/t52"
+mkdir -p "$d/.github"
+cp "$WORK/t16/.github/update.json" "$d/.github/update.json"
+printf '{\n  version = "1.0.0";\n  hash = "sha256-old";\n}\n' >"$d/package.nix"
+committed "$d"
+cat >"$BIN/fake-nix-update-pinned" <<'SH'
+#!/usr/bin/env bash
+pin=""
+while [ $# -gt 0 ]; do
+  [ "$1" = --version ] && pin=$2
+  shift
+done
+[ -n "$pin" ] || {
+  echo "stub: no --version given, so this run looks upstream for the newest release" >&2
+  exit 1
+}
+old=$(sed -nE 's/^  version = "(.*)";$/\1/p' package.nix)
+echo "$old" >started-from
+echo "Update $old -> $pin in package.nix"
+sed -i "s/version = \"$old\"/version = \"$pin\"/" package.nix
+if [ -n "${STUB_RECOMPUTED_HASH:-}" ]; then
+  sed -i "s/hash = \"[^\"]*\"/hash = \"$STUB_RECOMPUTED_HASH\"/" package.nix
+fi
+if [ -n "${STUB_BREAKS_AFTER_THE_BUMP:-}" ]; then
+  echo '       error: opening file "/nix/store/0yn6db264w1lmpybqirmi7inkya372q7-source": No such file or directory' >&2
+  exit 1
+fi
+SH
+chmod +x "$BIN/fake-nix-update-pinned"
+: >"$d/.nixflag"
+NIX_UPDATE="fake-nix-update-pinned" run_update "$d" --rehearse
+check "the rehearsal passes" "0" "$RC"
+check "nix-update starts from a version other than the pinned one, so its version change runs" "yes" \
+  "$([ -s "$d/started-from" ] && [ "$(cat "$d/started-from")" != 1.0.0 ] && echo yes || echo no)"
+check "and the tree comes back as committed" "" "$(git -C "$d" status --porcelain --untracked-files=no)"
+git -C "$d" checkout -q -- .
+STUB_RECOMPUTED_HASH="sha256-new" NIX_UPDATE="fake-nix-update-pinned" run_update "$d" --rehearse
+check "a hash nix-update recomputes to another value fails the rehearsal" "1" "$RC"
+check "the difference is shown" "1" "$(grep -cxF '+  hash = "sha256-new";' "$d/log")"
+check "and named as a source whose content moved under its pin" "upstream-rerelease-hash-mismatch upstream-rerelease-hash-mismatch" \
+  "$(get "$d" error_type) $(classified "$d/log" updater-error)"
+git -C "$d" checkout -q -- .
+STUB_BREAKS_AFTER_THE_BUMP=1 NIX_UPDATE="fake-nix-update-pinned" run_update "$d" --rehearse
+check "a nix-update that breaks after the version change fails the rehearsal as the updater's own failure" "1 updater-error" "$RC $(get "$d" error_type)"
+
+echo "Test 53: --rehearse rebuilds each declared hash of the pinned release under a dummy and keeps the pinned version"
+d="$WORK/t53"
+mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "github-release", "owner": "o", "repo": "r", "tagFilter": "^[0-9]" },
+  "packageFile": "package.nix", "hashes": [ "hash" ], "verify": { "check": "eval" } }
+JSON
+pinned_hash="sha256-PINPINPINPINPINPINPINPINPINPINPINPINPINPINA="
+moved_hash="sha256-NEWNEWNEWNEWNEWNEWNEWNEWNEWNEWNEWNEWNEWNEWA="
+printf '{\n  version = "2026.1";\n  hash = "%s";\n}\n' "$pinned_hash" >"$d/package.nix"
+committed "$d"
+fetched() { printf "error: hash mismatch in fixed-output derivation '/nix/store/zzz-source.drv':\n         specified: sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n            got:    %s\n" "$1" >"$WORK/t53-fetched.txt"; }
+fetched "$pinned_hash"
+STUB_CURL_FILE="$FIXTURES/mullvad-releases.json" STUB_NIX_MISMATCH="$WORK/t53-fetched.txt" run_update "$d" --rehearse
+check "the rehearsal passes" "0" "$RC"
+check "the source was fetched again under a dummy hash and its hash recomputed" "1" "$(grep -cF "Hash 'hash' (drv zzz-source.drv): $pinned_hash" "$d/log")"
+check "the pinned 2026.1 stays and upstream's newer 2026.2 is not taken, so the tree is as committed" "" "$(git -C "$d" status --porcelain --untracked-files=no)"
+git -C "$d" checkout -q -- .
+rm -f "$d/.nixflag"
+fetched "$moved_hash"
+STUB_CURL_FILE="$FIXTURES/mullvad-releases.json" STUB_NIX_MISMATCH="$WORK/t53-fetched.txt" run_update "$d" --rehearse
+check "a pinned source whose content moved fails the rehearsal" "1" "$RC"
+check "and is named so, in the outputs and by the classifier" "upstream-rerelease-hash-mismatch upstream-rerelease-hash-mismatch" \
+  "$(get "$d" error_type) $(classified "$d/log" updater-error)"
+
+echo "Test 55: a declared hash no build of .#default reaches is named as the field that kept the dummy, not as a re-release"
+d="$WORK/t55"
+mkdir -p "$d/.github"
+cat >"$d/.github/update.json" <<'JSON'
+{ "package": "x",
+  "upstream": { "type": "github-release", "owner": "o", "repo": "r", "tagFilter": "^[0-9]" },
+  "packageFile": "package.nix", "hashes": [ "hash", "vendorHash" ], "verify": { "check": "eval" } }
+JSON
+printf '{\n  version = "2026.1";\n  hash = "%s";\n  vendorHash = "sha256-VENDORVENDORVENDORVENDORVENDORVENDORVENDOA=";\n}\n' "$pinned_hash" >"$d/package.nix"
+committed "$d"
+fetched "$pinned_hash"
+STUB_CURL_FILE="$FIXTURES/mullvad-releases.json" STUB_NIX_MISMATCH="$WORK/t53-fetched.txt" run_update "$d" --rehearse
+check "the rehearsal fails" "1" "$RC"
+check "naming the field that kept the dummy and its file" "1" "$(grep -cF "::error::rehearsal: hash field 'vendorHash' in ./package.nix kept the dummy" "$d/log")"
+check "as a hash the updater cannot extract, not as a re-release" "hash-extraction updater-error" \
+  "$(get "$d" error_type) $(classified "$d/log" updater-error)"
+
+echo "Test 54:Maintenance rehearses the update on a store nothing was restored into, and pushes the lock only after it passed"
+rehearsal_job=$(sed -n '/^  rehearse:$/,/^  [a-z-]*:$/p' "$mwf")
+check "a job runs update.sh --rehearse" "1" "$(grep -cF "bash \"\$updater\" --rehearse" <<<"$rehearsal_job")"
+check "the update.sh of the standard the refreshed lock pins, never the workflow's own" "1 0" \
+  "$(grep -cF "updater=\"\$pinned_standard/update.sh\"" <<<"$rehearsal_job") $(grep -cF "\$STD/update.sh" <<<"$rehearsal_job")"
+check "an update.sh too old for --rehearse is named and not run, since it would run a real update" "1" "$(grep -cF 'without --rehearse' <<<"$rehearsal_job")"
+check "after the lock refresh" "1" "$(grep -cxF '    needs: prepare' <<<"$rehearsal_job")"
+check "and restores no Nix store" "0" "$(grep -c 'cache-nix-action' <<<"$rehearsal_job")"
+check "the lock is pushed only after the rehearsal passed" "1" "$(grep -cF "needs.rehearse.result == 'success'" "$mwf")"
+check "a failed rehearsal files the maintenance issue under the updater's class" "2" "$(grep -cF "needs.rehearse.result == 'failure'" "$mwf")"
+
+echo "Test 56: the rehearsal runs only where the standard's updater has a path to rehearse"
+d="$WORK/t56"
+mkdir -p "$d/bin" "$d/repo/.github" "$d/locked"
+cat >"$d/locked/update.sh" <<'SH'
+#!/usr/bin/env bash
+[ "$1" = --rehearse ] && echo rehearsed >"$RAN"
+SH
+cat >"$d/bin/nix" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+*inputs.std.outPath*) printf '%s' "$LOCKED" ;;
+*) exit 1 ;;
+esac
+SH
+chmod +x "$d/bin/nix"
+awk '
+  index($0, "      - name: Rehearse an update") == 1 { inside = 1; next }
+  inside && /^      - / { exit }
+  inside && /^        run: \|$/ { body = 1; next }
+  body { sub(/^          /, ""); print }
+' "$standard_root/.github/workflows/package-maintenance.yml" >"$d/step.sh"
+rehearsed() { # rehearsed <update.json> -> the step's exit code and whether the updater ran
+  printf '%s\n' "$1" >"$d/repo/.github/update.json"
+  rm -f "$d/ran"
+  (cd "$d/repo" && PATH="$d/bin:$PATH" STD="$standard_root" LOCKED="$d/locked" RAN="$d/ran" LOG="$d/log" \
+    bash -e "$d/step.sh" >"$d/step.log" 2>&1)
+  echo "$? $(cat "$d/ran" 2>/dev/null)"
+}
+check "a repo on the standard's updater is rehearsed" "0 rehearsed" "$(rehearsed '{ "upstream": { "type": "github-release" } }')"
+check "a repo with no upstream is not" "0 " "$(rehearsed '{ "upstream": { "type": "none" } }')"
+check "a repo with its own updater is not" "0 " "$(rehearsed '{ "upstream": { "type": "custom" } }')"
+check "a repo that only tracks its upstream is not" "0 " "$(rehearsed '{ "upstream": { "type": "github-commit" }, "trackOnly": true }')"
+check "and the log says why" "1" "$(grep -c 'nothing to rehearse' "$d/step.log")"
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

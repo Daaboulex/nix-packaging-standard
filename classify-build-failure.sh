@@ -104,6 +104,7 @@ if [ "$in_update" = yes ]; then
 else
   match upstream-rerelease-hash-mismatch -F 'hash mismatch in fixed-output'
 fi
+match upstream-rerelease-hash-mismatch -F '::error::rehearsal: the update to the pinned'
 match nixpkgs-package-drop -E 'not supported for interpreter python|is marked as broken'
 match missing-python-dep -F 'ModuleNotFoundError'
 match missing-python-dep -E '^ *> *- [a-zA-Z0-9_.-]+ not installed'

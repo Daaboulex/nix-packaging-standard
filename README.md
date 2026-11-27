@@ -1450,6 +1450,21 @@ plus a `CHANGELOG.md`).
   `config-error` and `version-read` alike, and stops there: no network, no file
   written. `std-update-json` runs it on the repo's own tree, so a config the
   updater would refuse on its next release fails at commit time.
+- `--rehearse` runs the update to the version already pinned, as for a new
+  release, and then requires the tree to equal git's `HEAD`; it refuses a tree
+  with uncommitted changes. The nix-update path sets the version literal to a
+  placeholder and hands nix-update the pinned version, so its version change,
+  its evaluation of the rewritten tree and every hash it recomputes run (with
+  `--version=skip` nix-update recomputes hashes but never reaches its version
+  change, where the evaluation of the rewritten tree sits). The full path
+  keeps the pinned version and rev, rebuilds every declared hash under the
+  dummy and regenerates the variant block from the pinned release. Then the
+  check suite, the build and the artifact verification run as usual. A
+  rewrite that differs from `HEAD` is shown as a diff and exits 1 with
+  `upstream-rerelease-hash-mismatch`, except a declared hash that `.#default`
+  built without ever fetching: it keeps the dummy, and the rehearsal names that
+  field and its file as `hash-extraction`. `none`, `custom` and `trackOnly`
+  have no updater path to run, so the Maintenance job rehearses nothing for them.
 
 ## Update and Maintenance behaviour
 
@@ -1481,13 +1496,33 @@ plus a `CHANGELOG.md`).
   rewrite the one open `maintenance` issue, whose class names an evaluation
   failure (`eval-error`) apart from a build one; plus stale-branch cleanup
   (>30 days).
-- A Maintenance refresh that changes no input and heals no fix builds nothing:
-  the committed lock is the one that was verified when it was pushed, so the
-  verify job is skipped and nothing is pushed. An open `maintenance` issue is
-  closed, because the lock it asked for is already on the branch.
+- A Maintenance refresh that changes no input and heals no fix verifies no
+  lock: the committed lock is the one that was verified when it was pushed, so
+  the verify job is skipped and nothing is pushed, while the rehearsal below
+  still runs. Once it passes, an open `maintenance` issue is closed, because
+  the lock it asked for is already on the branch.
 - Every verify job restores the Nix store of the newest earlier run for its
   runner and saves it again under the new lock, so CI on the pushed commit
   starts from the store the verification built.
+- Beside the verify jobs, Maintenance rehearses the update: a fresh
+  `ubuntu-latest` runner takes the refreshed lock, restores no Nix store and
+  runs `update.sh --rehearse` from the standard that lock pins, and the lock is
+  pushed only once it passed. An `update.sh` older than `--rehearse` ignores
+  the flag and would run a real update, so the job names it in a warning and
+  rehearses nothing; the refresh moves the lock to the release head, so this
+  stays only where `inputs.std` does not follow the release branch, which
+  `std-follows-release` already refuses. A hash the updater recomputes is
+  built under a dummy or fake hash, a path no store holds, so its source is
+  downloaded from upstream; a source the updater does not touch, such as a pin
+  per major or a patch, is built by the check suite with its committed hash on
+  that empty store, so it is downloaded too, unless a binary cache serves that
+  exact path as it would to any clean machine. A source that is gone reads
+  `source-not-found` with its URL, one
+  whose content moved reads `upstream-rerelease-hash-mismatch`, and an updater
+  that broke with the new lock reads `updater-error` or what its log refines it
+  to. Only the runner's system is fetched: a source built only on
+  `aarch64-linux` is not. It costs about one Update run, so it runs on the
+  Maintenance cadence and never on a push.
 - Update runs on the repo's `UPDATE_CADENCE` and Maintenance on its
   `MAINTENANCE_CADENCE`: each caller schedules one cron per kind of day and its
   job's condition compares `github.event.schedule` with the cadence, so a day

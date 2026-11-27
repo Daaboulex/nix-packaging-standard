@@ -210,11 +210,77 @@ jobs:
           name: log-${{ matrix.os }}
           path: ${{ env.LOG }}
 
+  rehearse:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      LOG: /tmp/log-rehearsal.log
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - *fetch-std
+      - uses: DeterminateSystems/determinate-nix-action@16f94ba7aae399b9f9077c254b6719ec6de7e3e3 # v3.24.2
+        with:
+          extra-conf: lazy-trees = false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: candidate
+          path: /tmp/candidate
+
+      - name: Commit the candidate locally, so the rehearsal compares with it and a retry restores it
+        run: |
+          if [ -s /tmp/candidate/candidate.patch ]; then
+            git apply --index /tmp/candidate/candidate.patch
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "candidate"
+          fi
+
+      - name: Allow unprivileged user namespaces, which bwrap needs to run a verified binary
+        run: |
+          for knob in kernel.apparmor_restrict_unprivileged_userns kernel.apparmor_restrict_unprivileged_unconfined; do
+            f="/proc/sys/${knob//.//}"
+            [ -e "$f" ] || continue
+            sudo sysctl -w "$knob=0"
+          done
+          unshare --user --map-root-user true || {
+            echo "::error::this runner refuses an unprivileged user namespace, so nothing wrapped in bwrap can be verified here"
+            exit 1
+          }
+
+      - name: Rehearse an update to the version already pinned with the updater the refreshed lock pins, on a store nothing was restored into, retrying only a transient fetch failure
+        run: |
+          rehearsable=$(jq -r 'if .upstream.type == "none" or .upstream.type == "custom" or .trackOnly == true then "no" else "yes" end' .github/update.json)
+          if [ "$rehearsable" = no ]; then
+            echo "nothing to rehearse: this repo has no upstream, runs its own updater or only tracks its upstream, so the standard's updater has no path to run here"
+            exit 0
+          fi
+          pinned_standard=$(nix eval --raw --impure --expr '(builtins.getFlake (toString ./.)).inputs.std.outPath')
+          updater="$pinned_standard/update.sh"
+          if ! grep -qF -- '--rehearse' "$updater"; then
+            echo "::warning::nothing was rehearsed: the standard this lock pins ($pinned_standard) ships an update.sh without --rehearse, which would run a real update instead; the lock moves to the release branch only where inputs.std follows it, and std-follows-release names a repo where it does not"
+            exit 0
+          fi
+          echo "updater: $updater"
+          bash "$STD/retry-transient.sh" "$LOG" 9000 --reset-tree -- bash "$updater" --rehearse
+
+      - name: Keep an empty log when the rehearsal never started, so only a job whose runner was lost sends none
+        if: failure()
+        run: touch "$LOG"
+
+      - name: Keep the rehearsal log for the report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: log-rehearsal
+          path: ${{ env.LOG }}
+
   publish:
-    needs: [prepare, verify]
+    needs: [prepare, verify, rehearse]
     if: >-
       !cancelled() && needs.prepare.result == 'success'
       && (needs.verify.result == 'success' || needs.verify.result == 'skipped')
+      && needs.rehearse.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -275,8 +341,8 @@ jobs:
             }
 
   report:
-    needs: [prepare, verify]
-    if: always() && (needs.prepare.result == 'failure' || needs.verify.result == 'failure')
+    needs: [prepare, verify, rehearse]
+    if: always() && (needs.prepare.result == 'failure' || needs.verify.result == 'failure' || needs.rehearse.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -305,7 +371,7 @@ jobs:
       - name: Classify failure
         id: classify
         env:
-          STEP_CLASS: ${{ needs.prepare.result == 'failure' && needs.prepare.outputs.stopped_class || 'build-error' }}
+          STEP_CLASS: ${{ (needs.prepare.result == 'failure' && needs.prepare.outputs.stopped_class) || (needs.verify.result != 'failure' && needs.rehearse.result == 'failure' && 'updater-error') || 'build-error' }}
         run: bash "$STD/classify-build-failure.sh" /tmp/lock-build.log "$STEP_CLASS"
 
       - name: Report the failure
@@ -320,14 +386,17 @@ jobs:
           HEAL: ${{ needs.prepare.outputs.heal }}
           PREPARE: ${{ needs.prepare.result }}
           STOPPED: ${{ needs.prepare.outputs.stopped }}
+          VERIFY: ${{ needs.verify.result }}
         run: |
           fence='```'
           if [ "$PREPARE" = failure ] && [ -z "$STOPPED" ]; then
             what="The scheduled lock refresh stopped when its runner was lost"
           elif [ "$PREPARE" = failure ]; then
             what="The scheduled lock refresh stopped while $STOPPED"
-          else
+          elif [ "$VERIFY" = failure ]; then
             what="The refreshed flake.lock did not build on every declared system"
+          else
+            what="The rehearsal of an update to the version already pinned failed on a runner whose store was not restored"
           fi
           {
             printf '## flake.lock update failed\n\n'

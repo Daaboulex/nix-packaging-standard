@@ -27,11 +27,22 @@ MODE=update
 case "${1-}" in
 "") ;;
 --check-config) MODE=check-config ;;
+--rehearse) MODE=rehearse ;;
 *)
-  err "update.sh: argument '$1' is not --check-config"
+  err "update.sh: argument '$1' is none of --check-config, --rehearse"
   exit 1
   ;;
 esac
+if [ "$MODE" = rehearse ]; then
+  if ! UNCOMMITTED=$(git status --porcelain --untracked-files=no); then
+    err "update.sh --rehearse compares its rewrite with git's HEAD, and git cannot read the tree at $PWD"
+    exit 1
+  fi
+  if [ -n "$UNCOMMITTED" ]; then
+    err "update.sh --rehearse compares its rewrite with git's HEAD, so every tracked file must be as committed; changed: $(tr '\n' ' ' <<<"$UNCOMMITTED")"
+    exit 1
+  fi
+fi
 
 # check_suite — run the flake check the way the build step is run, and report
 # what actually failed. A flake check BUILDS its check derivations, so a
@@ -61,11 +72,55 @@ check_suite() {
   return 1
 }
 
+rehearse_sources() {
+  [ "$MODE" = rehearse ] || return 0
+  log "Rehearsal: this repo has no updater path to run, so the check suite alone fetches every source this store lacks"
+  check_suite
+}
+
+rehearsal_matches_commit() {
+  local rewritten
+  if ! rewritten=$(git diff --name-only HEAD); then
+    err "rehearsal: git could not compare the tree with HEAD"
+    return 1
+  fi
+  if [ -z "$rewritten" ]; then
+    log "Rehearsal: the update to the pinned $1 reproduced what is committed"
+    return 0
+  fi
+  git diff HEAD >&2
+  err "rehearsal: the update to the pinned $1 rewrote ${rewritten//$'\n'/ }, so what is committed is not what the sources yield now"
+  output "error_type" "upstream-rerelease-hash-mismatch"
+  return 1
+}
+
 # re_esc <str> — backslash-escape every regex metacharacter so a dynamic
 # string (a Nix identifier from update.json) is matched literally in
 # grep -P, sed -E, and plain sed expressions. Nix identifiers only contain
 # [A-Za-z0-9_'-]; escaping is defensive, not strictly required, but cheap.
 re_esc() { printf '%s' "$1" | sed 's/[^[:alnum:]_]/\\&/g'; }
+
+# regex-escape the current version so dots etc. are literal in the sed match.
+esc() { printf '%s' "$1" | sed 's/[][\\.^$*/]/\\&/g'; }
+
+replace_version_literal() {
+  local from_re to_re
+  from_re=$(esc "$1")
+  # Preserve the `<attr> = ` / `<attr> ? ` prefix; swap only the quoted value.
+  # The leading `\b` word boundary mirrors the read-side lookbehind so a
+  # short attr (`version`) cannot match the tail of an identifier
+  # (`myversion`); it must not be a `|` alternation — `|` is the s delimiter.
+  sed -i -E "s|\b(${VERSION_ATTR_RE}[[:space:]]*[?=][[:space:]]*)\"${from_re}\"|\1\"$2\"|" \
+    "$VERSION_FILE"
+  # Confirm the new value landed on the target attr — not merely somewhere
+  # in the file (a hash or a dependency string could match a bare literal).
+  to_re=$(re_esc "$2")
+  if ! grep -qP "(?<![A-Za-z_])${VERSION_ATTR_RE}\s*[?=]\s*\"${to_re}\"" "$VERSION_FILE"; then
+    err "Version write did not take effect on attr '$VERSION_ATTR' in $VERSION_FILE"
+    output "error_type" "version-write"
+    exit 1
+  fi
+}
 
 # read_current_rev — the package's own src rev, from either shape a repo may
 # carry it in: a `rev = "..."` Nix literal, or version.json's .rev key.
@@ -186,11 +241,13 @@ output "package_name" "$PACKAGE"
 if [ "$UPSTREAM_TYPE" = "none" ] || [ "$UPSTREAM_TYPE" = "null" ]; then
   log "Upstream type is 'none' — skipping"
   output "updated" "false"
+  rehearse_sources || exit 1
   exit 0
 fi
 if [ "$UPSTREAM_TYPE" = "custom" ]; then
   log "Upstream type is 'custom' — repo provides its own update logic"
   output "updated" "false"
+  rehearse_sources || exit 1
   exit 0
 fi
 
@@ -328,6 +385,10 @@ if [ "$MODE" = check-config ]; then
   log "Config valid: every check the updater makes before it fetches passed"
   exit 0
 fi
+if [ "$TRACK_ONLY" = "true" ] && [ "$MODE" = rehearse ]; then
+  rehearse_sources || exit 1
+  exit 0
+fi
 
 # --- Standard case: nix-update shim -------------------------------------
 # nix-update (Mic92) does the whole standard bump -- detect the latest forge
@@ -352,8 +413,16 @@ if [ -z "$VARIANT_ASSETS" ] && [ "$TRACK_ONLY" != "true" ] &&
   while IFS= read -r subpackage; do
     SUBPACKAGE_ARGS+=(--subpackage "$subpackage")
   done < <(echo "$CONFIG" | jq -r '.subpackages // [] | .[]')
+  PINNED_ARGS=()
+  if [ "$MODE" = rehearse ]; then
+    PINNED=$CURRENT_VERSION
+    PINNED_ARGS=(--version "$PINNED")
+    CURRENT_VERSION="$PINNED-rehearsal"
+    replace_version_literal "$PINNED" "$CURRENT_VERSION"
+    log "Rehearsal: $VERSION_FILE set to $CURRENT_VERSION, so nix-update moves it to the pinned $PINNED as it would to a new release"
+  fi
   NIX_UPDATE_FAILED=no
-  if ! $NIX_UPDATE --flake default --override-filename "$VERSION_FILE" "${SUBPACKAGE_ARGS[@]}" 2>&1 | tee "$NIX_UPDATE_LOG"; then
+  if ! $NIX_UPDATE --flake default --override-filename "$VERSION_FILE" "${SUBPACKAGE_ARGS[@]}" "${PINNED_ARGS[@]}" 2>&1 | tee "$NIX_UPDATE_LOG"; then
     NIX_UPDATE_FAILED=yes
   fi
   SEEN_VERSION=$(grep -m1 -oP '^Update \S+ -> \K\S+' "$NIX_UPDATE_LOG" || true)
@@ -375,6 +444,12 @@ if [ -z "$VARIANT_ASSETS" ] && [ "$TRACK_ONLY" != "true" ] &&
     output "error_type" "config-error"
     exit 1
   fi
+  if [ "$MODE" = rehearse ] && [ "$NEW_VERSION" != "$PINNED" ]; then
+    err "rehearsal: nix-update was asked for the pinned $PINNED and left $VERSION_FILE at '$NEW_VERSION'"
+    output "updated" "false"
+    output "error_type" "updater-error"
+    exit 1
+  fi
   output "new_version" "$NEW_VERSION"
   if [ "$NEW_VERSION" = "$CURRENT_VERSION" ]; then
     log "Already up to date ($CURRENT_VERSION)"
@@ -394,6 +469,9 @@ if [ -z "$VARIANT_ASSETS" ] && [ "$TRACK_ONLY" != "true" ] &&
     exit 1
   fi
   verify_artifact
+  if [ "$MODE" = rehearse ] && ! rehearsal_matches_commit "$PINNED"; then
+    exit 1
+  fi
   log "Update verified: $CURRENT_VERSION -> $NEW_VERSION"
   exit 0
 fi
@@ -572,6 +650,14 @@ git-ls-remote)
   ;;
 esac
 
+if [ "$MODE" = rehearse ]; then
+  if [ -n "${LATEST_TAG:-}" ]; then
+    LATEST_TAG="${LATEST_TAG%"$LATEST_VERSION"}$CURRENT_VERSION"
+  fi
+  LATEST_VERSION=$CURRENT_VERSION
+  log "Rehearsal: updating to the pinned $CURRENT_VERSION${LATEST_TAG:+ (tag $LATEST_TAG)}, not to upstream's newest"
+fi
+
 # --- trackOnly: detect upstream movement, never write or build ----------
 # A hand-mirrored repo has no buildable artifact to bump. Compare the recorded
 # marker to the upstream HEAD; if they differ, exit 1 with `remirror-needed` so
@@ -663,7 +749,7 @@ fi
 # fallback for a tagless upstream, and for a type that cannot list tags.
 # The rev (the real SHA) still tracks every commit. Comparison switches to the
 # rev, since the date string would otherwise differ every day and loop forever.
-if [ "$VERSION_SCHEME" = "unstable-date" ]; then
+if [ "$VERSION_SCHEME" = "unstable-date" ] && [ "$MODE" != rehearse ]; then
   CURRENT_REV=$(read_current_rev)
   if [ -n "$CURRENT_REV" ] && [ "$CURRENT_REV" = "$FULL_REV" ]; then
     log "Already up to date (rev $FULL_REV)"
@@ -715,7 +801,7 @@ fi
 # `version` untouched; comparison is by rev so the unchanged version string
 # never gates. WRITE_VERSION drives the writer below.
 WRITE_VERSION=1
-if [ "$VERSION_SCHEME" = "rev-only" ]; then
+if [ "$VERSION_SCHEME" = "rev-only" ] && [ "$MODE" != rehearse ]; then
   WRITE_VERSION=0
   CURRENT_REV=$(read_current_rev)
   if [ -n "$CURRENT_REV" ] && [ "$CURRENT_REV" = "$FULL_REV" ]; then
@@ -734,7 +820,7 @@ output "new_version" "$LATEST_VERSION"
 # --- Compare -------------------------------------------------------------
 # unstable-date already compared by rev above; the date string can collide
 # (two commits the same day) so it must not gate the write here.
-if [ "$VERSION_SCHEME" != "unstable-date" ] && [ "$VERSION_SCHEME" != "rev-only" ] && [ "$CURRENT_VERSION" = "$LATEST_VERSION" ]; then
+if [ "$MODE" != rehearse ] && [ "$VERSION_SCHEME" != "unstable-date" ] && [ "$VERSION_SCHEME" != "rev-only" ] && [ "$CURRENT_VERSION" = "$LATEST_VERSION" ]; then
   log "Already up to date"
   output "updated" "false"
   exit 0
@@ -750,7 +836,7 @@ output "updated" "true"
 # the v<major> channel keeps resolving with no hand edit. Both blocks are
 # marker-delimited in versionFile, the way the variants block is.
 MAJOR_PATTERN=$(echo "$CONFIG" | jq -r '.majorPattern // empty')
-if [ -n "$MAJOR_PATTERN" ] && [ "$WRITE_VERSION" -eq 1 ]; then
+if [ -n "$MAJOR_PATTERN" ] && [ "$WRITE_VERSION" -eq 1 ] && [ "$MODE" != rehearse ]; then
   major_of() { printf '%s\n' "$1" | sed -nE "s|^${MAJOR_PATTERN}\$|\\1|p"; }
   CUR_MAJOR=$(major_of "$CURRENT_VERSION")
   NEW_MAJOR=$(major_of "$LATEST_VERSION")
@@ -789,10 +875,9 @@ if [ -n "$MAJOR_PATTERN" ] && [ "$WRITE_VERSION" -eq 1 ]; then
 fi
 
 # --- Write the new version ----------------------------------------------
-# regex-escape the current version so dots etc. are literal in the sed match.
-esc() { printf '%s' "$1" | sed 's/[][\\.^$*/]/\\&/g'; }
-
-if [ "$VERSION_FILE" = "version.json" ]; then
+if [ "$MODE" = rehearse ]; then
+  log "Rehearsal: the pinned version and rev stay as committed"
+elif [ "$VERSION_FILE" = "version.json" ]; then
   if [ "$WRITE_VERSION" -eq 1 ]; then
     jq --arg v "$LATEST_VERSION" --arg r "${FULL_REV:-$LATEST_VERSION}" \
       '.version = $v | .rev = $r | .date = (now | strftime("%Y-%m-%d"))' \
@@ -805,21 +890,7 @@ if [ "$VERSION_FILE" = "version.json" ]; then
   fi
 else
   if [ "$WRITE_VERSION" -eq 1 ]; then
-    ESC_CUR=$(esc "$CURRENT_VERSION")
-    # Preserve the `<attr> = ` / `<attr> ? ` prefix; swap only the quoted value.
-    # The leading `\b` word boundary mirrors the read-side lookbehind so a
-    # short attr (`version`) cannot match the tail of an identifier
-    # (`myversion`); it must not be a `|` alternation — `|` is the s delimiter.
-    sed -i -E "s|\b(${VERSION_ATTR_RE}[[:space:]]*[?=][[:space:]]*)\"${ESC_CUR}\"|\1\"${LATEST_VERSION}\"|" \
-      "$VERSION_FILE"
-    # Confirm the new value landed on the target attr — not merely somewhere
-    # in the file (a hash or a dependency string could match a bare literal).
-    LATEST_VERSION_RE=$(re_esc "$LATEST_VERSION")
-    if ! grep -qP "(?<![A-Za-z_])${VERSION_ATTR_RE}\s*[?=]\s*\"${LATEST_VERSION_RE}\"" "$VERSION_FILE"; then
-      err "Version write did not take effect on attr '$VERSION_ATTR' in $VERSION_FILE"
-      output "error_type" "version-write"
-      exit 1
-    fi
+    replace_version_literal "$CURRENT_VERSION" "$LATEST_VERSION"
   fi
   # Commit-tracked repos: also bump the `rev` attr in the configured file.
   if [ -n "$FULL_REV" ] && [ -f "$REV_FILE" ]; then
@@ -962,7 +1033,8 @@ if [ "${#HF_FIELD[@]}" -gt 0 ]; then
   HASH_MAX=$((${#HF_FIELD[@]} + 2))
   BUILD_OUTPUT=""
   for ((iter = 1; iter <= HASH_MAX; iter++)); do
-    BUILD_OUTPUT=$(nix build .#default --no-link 2>&1 || true)
+    BUILD_RC=0
+    BUILD_OUTPUT=$(nix build .#default --no-link 2>&1) || BUILD_RC=$?
     grep -q 'hash mismatch in fixed-output' <<<"$BUILD_OUTPUT" || break
     BLOCK=$(echo "$BUILD_OUTPUT" | grep -A3 'hash mismatch in fixed-output derivation' | head -4)
     DRV=$(echo "$BLOCK" | grep -oP "derivation '\K[^']+" | head -1)
@@ -1023,6 +1095,15 @@ if [ "${#HF_FIELD[@]}" -gt 0 ]; then
     err "Hash extraction did not converge after $HASH_MAX iterations"
     output "error_type" "hash-extraction"
     exit 1
+  fi
+  if [ "$MODE" = rehearse ] && [ "$BUILD_RC" -eq 0 ]; then
+    for i in "${!HF_FIELD[@]}"; do
+      if [ -z "${HF_DONE[$i]:-}" ]; then
+        err "rehearsal: hash field '${HF_FIELD[$i]}' in ${HF_FILE[$i]} kept the dummy: .#default built without fetching what it hashes, so the updater can never recompute it; drop it from hashes[] or hash something .#default builds"
+        output "error_type" "hash-extraction"
+        exit 1
+      fi
+    done
   fi
 fi
 
@@ -1085,5 +1166,8 @@ fi
 log "Step 3/3: artifact verification"
 verify_artifact
 
+if [ "$MODE" = rehearse ] && ! rehearsal_matches_commit "${CURRENT_VERSION:-$(read_current_rev)}"; then
+  exit 1
+fi
 log "Update verified: $CURRENT_VERSION -> $LATEST_VERSION"
 exit 0
