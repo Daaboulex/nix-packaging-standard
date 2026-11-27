@@ -1956,6 +1956,51 @@ check "a commit the automation published after its own build is proven without a
 check "a head that does not evaluate fails, and reports no check as unchanged" "1 0" "$? $(wc -c <"$d/out" | tr -d ' ')"
 check "the workflow reads that failure, never an empty list from a pipe" "0" "$(grep -c '< <(bash .*checks-to-build[.]sh' "$STD/.github/workflows/package-ci.yml")"
 
+echo "Test 28d: a check the source-build count leaves out is named in a warning, and the build step still builds it or fails"
+d="$WORK/t28d"
+mkdir -p "$d/bin"
+ci_step() {
+  awk -v want="      - name: $1" '
+    $0 == want { inside = 1; next }
+    inside && /^      - / { exit }
+    inside && /^        run: \|$/ { body = 1; next }
+    body { sub(/^          /, ""); print }
+  ' "$STD/.github/workflows/package-ci.yml" >"$d/step.sh"
+}
+cat >"$d/bin/nix" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+*currentSystem*) echo x86_64-linux ;;
+*nix-eval-jobs*) cat "$JOBS" ;;
+*--dry-run*) cat "$DRY" ;;
+*nix-fast-build*)
+  printf '%s\n' "$*" >"$BUILDER_ARGS"
+  echo "ERROR:nix_fast_build:EVAL: 1 successes, 1 failures"
+  exit 1
+  ;;
+esac
+SH
+chmod +x "$d/bin/nix"
+cat >"$d/jobs" <<'JSON'
+{"attr":"light","attrPath":["light"],"drvPath":"/nix/store/aaaa-light.drv"}
+{"attr":"heavy","attrPath":["heavy"],"error":"evaluation exceeded the memory budget of 4096 MiB (workers * max-memory-size) even when run alone"}
+{"attr":"broken","attrPath":["broken"],"error":"error:\n       ... while evaluating the attribute 'drvPath'\n\n       error: attribute 'missing' missing"}
+JSON
+printf 'these 2 derivations will be built:\n  /nix/store/aaaa-light.drv\n  /nix/store/bbbb-dep.drv\n' >"$d/dry"
+counted() { (cd "$d" && JOBS="$d/jobs" DRY=$1 PATH="$d/bin:$PATH" bash -e "$d/step.sh" >"$d/log" 2>&1); }
+ci_step "Flag a build-the-world bump"
+counted "$d/dry"
+check "each check that did not evaluate is named in a warning on one line with its reason, and the count goes on" "0 2" \
+  "$? $(grep -c -e '^::warning::check heavy .*even when run alone' -e "^::warning::check broken .*error: attribute 'missing' missing" "$d/log")"
+check "the count names the checks it leaves out" "1" "$(grep -c '^will build from source this run: 2, without heavy broken,' "$d/log")"
+printf 'this derivation will be built:\n  /nix/store/aaaa-light.drv\n' >"$d/dry1"
+counted "$d/dry1"
+check "one derivation to build is counted as one" "1" "$(grep -c '^will build from source this run: 1,' "$d/log")"
+ci_step "Build the checks this push changed, or every check when the commit before it is not proven"
+(cd "$d" && BUILDER_ARGS="$d/builder" GITHUB_EVENT_NAME=pull_request RUNNER_TEMP=$d STD=$STD PATH="$d/bin:$PATH" bash -e "$d/step.sh" >"$d/log" 2>&1)
+check "the build step hands the whole check set to the builder, and the builder's failure fails it" "1 1" \
+  "$? $(grep -c -- '--flake .#checks.x86_64-linux$' "$d/builder")"
+
 echo "Test 26: release.sh builds only what the candidate changed, on the systems this host builds"
 d="$WORK/t26"
 mkdir -p "$d/bin"

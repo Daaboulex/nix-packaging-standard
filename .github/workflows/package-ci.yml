@@ -132,12 +132,15 @@ jobs:
         run: |
           SYS=$(nix eval --impure --raw --expr 'builtins.currentSystem')
           jobs=$(nix run --inputs-from . nixpkgs#nix-eval-jobs -- --flake ".#checks.$SYS")
-          mapfile -t D < <(jq -r 'select(.drvPath) | .drvPath' <<<"$jobs")
-          [ ${#D[@]} -eq 0 ] && exit 0
+          jq -r 'select(.drvPath | not) | "::warning::check \(.attr) did not evaluate here, so the count of source builds leaves it out (\(.error // "nix-eval-jobs returned no drvPath for it" | gsub("\\s+"; " "))); the build step evaluates every check again and fails unless this one builds or is unchanged since a green run"' <<<"$jobs"
+          left=$(jq -r 'select(.drvPath | not) | .attr' <<<"$jobs")
+          drvs=$(jq -r 'select(.drvPath) | .drvPath' <<<"$jobs")
+          [ -n "$drvs" ] || exit 0
+          mapfile -t D <<<"$drvs"
           dry=$(nix build "${D[@]/%/^*}" --dry-run --narinfo-cache-negative-ttl 0 2>&1)
-          B=$(sed -n 's/^these \([0-9]\+\) derivations will be built.*/\1/p' <<<"$dry")
+          B=$(sed -n -e 's/^these \([0-9]\+\) derivations will be built.*/\1/p' -e 's/^this derivation will be built.*/1/p' <<<"$dry")
           B=${B:-0}
-          echo "will build from source this run: $B"
+          echo "will build from source this run: $B${left:+, without ${left//$'\n'/ }, which did not evaluate here}"
           if [ "$B" -gt 5000 ]; then
             echo "::error::$B derivations would build from source -- a flake.lock bump moved far ahead of cache.nixos.org (runaway that would risk the 6h timeout). Investigate the lock, or wait for cache.nixos.org to catch up, before rerunning."
             exit 1

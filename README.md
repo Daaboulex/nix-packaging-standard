@@ -521,6 +521,12 @@ there (declared == built, per system *and* per package). There
 is no per-repo build target, no archetype conditional, and no binary-cache token:
 `cache.nixos.org` substitutes every unmodified dependency for free.
 
+A dry run before the build counts the derivations that will build from source, so
+a lock bump far ahead of `cache.nixos.org` stops before it meets the timeout. A
+check that does not evaluate for that count is named in a warning and left out of
+it without stopping the run: the build step evaluates every check again and fails
+unless that check builds or is unchanged since a green run (Test 28d).
+
 Before the matrix starts, the plan job evaluates every declared system with
 `allow-import-from-derivation` off (`evaluate-every-system.sh`). A check that
 reads a derivation output at evaluation time (`builtins.readFile` of a
