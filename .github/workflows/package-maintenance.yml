@@ -238,11 +238,12 @@ jobs:
           git apply --index /tmp/candidate/candidate.patch
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          why="The scheduled refresh moved the inputs to their latest revisions."
           if [ -n "$HEALED" ]; then
-            git commit -m "chore: update flake.lock; drop healed fix(es): ${HEALED}"
-          else
-            git commit -m "chore: update flake.lock"
+            why="$why These temporary fixes healed and were removed with the files they own: ${HEALED}."
           fi
+          git commit -m "chore(flake): update flake.lock" -m "$(fold -s -w 72 <<<"$why")" \
+            -m "Test: the flake checks, built by the run that made this commit"
           git push origin "HEAD:refs/heads/$BRANCH"
 
       - name: Close the maintenance issues this clean run resolves

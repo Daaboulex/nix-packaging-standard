@@ -2994,6 +2994,57 @@ awk '/- name: Report the failure$/ { f = 1 } f && /^ +run: \|$/ { r = 1; next } 
 check "the held-back fixes are named with the target that failed, and no predicate is blamed" "0 1 0" \
   "$? $(grep -c '^\*\*Healed fixes NOT pushed\*\*: .venus-protocol.\..* failed in .\.#checks\.x86_64-linux\.pre-commit.,' "$d/issue-head.md") $(grep -ci predicate "$d/issue-head.md")"
 
+echo "Test 48: the commits the automation writes pass the commit-message check"
+d="$WORK/t48"
+mkdir -p "$d/bin" "$d/candidate"
+echo patch >"$d/candidate/candidate.patch"
+cat >"$d/bin/git" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+diff) exit 1 ;;
+commit)
+  shift
+  : >"$MESSAGE"
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = -m ]; then
+      printf '%s\n\n' "$2" >>"$MESSAGE"
+      shift
+    fi
+    shift
+  done
+  ;;
+esac
+exit 0
+SH
+chmod +x "$d/bin/git"
+publish_step() { # publish_step <workflow> <step name>
+  awk -v want="      - name: $2" '
+    $0 == want { inside = 1; next }
+    inside && /^      - / { exit }
+    inside && /^        run: \|$/ { body = 1; next }
+    body { sub(/^          /, ""); print }
+  ' "$standard_root/.github/workflows/$1" | sed "s|/tmp/candidate|$d/candidate|g" >"$d/step.sh"
+}
+written() { # written <env assignments...> -> the checker's verdict on the message the step commits
+  (cd "$d" && env PATH="$d/bin:$PATH" MESSAGE="$d/message" BRANCH=main "$@" bash -e "$d/step.sh" >/dev/null 2>&1) || return 9
+  bash "$standard_root/scripts/check-commit-message.sh" "$d/message" >"$d/verdict" 2>&1
+}
+publish_step package-maintenance.yml "Push the verified lock"
+written HEALED=
+check "a lock refresh" "0" "$?"
+written HEALED="one-fix another-fix"
+check "a lock refresh that drops healed fixes" "0 1" "$? $(grep -c 'one-fix another-fix' "$d/message")"
+publish_step package-update.yml "Push the verified update"
+written PKG=some-package OLDV=1.0.0-unstable-2026-01-01 NEWV=1.0.0-unstable-2026-01-02 AUTO_ADDED=
+check "an update" "0 chore(update): some-package 1.0.0-unstable-2026-01-02" "$? $(sed -n 1p "$d/message")"
+written PKG=some-package OLDV=1 NEWV=2 AUTO_ADDED="new-dep"
+check "an update that adds a requirement" "0 1" "$? $(grep -c 'new-dep' "$d/message")"
+check "every commit a workflow writes carries a Test line" "0" "$(
+  grep -h -A3 'git commit ' "$standard_root"/.github/workflows/*.yml | awk '
+    /git commit / { open++ }
+    /Test: / { tested++ }
+    END { print open - tested }'
+)"
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

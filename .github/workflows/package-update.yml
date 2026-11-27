@@ -248,12 +248,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git diff --cached --quiet && { echo "No changes to commit"; exit 0; }
+          why="Upstream published ${NEWV}. The scheduled update moved the pin from ${OLDV} and every hash with it."
           if [ -n "${AUTO_ADDED}" ]; then
-            git commit -m "chore: update ${PKG} ${OLDV} -> ${NEWV}" \
-              -m "New upstream python requirement(s) added to the env: ${AUTO_ADDED}."
-          else
-            git commit -m "chore: update ${PKG} ${OLDV} -> ${NEWV}"
+            why="$why New upstream python requirements added to the env: ${AUTO_ADDED}."
           fi
+          git commit -m "chore(update): ${PKG} ${NEWV}" -m "$(fold -s -w 72 <<<"$why")" \
+            -m "Test: the flake checks, built by the run that made this commit"
           git push origin "HEAD:refs/heads/$BRANCH"
 
       - name: Close the update-failed issues this clean run resolves
@@ -369,7 +369,9 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             if push_log=$({ git checkout -B "$branch" &&
               git add -A ':!AI-*.json' &&
-              git commit -m "wip: attempted update$versions" --allow-empty &&
+              git commit --allow-empty -m "chore(update): keep the failed attempt at $NEW_VERSION" \
+                -m "The checks failed. This branch holds what the updater wrote." \
+                -m "Test: none, the checks of this attempt failed" &&
               git push -f origin "$branch"; } 2>&1); then
               pushed=yes
             else
