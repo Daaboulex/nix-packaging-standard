@@ -3295,6 +3295,10 @@ check "a repo with no upstream is not" "0 " "$(rehearsed '{ "upstream": { "type"
 check "a repo with its own updater is not" "0 " "$(rehearsed '{ "upstream": { "type": "custom" } }')"
 check "a repo that only tracks its upstream is not" "0 " "$(rehearsed '{ "upstream": { "type": "github-commit" }, "trackOnly": true }')"
 check "and the log says why" "1" "$(grep -c 'nothing to rehearse' "$d/step.log")"
+rm "$d/repo/.github/update.json"
+rm -f "$d/ran"
+(cd "$d/repo" && PATH="$d/bin:$PATH" STD="$standard_root" LOCKED="$d/locked" RAN="$d/ran" LOG="$d/log" bash -e "$d/step.sh" >"$d/step.log" 2>&1)
+check "a repo with no update config has no updater and is not rehearsed" "0 " "$? $(cat "$d/ran" 2>/dev/null)"
 
 echo "Test 57: a desktop verify that finds no desktop file fails the update"
 d="$WORK/t57"

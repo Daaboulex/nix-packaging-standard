@@ -254,6 +254,10 @@ jobs:
 
       - name: Rehearse an update to the version already pinned with the updater the refreshed lock pins, on a store nothing was restored into, retrying only a transient fetch failure
         run: |
+          if [ ! -f .github/update.json ]; then
+            echo "nothing to rehearse: this repo has no .github/update.json, so it has no updater"
+            exit 0
+          fi
           rehearsable=$(jq -r 'if .upstream.type == "none" or .upstream.type == "custom" or .trackOnly == true then "no" else "yes" end' .github/update.json)
           if [ "$rehearsable" = no ]; then
             echo "nothing to rehearse: this repo has no upstream, runs its own updater or only tracks its upstream, so the standard's updater has no path to run here"
