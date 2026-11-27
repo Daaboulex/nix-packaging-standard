@@ -935,6 +935,31 @@
               touch "$out"
             '';
 
+          checks.std-in-place-edits-fixtures =
+            let
+              on = fixture: (baseOn fixture [ system ]).${system}.std-no-fail-open;
+            in
+            pkgs.runCommand "std-in-place-edits-fixtures"
+              {
+                asserted = on ./tests/fixtures/in-place-edits/asserted;
+                unasserted = pkgs.testers.testBuildFailure (on ./tests/fixtures/in-place-edits/unasserted);
+              }
+              ''
+                log="$unasserted/testBuildFailure.log"
+                for line in 14 17 20 23 26 27; do
+                  if ! grep -qF "package.nix:$line: " "$log"; then
+                    echo "  FAIL std-no-fail-open let the unasserted edit at package.nix:$line through:"
+                    cat "$log"
+                    exit 1
+                  fi
+                done
+                if grep -qF 'package.nix:11: ' "$log"; then
+                  echo "  FAIL std-no-fail-open refused the edit at package.nix:11, which landed asserts"
+                  exit 1
+                fi
+                touch "$out"
+              '';
+
           checks.std-fast-build-sized-once = pkgs.runCommand "std-fast-build-sized-once" { tree = ./.; } ''
             bash "$tree/scripts/check-fast-build-callers.sh" "$tree"
             touch "$out"

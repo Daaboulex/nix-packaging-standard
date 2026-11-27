@@ -346,6 +346,7 @@ in
           pkgs.runCommand "std-no-fail-open" { } ''
             bad=0
             ${lib.concatMapStringsSep "\n" scan failOpenPatterns}
+            bash ${../scripts/check-in-place-edits.sh} ${src} || bad=1
             [ "$bad" = 0 ] || exit 1
             echo "ok: no fail-open shell shapes"
             touch "$out"

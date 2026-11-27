@@ -298,7 +298,7 @@ without building the closure — eval-only and cheap, even in CI.
 | `devStateHook` (a shell string) | The exports that keep every tool's cache and home under the project's `.devshell/`; `base` wires it into the default shell. See "Self-contained dev state" below. |
 | `mkDevShell { pkgs, config } args` | A custom dev shell that cannot get the pin order wrong: the pins, then the hook install, then the caller's own hook. |
 | `releaseUrl` (a string) | The one `inputs.std.url` every consumer declares; `std-follows-release`, `scripts/release.sh` and `scripts/fleet-roll.sh` all read it here. |
-| `failOpenPatterns` (a list) | The shell shapes `std-no-fail-open` refuses, each with its bad and good example; the standard's own check proves each pattern matches only the bad form. |
+| `failOpenPatterns` (a list) | The one-line shell shapes `std-no-fail-open` refuses, each with its bad and good example; the standard's own check proves each pattern matches only the bad form. |
 | `failOpenScan { lib, src } pattern` | The shell text that searches a source tree for one of those patterns, used by `std-no-fail-open`. It fails when the tree cannot be read, and a line marked `std:fail-open-ok: <reason>` is exempt. |
 
 Example:
@@ -936,6 +936,16 @@ a source that never held the text.
 matches twice, which would otherwise duplicate a C label or a table entry.
 `landed_soft` warns instead of failing, for an edit that is deliberately
 best-effort.
+
+`std-no-fail-open` holds every `.nix` file to this. An edit that cannot fail on
+its own (`sed -i`, `perl -i`, `awk -i inplace`, `--replace-quiet`, a `patch`
+ending in `|| true`) of a relative path, in any phase, is refused unless the
+next command checks it: one of the assertions above or a `grep`. Consecutive
+edits share the check after the last of them. A path that starts with a
+variable, such as `$out` or `"$1"`, is a file the build or the program wrote
+and is not judged. The check reads text, so it does not see an edit through a
+variable (`"$f"` in a loop) or a script read from another file, nor whether
+the check covers every edit of a run or fails the build.
 
 ## Prefer upstream's own switch to any edit
 
