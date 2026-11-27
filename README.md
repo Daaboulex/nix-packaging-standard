@@ -556,7 +556,10 @@ does not hold yet
 app, with the consumer's own `args`, on the system that has the app, and
 through the standard's own checker, without those `args`, when the consumer's
 locked standard is older than the app, so a stale lock never skips the check
-(Test 28b); by hand that is `nix run .#std-check-commit-messages -- <base> <head>`. A base the
+(Test 28b); by hand that is `nix run .#std-check-commit-messages -- <base> <head>`.
+The app carries only the hooks of the `commit-msg` stage, so checking a message
+never builds a lint tool no binary cache holds for the runner's system
+(`std-base-fixtures`). A base the
 checkout does not know, such as a new branch, checks the head commit alone,
 and `check-commit-range.sh` is proven by `tests/run.sh` Test 28.
 

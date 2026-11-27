@@ -119,6 +119,17 @@ in
       # True package-level `declared == built`: each package builds only where
       # its meta allows, so a repo may mix arch-portable and x86-only packages.
       buildable = lib.filterAttrs (_: p: lib.meta.availableOn pkgs.stdenv.hostPlatform p) config.packages;
+
+      commitMessageHookConfig = pkgs.writeText "pre-commit-commit-msg.json" (
+        builtins.toJSON (
+          config.pre-commit.settings.rawConfig
+          // {
+            repos = map (
+              repo: repo // { hooks = builtins.filter (hook: builtins.elem "commit-msg" hook.stages) repo.hooks; }
+            ) config.pre-commit.settings.rawConfig.repos;
+          }
+        )
+      );
     in
     {
       pre-commit.settings.hooks = import ./hooks.nix { inherit pkgs lib ruffConfigArg; };
@@ -137,7 +148,7 @@ in
               text = ''
                 PRE_COMMIT_HOME="$(git rev-parse --show-toplevel)/.devshell/pre-commit"
                 export PRE_COMMIT_HOME
-                set -- "$@" ${lib.getExe config.pre-commit.settings.package} run -c ${config.pre-commit.settings.configFile} --hook-stage commit-msg --commit-msg-filename
+                set -- "$@" ${lib.getExe config.pre-commit.settings.package} run -c ${commitMessageHookConfig} --hook-stage commit-msg --commit-msg-filename
               ''
               + builtins.readFile ../scripts/check-commit-range.sh;
             }

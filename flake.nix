@@ -46,7 +46,10 @@
           baseOn = fixture: systems: baseOnWith fixture systems { };
           baseOnWith =
             fixture: systems: extra:
-            (inputs.flake-parts.lib.mkFlake
+            (flakeOn fixture systems extra).checks;
+          flakeOn =
+            fixture: systems: extra:
+            inputs.flake-parts.lib.mkFlake
               {
                 inputs = inputs // {
                   self = {
@@ -61,8 +64,7 @@
                   ./flake-modules/base.nix
                   extra
                 ];
-              }
-            ).checks;
+              };
         in
         {
           std.detect.shell = {
@@ -186,6 +188,19 @@
                 "aarch64-linux"
               ];
               armOnly = baseOn ./tests/fixtures/consumer-current [ "aarch64-linux" ];
+              commitMessageApp =
+                extra:
+                (flakeOn ./tests/fixtures/consumer-current [ system ] extra)
+                .apps.${system}.std-check-commit-messages.program;
+              standardHooks = import ./flake-modules/hooks.nix {
+                inherit pkgs lib;
+                ruffConfigArg = "";
+              };
+              commitMessageAppWithout =
+                hooks:
+                commitMessageApp {
+                  perSystem.pre-commit.settings.hooks = lib.mapAttrs (_: _: { enable = lib.mkForce false; }) hooks;
+                };
               expect =
                 what: got: want:
                 if got == want then null else "${what}: got ${builtins.toJSON got}, want ${builtins.toJSON want}";
@@ -249,6 +264,14 @@
                 (expect "a consumer that switches no detection on gets none" (current ? std-detect-shell) false)
                 (expect "a consumer that names no module gets no option reference check" (
                   current ? std-option-reference
+                ) false)
+                (expect "the commit-message app is the same with every hook of another stage off" (
+                  commitMessageApp { } == commitMessageAppWithout (
+                    lib.filterAttrs (_: hook: !(lib.elem "commit-msg" (hook.stages or [ ]))) standardHooks
+                  )
+                ) true)
+                (expect "and changes with its own stage's hooks off too, so it still runs them" (
+                  commitMessageApp { } == commitMessageAppWithout standardHooks
                 ) false)
               ];
             in
