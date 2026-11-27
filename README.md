@@ -14,7 +14,11 @@ Canonical source of the shared tooling used by every `*-nix` packaging repo.
    fetches the standard at the commit that defines the workflow it runs, so
    the scripts and the workflow that calls them always come from one commit.
    A fix to a workflow or script reaches the whole fleet on its next run once
-   it is released; nothing is copied into the consumers.
+   it is released; nothing is copied into the consumers. The one exception is
+   `update.sh`: the Update workflow runs it from the standard the consumer's
+   `flake.lock` pins, because it writes files that the pinned `lib` reads, and
+   the two must be one version. A change to the updater reaches a consumer
+   when its lock moves.
 
 The `release` branch only moves through `scripts/release.sh`, which checks the
 candidate against every consumer first (see "Releasing").
@@ -322,7 +326,7 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `.github/workflows/package-ci.yml` | *(reusable, not synced)* | Archetype-blind CI: every declared system evaluated with import from derivation forbidden, then every output built on a runner per declared system |
 | `.github/workflows/package-update.yml` | *(reusable, not synced)* | The update, verified on every declared system before it pushes |
 | `.github/workflows/package-maintenance.yml` | *(reusable, not synced)* | `flake.lock` refresh on the repo's cadence: heal probe, every declared system evaluated, the checks built on a runner per declared system, pushed only if all are green |
-| `update.sh` | *(run from here; retired copy `scripts/update.sh`)* | Detect + apply upstream updates. A `custom` repo keeps its own `scripts/update.sh`, which the Update workflow runs instead |
+| `update.sh` | *(run from the standard the consumer's lock pins; retired copy `scripts/update.sh`)* | Detect + apply upstream updates. A `custom` repo keeps its own `scripts/update.sh`, which the Update workflow runs instead |
 | `heal-overlays.sh` | *(run from here; retired copy `scripts/heal-overlays.sh`)* | Probe every temporary divergence against the updated inputs and drop the healed ones |
 | `after-lock-update.sh` | *(run from here; retired copy `scripts/after-lock-update.sh`)* | Run the flake's `apps.<system>.after-lock-update` when it declares one, then `write-option-reference.sh`, and stage the tracked files they rewrote |
 | `write-option-reference.sh` | *(run from here)* | Write `docs/OPTIONS.md` from the modules a flake names under `std.option-reference`, by evaluating the page the check renders; a flake that names none is left alone |

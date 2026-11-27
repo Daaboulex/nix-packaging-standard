@@ -3045,6 +3045,47 @@ check "every commit a workflow writes carries a Test line" "0" "$(
     /Test: / { tested++ }
     END { print open - tested }'
 )"
+
+echo "Test 49: the updater runs from the standard the repo's lock pins, the rest from the release"
+d="$WORK/t49"
+mkdir -p "$d/bin" "$d/repo/.github" "$d/locked"
+printf '{ "upstream": { "type": "github-release" } }\n' >"$d/repo/.github/update.json"
+cat >"$d/locked/update.sh" <<'SH'
+#!/usr/bin/env bash
+echo ran >"$RAN"
+SH
+cat >"$d/bin/nix" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+*inputs.std.outPath*) [ -n "$LOCKED" ] || exit 1; printf '%s' "$LOCKED" ;;
+*) exit 1 ;;
+esac
+SH
+chmod +x "$d/bin/nix"
+awk '
+  $0 == "      - name: Run the updater, retrying only a transient fetch failure" { inside = 1; next }
+  inside && /^      - / { exit }
+  inside && /^        run: \|$/ { body = 1; next }
+  body { sub(/^          /, ""); print }
+' "$standard_root/.github/workflows/package-update.yml" >"$d/step.sh"
+updater_step() { # updater_step <locked standard, empty when the lock cannot be read>
+  rm -f "$d/ran" "$d/out"
+  (cd "$d/repo" && PATH="$d/bin:$PATH" STD="$standard_root" LOCKED="$1" RAN="$d/ran" LOG="$d/log" \
+    GITHUB_OUTPUT="$d/out" bash "$d/step.sh" >"$d/step.log" 2>&1)
+}
+updater_step "$d/locked"
+check "the pinned standard's updater ran" "ran" "$(cat "$d/ran" 2>/dev/null)"
+check "and its exit code is the step's" "exit_code=0" "$(grep '^exit_code=' "$d/out")"
+updater_step ""
+check "a lock whose standard cannot be read stops the step, named" "1 1" "$? $(grep -c "::error::.*flake.lock" "$d/step.log")"
+printf '{ "upstream": { "type": "custom" } }\n' >"$d/repo/.github/update.json"
+mkdir -p "$d/repo/scripts"
+cat >"$d/repo/scripts/update.sh" <<'SH'
+#!/usr/bin/env bash
+echo own >"$RAN"
+SH
+updater_step "$d/locked"
+check "a custom repo still runs its own updater" "own" "$(cat "$d/ran" 2>/dev/null)"
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"
