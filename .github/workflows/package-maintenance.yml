@@ -34,7 +34,7 @@ jobs:
             exit 1
             ;;
           esac
-          if [ "$EVENT" = workflow_dispatch ]; then run=yes; fi
+          if [ "$EVENT" = workflow_dispatch ] || [ "$EVENT" = repository_dispatch ]; then run=yes; fi
           echo "cadence=$CADENCE dow=$dow event=$EVENT -> run=$run"
           echo "run=$run" >> "$GITHUB_OUTPUT"
 
@@ -53,6 +53,7 @@ jobs:
       kept: ${{ steps.heal.outputs.kept }}
       heal: ${{ steps.heal.outcome }}
       stopped: ${{ steps.stopped.outputs.stage }}
+      stopped_class: ${{ steps.stopped.outputs.class }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - &fetch-std
@@ -134,14 +135,19 @@ jobs:
           EVALUATE: ${{ steps.evaluate.outcome }}
           CANDIDATE: ${{ steps.candidate.outcome }}
         run: |
-          if [ "$LOCK" = failure ]; then stage="updating flake.lock"
-          elif [ "$APP" = failure ]; then stage="running the flake's after-lock-update app"
-          elif [ "$HEAL" = failure ]; then stage="probing the temporary fixes"
-          elif [ "$EVALUATE" = failure ]; then stage="evaluating every declared system"
-          elif [ "$CANDIDATE" = failure ]; then stage="recording the candidate"
-          else stage="setting up the runner"
+          if [ "$LOCK" = failure ]; then stage="updating flake.lock" class=updater-error
+          elif [ "$APP" = failure ]; then stage="running the flake's after-lock-update app" class=updater-error
+          elif [ "$HEAL" = failure ]; then stage="probing the temporary fixes" class=updater-error
+          elif [ "$EVALUATE" = failure ]; then stage="evaluating every declared system" class=eval-error
+          elif [ "$CANDIDATE" = failure ]; then stage="recording the candidate" class=eval-error
+          else stage="setting up the runner" class=runner-error
           fi
           echo "stage=$stage" >> "$GITHUB_OUTPUT"
+          echo "class=$class" >> "$GITHUB_OUTPUT"
+
+      - name: Keep an empty log when no step wrote one, so only a job whose runner was lost sends none
+        if: failure()
+        run: touch "$LOG"
 
       - name: Keep the evaluation log for the report
         if: failure()
@@ -192,6 +198,10 @@ jobs:
           SYS=$(nix eval --impure --raw --expr 'builtins.currentSystem')
           bash "$STD/retry-transient.sh" "$LOG" 13200 -- \
             bash "$STD/build-checks.sh" "$SYS"
+
+      - name: Keep an empty log when the build never started, so only a job whose runner was lost sends none
+        if: failure()
+        run: touch "$LOG"
 
       - name: Keep the build log for the report
         if: failure()
@@ -288,12 +298,14 @@ jobs:
             cat "$f" >>/tmp/lock-build.log
           done
           if [ "$found" = 0 ]; then
-            echo "No log reached the report: the download found no log-*.log file." >>/tmp/lock-build.log
+            echo "runner-lost: no log reached the report from the job that failed, so its runner stopped before the job could keep one" >>/tmp/lock-build.log
           fi
 
       - name: Classify failure
         id: classify
-        run: bash "$STD/classify-build-failure.sh" /tmp/lock-build.log
+        env:
+          STEP_CLASS: ${{ needs.prepare.result == 'failure' && needs.prepare.outputs.stopped_class || 'build-error' }}
+        run: bash "$STD/classify-build-failure.sh" /tmp/lock-build.log "$STEP_CLASS"
 
       - name: Report the failure
         env:
@@ -309,8 +321,10 @@ jobs:
           STOPPED: ${{ needs.prepare.outputs.stopped }}
         run: |
           fence='```'
-          if [ "$PREPARE" = failure ]; then
-            what="The scheduled lock refresh stopped while ${STOPPED:-setting up the runner}"
+          if [ "$PREPARE" = failure ] && [ -z "$STOPPED" ]; then
+            what="The scheduled lock refresh stopped when its runner was lost"
+          elif [ "$PREPARE" = failure ]; then
+            what="The scheduled lock refresh stopped while $STOPPED"
           else
             what="The refreshed flake.lock did not build on every declared system"
           fi
@@ -331,6 +345,12 @@ jobs:
             printf '\n### Recovery\n\n%sbash\nnix flake update\nnix flake check --no-build --all-systems\nnix build --no-link\n%s\n' "$fence" "$fence"
           } >/tmp/issue-head.md
           bash "$STD/report-failure.sh" maintenance "Maintenance: flake.lock update" "Maintenance: flake.lock update failed ($FAIL_CLASS)" /tmp/issue-head.md /tmp/lock-build.log
+
+      - name: Run the refresh once more when a runner was lost, unless this run is that retry
+        if: steps.classify.outputs.class == 'runner-lost' && github.event_name != 'repository_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/$GITHUB_REPOSITORY/dispatches" -f event_type=maintenance-retry
 
   cleanup:
     needs: gate

@@ -31,11 +31,45 @@ log_section() {
     if [ -n "${FAILED_DRVS:-}" ]; then printf '%s\n' "$FAILED_DRVS" | tr ' ' '\n'; fi
     printf '```\n'
   fi
-  local at
-  if at=$(grep -n -m1 -E '^(\S+> )?\s*error(\[E[0-9]+\])?:' "$work/plain"); then
-    at="${at%%:*}"
+  local excerpt
+  excerpt=$(awk -v cap=40 '
+    {
+      raw[NR] = $0
+      p = ""
+      b = $0
+      if (match(b, /^[A-Za-z0-9][A-Za-z0-9+._-]*> /)) {
+        p = substr(b, 1, RLENGTH)
+        b = substr(b, RLENGTH + 1)
+      }
+      pre[NR] = p
+      body[NR] = b
+      if (!nix_own && p == "" && b ~ /^error:/) nix_own = NR
+      if (!nix_prefixed && b ~ /^error: (Cannot build|hash mismatch in fixed-output)/) nix_prefixed = NR
+      if (!any && b ~ /^[[:space:]]*error(\[E[0-9]+\])?:/) any = NR
+    }
+    END {
+      start = nix_own ? nix_own : (nix_prefixed ? nix_prefixed : any)
+      if (!start) exit
+      n = 1
+      block[1] = start
+      text_end = 1
+      builder_end = 0
+      for (i = start + 1; i <= NR; i++) {
+        if (pre[i] != pre[start]) continue
+        if (body[i] != "" && body[i] !~ /^[[:space:]]/) break
+        block[++n] = i
+        if (body[i] ~ /^[[:space:]]+>( |$)/) builder_end = n
+        else if (body[i] ~ /[^[:space:]]/) text_end = n
+      }
+      last = builder_end ? builder_end : text_end
+      first = last > cap ? last - cap + 2 : 2
+      print raw[block[1]]
+      for (k = first; k <= last; k++) print raw[block[k]]
+    }
+  ' "$work/plain")
+  if [ -n "$excerpt" ]; then
     printf '\n<details open><summary>First error</summary>\n\n```\n'
-    sed -n "${at},$((at + 24))p" "$work/plain"
+    printf '%s\n' "$excerpt"
     printf '```\n</details>\n'
   fi
   printf '\n<details><summary>Log, last 100 lines</summary>\n\n```\n'

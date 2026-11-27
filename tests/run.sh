@@ -612,7 +612,8 @@ check "an HTTP 503 is transient" "transient-infra" "$(get "$d" class)"
 : >"$d/out.env"
 printf '%s\n' "error: unable to download 'https://example.org/x.tar.gz': HTTP error 404" >"$d/build.log"
 run_classify "$d" "$d/build.log"
-check "an HTTP 404 is not transient" "unclassified" "$(get "$d" class)"
+check "an HTTP 404 is not transient, it is a source that is gone" "source-not-found" "$(get "$d" class)"
+check "and its evidence names the URL" "error: unable to download 'https://example.org/x.tar.gz': HTTP error 404" "$(get "$d" evidence)"
 
 echo "Test 11e: an evaluation that needed a derivation built is import-from-derivation, not a transient store race"
 d="$WORK/t11e"
@@ -629,6 +630,223 @@ check "class import-from-derivation" "import-from-derivation" "$(get "$d" class)
 printf '%s\n' "error: path '/nix/store/aaaa-foo' is not valid" >"$d/build.log"
 run_classify "$d" "$d/build.log"
 check "a store path missing during a build stays transient-infra" "transient-infra" "$(get "$d" class)"
+
+with_escapes() { sed 's/\^\[/\x1b/g'; }
+
+echo "Test 11f: a source that returns 404 is source-not-found, with the URL of the failing builder as evidence"
+d="$WORK/t11f"
+mkdir -p "$d"
+: >"$d/out.env"
+cat >"$d/build.log" <<'LOG'
+source> trying https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton8-32/GE-Proton8-32.tar.gz
+source> trying https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton11-14/GE-Proton11-14.tar.gz
+source> trying https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton7-55/GE-Proton7-55.tar.gz
+source> curl: (22) The requested URL returned error: 404
+source> Warning: Problem (retrying all errors). Retrying in 1 second. 3 retries left.
+source> unpacking source archive /build/GE-Proton8-32.tar.gz
+source> curl: (22) The requested URL returned error: 404
+source> error: cannot download source from any mirror
+error: Cannot build '/nix/store/bpdbvak1dnsf2zki2g5805lp987pxjbf-source.drv'.
+       Reason: builder failed with exit code 1.
+       Output paths:
+         /nix/store/b5szxi1hcn4yx43ml0mwmpjbc58csh92-source
+       Last 20 log lines:
+       >
+       > trying https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton11-14/GE-Proton11-14.tar.gz
+       >   % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+       >                                  Dload  Upload  Total   Spent   Left   Speed
+       >
+       >   0      0   0      0   0      0      0      0                              0
+       > curl: (22) The requested URL returned error: 404
+       > Warning: Problem (retrying all errors). Retrying in 1 second. 3 retries left.
+       >
+       >   0      0   0      0   0      0      0      0                              0
+       > curl: (22) The requested URL returned error: 404
+       > error: cannot download source from any mirror
+       For full logs, run:
+         nix log /nix/store/bpdbvak1dnsf2zki2g5805lp987pxjbf-source.drv
+error: Cannot build '/nix/store/flwn45qrsvgs037w4zkfvnvpy9w4h9mz-proton-ge-GE-Proton11-14.drv'.
+       Reason: 1 dependency failed.
+LOG
+run_classify "$d" "$d/build.log"
+check "a source that 404s has its own class" "source-not-found" "$(get "$d" class)"
+check "the evidence is the URL the failing builder tried, not one a builder beside it fetched" \
+  "> trying https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton11-14/GE-Proton11-14.tar.gz" "$(get "$d" evidence)"
+
+echo "Test 11g: an evaluation error quotes its last error: line, not the first frame of its trace"
+d="$WORK/t11g"
+mkdir -p "$d"
+: >"$d/out.env"
+cat >"$d/build.log" <<'LOG'
+error:
+       … while calling the 'derivationStrict' builtin
+         at «nix-internal»/derivation-internal.nix:38:12:
+           37|
+           38|   strict = drvFunc drvAttrs;
+             |            ^
+           39|
+
+       … while evaluating derivation 'eden-0.2.1-unstable-2026-11-24'
+         whose name attribute is located at «github:NixOS/nixpkgs/2786a2a»/pkgs/stdenv/generic/make-derivation.nix:651:11
+
+       … while evaluating attribute 'preConfigure' of derivation 'eden-0.2.1-unstable-2026-11-24'
+         at /home/runner/work/eden-nix/eden-nix/package.nix:159:3:
+          158|
+          159|   preConfigure = ''
+             |   ^
+          160|     export CPM_SOURCE_CACHE=$PWD/.cache/cpm
+
+       (stack trace truncated; use '--show-trace' to show the full, detailed trace)
+
+       error: expected a Boolean but found a string: "true"
+       at /home/runner/work/eden-nix/eden-nix/deps/default.nix:5:27:
+            4|   manifest = lib.importJSON ./cpmfile.json;
+            5|   fetchable = _: entry: !(entry.ci or false);
+             |                           ^
+            6|   version =
+::error::The build failed before the source was fetched, so no new hash exists
+LOG
+run_classify "$d" "$d/build.log"
+check "class eval-error" "eval-error" "$(get "$d" class)"
+check "the evidence is the last error: line of the trace" 'error: expected a Boolean but found a string: "true"' "$(get "$d" evidence)"
+
+echo "Test 11h: the step that failed names the class, and a pattern only refines it"
+d="$WORK/t11h"
+mkdir -p "$d"
+: >"$d/out.env"
+printf 'error: Cannot build %s.\nsomething nobody has a pattern for\n' "'/nix/store/kkkk-x.drv'" >"$d/build.log"
+(GITHUB_OUTPUT="$d/out.env" bash "$CLASSIFY" "$d/build.log" build-error >"$d/clog" 2>&1)
+check "a failure no pattern knows keeps the class of the step that failed" "build-error" "$(get "$d" class)"
+: >"$d/out.env"
+cat >"$d/build.log" <<'LOG'
+error:
+       … while evaluating attribute 'cargo_deps'
+         at /nix/store/jr5xyi8j278ax1c55ivd3qgmfjxi2y94-nix-update-1.16.0/lib/python3.14/site-packages/nix_update/eval.nix:128:3:
+          127|   go_modules_old = pkg.go-modules.outputHash or null;
+          128|   cargo_deps = pkg.cargoDeps.outputHash or null;
+             |   ^
+          129|   cargo_vendor_deps = pkg.cargoDeps.vendorStaging.outputHash or null;
+
+       … while evaluating a branch condition
+         at /nix/store/jr5xyi8j278ax1c55ivd3qgmfjxi2y94-nix-update-1.16.0/lib/python3.14/site-packages/nix_update/eval.nix:57:7:
+           56|       in
+           57|       if packagesResult.success then packagesResult.value else (tryGetAttrPath attributePath flake).value
+             |       ^
+           58|     else
+
+       (stack trace truncated; use '--show-trace' to show the full, detailed trace)
+
+       error: opening file "/nix/store/0yn6db264w1lmpybqirmi7inkya372q7-source": No such file or directory
+$ nix-instantiate --eval --json --strict /nix/store/jr5xyi8j278ax1c55ivd3qgmfjxi2y94-nix-update-1.16.0/lib/python3.14/site-packages/nix_update/eval.nix
+fetch https://github.com/BurntSushi/ripgrep/releases.atom
+Update 15.2.0 -> 16.0.0 in package.nix
+Traceback (most recent call last):
+subprocess.CalledProcessError: Command '['nix-instantiate', '--eval', '--json', '--strict']' returned non-zero exit status 1.
+::error::nix-update failed
+LOG
+(GITHUB_OUTPUT="$d/out.env" bash "$CLASSIFY" "$d/build.log" updater-error >"$d/clog" 2>&1)
+check "an evaluation failure inside the updater is refined to eval-error" "eval-error" "$(get "$d" class)"
+check "and quotes the line that says what failed" 'error: opening file "/nix/store/0yn6db264w1lmpybqirmi7inkya372q7-source": No such file or directory' "$(get "$d" evidence)"
+: >"$d/out.env"
+(GITHUB_OUTPUT="$d/out.env" bash "$CLASSIFY" "$d/missing.log" updater-error >"$d/clog" 2>&1)
+check "a missing log still carries the class of the step that failed" "updater-error" "$(get "$d" class)"
+
+echo "Test 11i: in an update a fixed-output hash mismatch is a hash the updater missed"
+d="$WORK/t11i"
+mkdir -p "$d"
+: >"$d/out.env"
+cat >"$d/build.log" <<'LOG'
+coolercontrol-ui> patching script interpreter paths in /nix/store/svlm5j8n8l6l2ll9x0apl2zcwi5m25i4-coolercontrol-ui-5.1.2-npm-deps
+error: hash mismatch in fixed-output derivation '/nix/store/7jbm6zhh06w9i0kcszdwf0hhmdd7r0b4-coolercontrol-ui-5.1.2-npm-deps.drv':
+         specified: sha256-hVbvYrPcqvoOGB6QTNISGbFYErLCo2MIKy+AwJLpbcc=
+            got:    sha256-9zwQjaXwuzYVzTaBbIyjs/N074byZlRNntxJC0mpziw=
+error: Cannot build '/nix/store/pgj15i761yambkvzbmdwks946lrgy8fn-coolercontrol-ui-5.1.2.drv'.
+       Reason: 1 dependency failed.
+LOG
+(GITHUB_OUTPUT="$d/out.env" bash "$CLASSIFY" --update "$d/build.log" build-error >"$d/clog" 2>&1)
+check "the updater missed a hash" "updater-missed-hash" "$(get "$d" class)"
+check "the failing drvs are still listed" "/nix/store/pgj15i761yambkvzbmdwks946lrgy8fn-coolercontrol-ui-5.1.2.drv" "$(get "$d" failed_drvs)"
+: >"$d/out.env"
+run_classify "$d" "$d/build.log"
+check "outside an update the same mismatch keeps its name" "upstream-rerelease-hash-mismatch" "$(get "$d" class)"
+
+echo "Test 11j: a failing check of the repo's own, with no package failing, is check-error"
+d="$WORK/t11j"
+mkdir -p "$d"
+: >"$d/out.env"
+with_escapes >"$d/build.log" <<'LOG'
+^[[2mopenwrt-series-applies>^[[0m applying 0008-mac80211-brcmfmac-enable-2.4-ghz-vht-on-bcm4366.patch
+^[[2mopenwrt-series-applies>^[[0m patching file package/kernel/mac80211/Makefile
+^[[2mopenwrt-series-applies>^[[0m Hunk #1 FAILED at 12.
+^[[2mopenwrt-series-applies>^[[0m 1 out of 1 hunk FAILED -- saving rejects to file package/kernel/mac80211/Makefile.rej
+^[[2mopenwrt-series-applies>^[[0m does not apply to this OpenWrt tree without fuzz, rebase it: 0008-mac80211-brcmfmac-enable-2.4-ghz-vht-on-bcm4366.patch
+^[[2mopenwrt-series-applies>^[[0m ^[[31;1merror:^[[0m Cannot build '^[[35;1m/nix/store/3wgchy0rrd2ba67vkryrad0qm6hrvhhn-openwrt-series-applies.drv^[[0m'.^[[0m
+^[[2mopenwrt-series-applies>^[[0m        Reason: ^[[31;1mbuilder failed with exit code 1^[[0m.^[[0m
+WARNING:nix_fast_build.build:build openwrt-series-applies exited with 1 (attempt 1/1)
+ERROR:nix_fast_build:BUILD: 10 successes, 1 failures
+ERROR:nix_fast_build:Failed attributes: .#checks.aarch64-linux.openwrt-series-applies
+LOG
+(GITHUB_OUTPUT="$d/out.env" bash "$CLASSIFY" "$d/build.log" build-error >"$d/clog" 2>&1)
+check "a patch that no longer applies in the repo's own check is check-error" "check-error" "$(get "$d" class)"
+: >"$d/out.env"
+printf '%s\n' 'ERROR:nix_fast_build:Failed attributes: .#checks.aarch64-linux.openwrt-series-applies .#checks.aarch64-linux.package-openwrt-build' >>"$d/build.log"
+(GITHUB_OUTPUT="$d/out.env" bash "$CLASSIFY" "$d/build.log" build-error >"$d/clog" 2>&1)
+check "a failing package beside it keeps the build class" "build-error" "$(get "$d" class)"
+
+echo "Test 11k: lines carrying the attribute prefix nix-fast-build writes are read, Nix's own lines only"
+d="$WORK/t11k"
+mkdir -p "$d"
+: >"$d/out.env"
+with_escapes >"$d/build.log" <<'LOG'
+^[[2mpackage-scx-git-full>^[[0m curl: (22) The requested URL returned error: 429
+^[[2mpackage-scx-git-full>^[[0m Fetching https://static.crates.io/crates/windows-targets/0.48.5/download -> /nix/store/nh8wxvkrmc4za82817jdsrpm0ssgfypb-scx-git-1.1.4-unstable-2026-11-10-vendor-staging
+^[[2mpackage-scx-git-full>^[[0m error: cannot download libbpf-linux-types-u128.patch from any mirror
+^[[2mpackage-scx-git-full>^[[0m ^[[31;1merror:^[[0m Cannot build '^[[35;1m/nix/store/qw1m8jnzy32gkqxk23zsb8n93bcwk4k9-libbpf-linux-types-u128.patch.drv^[[0m'.^[[0m
+^[[2mpackage-scx-git-full>^[[0m        Reason: ^[[31;1mbuilder failed with exit code 1^[[0m.^[[0m
+^[[2mpackage-scx-git-full>^[[0m        Output paths:
+^[[2mpackage-scx-git-full>^[[0m          ^[[35;1m/nix/store/0h0c14pmdcvv7g98ffbpyi7i92nyzj97-libbpf-linux-types-u128.patch^[[0m^[[0m
+^[[2mpackage-scx-git-full>^[[0m        Last 20 log lines:
+^[[2mpackage-scx-git-full>^[[0m        > trying https://github.com/libbpf/libbpf/commit/f90a9c487d7542d91fa584b83b6a624a4fbeb341.patch
+^[[2mpackage-scx-git-full>^[[0m        > curl: (22) The requested URL returned error: 429
+^[[2mpackage-scx-git-full>^[[0m        > Warning: Problem : HTTP error. Retrying in 1 second. 3 retries left.
+^[[2mpackage-scx-git-full>^[[0m        > curl: (22) The requested URL returned error: 429
+^[[2mpackage-scx-git-full>^[[0m        > error: cannot download libbpf-linux-types-u128.patch from any mirror
+^[[2mpackage-scx-git-full>^[[0m        For full logs, run:
+^[[2mpackage-scx-git-full>^[[0m          ^[[1mnix log /nix/store/qw1m8jnzy32gkqxk23zsb8n93bcwk4k9-libbpf-linux-types-u128.patch.drv^[[0m^[[0m
+^[[2mpackage-scx-git-full>^[[0m Fetching https://static.crates.io/crates/windows-targets/0.52.6/download -> /nix/store/nh8wxvkrmc4za82817jdsrpm0ssgfypb-scx-git-1.1.4-unstable-2026-11-10-vendor-staging
+^[[2mpackage-scx-git-full>^[[0m ^[[31;1merror:^[[0m Cannot build '^[[35;1m/nix/store/b5j4pkwxandz7qm0szsbzs36rd452did-scx-git-full-1.1.4-unstable-2026-11-10.drv^[[0m'.^[[0m
+^[[2mpackage-scx-git-full>^[[0m        Reason: 1 dependency failed.
+WARNING:nix_fast_build.build:build package-scx-git-full exited with 1 (attempt 1/1)
+ERROR:nix_fast_build:BUILD: 12 successes, 1 failures
+ERROR:nix_fast_build:Failed attributes: .#checks.aarch64-linux.package-scx-git-full
+LOG
+run_classify "$d" "$d/build.log"
+check "a 429 inside a failed attribute's Nix block is transient" "transient-infra" "$(get "$d" class)"
+: >"$d/out.env"
+with_escapes >"$d/build.log" <<'LOG'
+^[[2mpackage-mesa>^[[0m trying https://static.crates.io/crates/libc/libc-0.2.177.crate
+^[[2mpackage-mesa>^[[0m curl: (22) The requested URL returned error: 429
+^[[2mpackage-mesa>^[[0m meson.build:21:0: ERROR: Value "true" for option "amd-options" is not in allowed choices: "use-llvm, virtio"
+^[[2mpackage-mesa>^[[0m ^[[31;1merror:^[[0m Cannot build '^[[35;1m/nix/store/llll-mesa-27.0.0-devel-e6d7ecc.drv^[[0m'.^[[0m
+^[[2mpackage-mesa>^[[0m        Reason: builder failed with exit code 1.
+^[[2mpackage-mesa>^[[0m        > meson.build:21:0: ERROR: Value "true" for option "amd-options" is not in allowed choices: "use-llvm, virtio"
+ERROR:nix_fast_build:Failed attributes: .#checks.x86_64-linux.package-mesa
+LOG
+run_classify "$d" "$d/build.log"
+check "a refusal streamed by another builder of the same attribute does not make a real failure transient" "unclassified" "$(get "$d" class)"
+
+echo "Test 11l: a job that failed and sent no log is runner-lost, whatever another job's log says"
+d="$WORK/t11l"
+mkdir -p "$d"
+: >"$d/out.env"
+cat >"$d/build.log" <<'LOG'
+=== log-update
+error: unable to download 'https://example.org/x.tar.gz': HTTP error 503
+runner-lost: no log reached the report from the verify job that failed, so its runner stopped before the job could keep one
+LOG
+(GITHUB_OUTPUT="$d/out.env" bash "$CLASSIFY" --update "$d/build.log" build-error >"$d/clog" 2>&1)
+check "class runner-lost" "runner-lost" "$(get "$d" class)"
+check "the evidence says no log came" "runner-lost: no log reached the report from the verify job that failed, so its runner stopped before the job could keep one" "$(get "$d" evidence)"
 
 echo "Test 12: two source hashes are unattributable -> config-error before any fetch"
 d="$WORK/t12"
@@ -950,6 +1168,27 @@ chmod +x "$BIN/fake-nix-update-args"
 NIX_UPDATE="fake-nix-update-args" run_update "$d"
 check "shim with subpackages exit 0" "0" "$RC"
 check "each subpackage reaches nix-update" "--subpackage ui --subpackage docs" "$(grep -A1 -- '^--subpackage$' "$d/nix-update.args" | grep -v -- '^--$' | tr '\n' ' ' | sed 's/ $//')"
+
+echo "Test 16f: a failing nix-update is named the updater's failure, and the version it saw is written before it exits"
+d="$WORK/t16f"
+mkdir -p "$d/.github"
+cp "$WORK/t16/.github/update.json" "$d/.github/update.json"
+printf '{\n  version = "15.2.0";\n  hash = "sha256-old";\n}\n' >"$d/package.nix"
+cat >"$BIN/fake-nix-update-fails" <<'SH'
+#!/usr/bin/env bash
+echo "fetch https://github.com/BurntSushi/ripgrep/releases.atom"
+echo "Update 15.2.0 -> 16.0.0 in package.nix"
+sed -i 's/version = "15.2.0"/version = "16.0.0"/' package.nix
+echo '       error: opening file "/nix/store/0yn6db264w1lmpybqirmi7inkya372q7-source": No such file or directory' >&2
+echo "subprocess.CalledProcessError: Command '['nix-instantiate', '--eval']' returned non-zero exit status 1." >&2
+exit 1
+SH
+chmod +x "$BIN/fake-nix-update-fails"
+: >"$d/.nixflag"
+NIX_UPDATE="fake-nix-update-fails" run_update "$d"
+check "a failing nix-update fails the update" "1" "$RC"
+check "it is named the updater's failure, not a build error" "updater-error" "$(get "$d" error_type)"
+check "the version nix-update saw is the target version" "16.0.0" "$(get "$d" new_version)"
 
 echo "Test 17: no-tracked-ignored-files check catches a tracked file inside an ignored dir"
 d="$WORK/t17"
@@ -1345,6 +1584,66 @@ report_fixture "$d" '[]'
 rm "$d/build.log"
 run_report "$d" "Update x 1 -> 2: build-error"
 check "a missing log fails the report before any gh call" "1:0" "$RC:$(wc -l <"$d/calls")"
+
+first_error() { sed -n '/<summary>First error<\/summary>/,/<\/details>/p' "$1/body.md" | sed '1,3d' | sed '/^```$/,$d'; }
+
+d="$WORK/t24i"
+report_fixture "$d" '[]'
+with_escapes >"$d/build.log" <<'LOG'
+^[[2mopenwrt-series-applies>^[[0m applying 0008-mac80211-brcmfmac-enable-2.4-ghz-vht-on-bcm4366.patch
+^[[2mopenwrt-series-applies>^[[0m ^[[31;1merror:^[[0m Cannot build '^[[35;1m/nix/store/3wgchy0rrd2ba67vkryrad0qm6hrvhhn-openwrt-series-applies.drv^[[0m'.^[[0m
+^[[2mopenwrt-series-applies>^[[0m        Reason: ^[[31;1mbuilder failed with exit code 1^[[0m.^[[0m
+^[[2mopenwrt-series-applies>^[[0m        Output paths:
+^[[2mopenwrt-series-applies>^[[0m          ^[[35;1m/nix/store/qb0vkik39d04nc9pg27dw0q6gipn4jqm-openwrt-series-applies^[[0m^[[0m
+^[[2mopenwrt-series-applies>^[[0m        Last 25 log lines:
+^[[2mopenwrt-series-applies>^[[0m        > patching file target/linux/bcm4908/image/Makefile
+^[[2mopenwrt-series-applies>^[[0m        > patching file target/linux/bcm4908/image/asus_rt-ac86u/rom/etc/image_ident
+^[[2mopenwrt-series-applies>^[[0m        > patching file target/linux/bcm4908/image/asus_rt-ac86u/rom/etc/image_version
+^[[2mopenwrt-series-applies>^[[0m        > applying 0004-bcm63xx-cfe-add-board-files-kept-beside-the-package.patch
+^[[2mopenwrt-series-applies>^[[0m        > patching file package/kernel/bcm63xx-cfe/Makefile
+^[[2mopenwrt-series-applies>^[[0m        > applying 0005-bcm4908-enable-pcie.patch
+^[[2mopenwrt-series-applies>^[[0m        > patching file target/linux/bcm4908/Makefile
+^[[2mopenwrt-series-applies>^[[0m        > patching file target/linux/bcm4908/config-6.18
+^[[2mopenwrt-series-applies>^[[0m        > patching file target/linux/bcm4908/patches-6.18/312-arm64-dts-broadcom-bcm4908-add-PCIe-controllers.patch
+^[[2mopenwrt-series-applies>^[[0m        > patching file target/linux/bcm4908/patches-6.18/810-PCI-brcmstb-map-BCM4908-inbound-windows-through-UBUS.patch
+^[[2mopenwrt-series-applies>^[[0m        > patching file target/linux/bcm4908/patches-6.18/816-PCI-brcmstb-unmask-the-BCM4908-interrupts-in-CPU_INTR1.patch
+^[[2mopenwrt-series-applies>^[[0m        > patching file target/linux/bcm4908/patches-6.18/313-arm64-dts-broadcom-bcmbca-rt-ac86u-enable-PCIe.patch
+^[[2mopenwrt-series-applies>^[[0m        > applying 0006-bcm4908-rt-ac86u-enable-wi-fi.patch
+^[[2mopenwrt-series-applies>^[[0m        > patching file target/linux/bcm4908/base-files/lib/preinit/81_brcmfmac_nvram
+^[[2mopenwrt-series-applies>^[[0m        > patching file target/linux/bcm4908/config-6.18
+^[[2mopenwrt-series-applies>^[[0m        > patching file target/linux/bcm4908/image/Makefile
+^[[2mopenwrt-series-applies>^[[0m        > applying 0007-bcm4908-rt-ac86u-add-usb-and-leds.patch
+^[[2mopenwrt-series-applies>^[[0m        > patching file target/linux/bcm4908/base-files/etc/board.d/01_leds
+^[[2mopenwrt-series-applies>^[[0m        > patching file target/linux/bcm4908/patches-6.18/314-arm64-dts-broadcom-bcmbca-rt-ac86u-add-USB-and-LEDs.patch
+^[[2mopenwrt-series-applies>^[[0m        > applying 0008-mac80211-brcmfmac-enable-2.4-ghz-vht-on-bcm4366.patch
+^[[2mopenwrt-series-applies>^[[0m        > patching file package/kernel/mac80211/Makefile
+^[[2mopenwrt-series-applies>^[[0m        > Hunk #1 FAILED at 12.
+^[[2mopenwrt-series-applies>^[[0m        > 1 out of 1 hunk FAILED -- saving rejects to file package/kernel/mac80211/Makefile.rej
+^[[2mopenwrt-series-applies>^[[0m        > patching file package/kernel/mac80211/patches/brcm/880-wifi-brcmfmac-enable-2.4-GHz-VHT-on-BCM4366-before-AP-bring-up.patch
+^[[2mopenwrt-series-applies>^[[0m        > does not apply to this OpenWrt tree without fuzz, rebase it: 0008-mac80211-brcmfmac-enable-2.4-ghz-vht-on-bcm4366.patch
+^[[2mopenwrt-series-applies>^[[0m        For full logs, run:
+^[[2mopenwrt-series-applies>^[[0m          ^[[1mnix log /nix/store/3wgchy0rrd2ba67vkryrad0qm6hrvhhn-openwrt-series-applies.drv^[[0m^[[0m
+WARNING:nix_fast_build.build:build openwrt-series-applies exited with 1 (attempt 1/1)
+^[[2mopenwrt-shipped-defaults>^[[0m ^[[35;1mwarning:^[[0m unknown setting 'lazy-trees'^[[0m
+ERROR:nix_fast_build:Failed attributes: .#checks.aarch64-linux.openwrt-series-applies
+LOG
+run_report "$d" "Maintenance: flake.lock update failed (check-error)"
+check "the excerpt opens on the failing builder's error" "openwrt-series-applies> error: Cannot build '/nix/store/3wgchy0rrd2ba67vkryrad0qm6hrvhhn-openwrt-series-applies.drv'." "$(first_error "$d" | head -1)"
+check "the excerpt carries the builder's verdict" "1" "$(first_error "$d" | grep -c 'Hunk #1 FAILED at 12\.$')"
+check "the excerpt ends on the builder's last line" "openwrt-series-applies>        > does not apply to this OpenWrt tree without fuzz, rebase it: 0008-mac80211-brcmfmac-enable-2.4-ghz-vht-on-bcm4366.patch" "$(first_error "$d" | tail -1)"
+
+d="$WORK/t24j"
+report_fixture "$d" '[]'
+cp "$WORK/t11f/build.log" "$d/build.log"
+run_report "$d" "Update proton-ge 1 -> 2: source-not-found"
+check "a builder's own error line beside Nix's block does not open the excerpt" "error: Cannot build '/nix/store/bpdbvak1dnsf2zki2g5805lp987pxjbf-source.drv'." "$(first_error "$d" | head -1)"
+check "the excerpt ends on the builder's verdict" "       > error: cannot download source from any mirror" "$(first_error "$d" | tail -1)"
+
+d="$WORK/t24k"
+report_fixture "$d" '[]'
+cp "$WORK/t11g/build.log" "$d/build.log"
+run_report "$d" "Update eden 1 -> 2: eval-error"
+check "an evaluation error's excerpt ends on the last line of its trace" "            6|   version =" "$(first_error "$d" | tail -1)"
 
 echo "Test 25: sync.sh writes the callers and deletes retired copies, except a custom updater; a first-party repo carries no Update caller"
 SYNC="$STD/sync.sh"
@@ -1783,6 +2082,20 @@ sed -i 's|echo "curl: (6) Could not resolve host: upstream.example"|echo "error:
 retry 600 --reset-tree
 check "a real failure is not retried" "1" "$(wc -l <"$d/count" | tr -d ' ')"
 check "and keeps its exit code" "1" "$RC"
+cat >"$d/updater.sh" <<UPD
+echo "attempt" >>"\$COUNT"
+cat "$WORK/t11k/rate-limited.log"
+exit 1
+UPD
+with_escapes >"$WORK/t11k/rate-limited.log" <<'LOG'
+^[[2mpackage-scx-git-full>^[[0m ^[[31;1merror:^[[0m Cannot build '^[[35;1m/nix/store/qw1m8jnzy32gkqxk23zsb8n93bcwk4k9-libbpf-linux-types-u128.patch.drv^[[0m'.^[[0m
+^[[2mpackage-scx-git-full>^[[0m        Reason: ^[[31;1mbuilder failed with exit code 1^[[0m.^[[0m
+^[[2mpackage-scx-git-full>^[[0m        > curl: (22) The requested URL returned error: 429
+^[[2mpackage-scx-git-full>^[[0m        > error: cannot download libbpf-linux-types-u128.patch from any mirror
+ERROR:nix_fast_build:Failed attributes: .#checks.aarch64-linux.package-scx-git-full
+LOG
+retry 600
+check "a GitHub 429 under the prefix nix-fast-build writes is retried" "3" "$(wc -l <"$d/count" | tr -d ' ')"
 
 echo "Test 30: the run judged is the newest own run that did work, and a stopped schedule is named"
 pick() {
@@ -2496,6 +2809,24 @@ check "one repo that cannot be read does not stop the sweep" "0 " "$? $(tr '\n' 
 check "it is named as unread, with the error" "1" "$(grep -c '^- unreadable: unread on this sweep (HTTP 502: Server Error)$' "$d/body")"
 check "and the sweep goes on to the next repo" "1" "$(grep -c '^- red: ci.yml = failure$' "$d/body")"
 check "the issue carries the time of its sweep" "1" "$(grep -cE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}' "$d/body")"
+
+echo "Test 46: the reports name the step that failed, a job that sent no log is runner-lost, and that run is dispatched once more"
+mwf="$standard_root/.github/workflows/package-maintenance.yml"
+uwf="$standard_root/.github/workflows/package-update.yml"
+check "each stage of the Maintenance refresh names its class" "6" "$(grep -cE 'stage="[^"]+" class=[a-z-]+$' "$mwf")"
+check "Maintenance classifies with the class of the step that failed" "1" "$(grep -cF "classify-build-failure.sh\" /tmp/lock-build.log \"\$STEP_CLASS\"" "$mwf")"
+check "Update classifies as an update, with the class of the step that failed" "1" "$(grep -cF "classify-build-failure.sh\" --update /tmp/update.log \"\$ERROR_TYPE\"" "$uwf")"
+check "the Update title carries the classifier's class" "1" "$(grep -cF "title=\"Update \$pkg\$versions: \$FAIL_CLASS\"" "$uwf")"
+check "a Maintenance job whose runner is alive always sends a log" "2" "$(grep -cF "run: touch \"\$LOG\"" "$mwf")"
+check "an Update verify job whose runner is alive always sends a log" "1" "$(grep -cF "run: touch \"\$LOG\"" "$uwf")"
+check "a Maintenance job that failed and sent no log is runner-lost" "1" "$(grep -cE '^ +echo "runner-lost: ' "$mwf")"
+check "an Update verify job that failed and sent no log is runner-lost" "1" "$(grep -cE '^ +echo "runner-lost: ' "$uwf")"
+check "a lost Maintenance runner dispatches its run once more, and the retry dispatches nothing" "2" "$(grep -cE "runner-lost' && github.event_name != 'repository_dispatch'|event_type=maintenance-retry$" "$mwf")"
+check "a lost Update runner dispatches its run once more, and the retry dispatches nothing" "2" "$(grep -cE "runner-lost' && github.event_name != 'repository_dispatch'|event_type=update-retry$" "$uwf")"
+check "a dispatched retry passes the Maintenance cadence" "1" "$(grep -cF "[ \"\$EVENT\" = repository_dispatch ]" "$mwf")"
+check "a dispatched retry passes the Update cadence" "1" "$(grep -cF "[ \"\$EVENT\" = repository_dispatch ]" "$uwf")"
+check "the Maintenance caller starts the retry" "1" "$(grep -cF 'types: [maintenance-retry]' "$standard_root/callers/maintenance.yml")"
+check "the Update caller starts the retry" "1" "$(grep -cF 'types: [update-retry]' "$standard_root/callers/update.yml")"
 
 echo
 echo "------------------------------------------"

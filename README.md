@@ -317,8 +317,8 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `flake-modules/base.nix` | *(imported, not synced)* | The shared flakeModule |
 | `synced-files.json` | *(the map itself)* | Consumer path to canonical file, or `null` for a retired copy that must be absent: the one map `sync.sh` reads and `std-conformance` and `std-no-retired-copies` enforce |
 | `callers/ci.yml` | `.github/workflows/ci.yml` | Triggers, permissions and concurrency of CI, passing the `RECLAIM_DISK` repository variable (`on` or `off`; unset is `off`, anything else fails the run); calls `package-ci.yml@release` |
-| `callers/update.yml` | `.github/workflows/update.yml`, except in a first-party repo (upstream type `none`), which carries none | The Update trigger, one cron for Sunday and one for the other days, queued with Maintenance in the `writes-default-branch` concurrency group so the two writers of the default branch never push over each other; the job's condition reads the `UPDATE_CADENCE` repository variable (`daily` or `weekly`; unset is `daily`), so a day it does not run starts no runner, and passes it on (anything else fails the Sunday run); calls `package-update.yml@release` |
-| `callers/maintenance.yml` | `.github/workflows/maintenance.yml` | The Maintenance trigger, one cron for Sunday, one for Wednesday and one for the other days, in the `writes-default-branch` group it shares with Update; the job's condition reads the `MAINTENANCE_CADENCE` repository variable (`daily`, `biweekly` or `weekly`; unset is `weekly`), so a day it does not run starts no runner, and passes it on (anything else fails the Sunday run) |
+| `callers/update.yml` | `.github/workflows/update.yml`, except in a first-party repo (upstream type `none`), which carries none | The Update trigger, one cron for Sunday and one for the other days, and the `update-retry` dispatch a run sends once when a runner was lost, queued with Maintenance in the `writes-default-branch` concurrency group so the two writers of the default branch never push over each other; the job's condition reads the `UPDATE_CADENCE` repository variable (`daily` or `weekly`; unset is `daily`), so a day it does not run starts no runner, and passes it on (anything else fails the Sunday run); calls `package-update.yml@release` |
+| `callers/maintenance.yml` | `.github/workflows/maintenance.yml` | The Maintenance trigger, one cron for Sunday, one for Wednesday and one for the other days, and the `maintenance-retry` dispatch a run sends once when a runner was lost, in the `writes-default-branch` group it shares with Update; the job's condition reads the `MAINTENANCE_CADENCE` repository variable (`daily`, `biweekly` or `weekly`; unset is `weekly`), so a day it does not run starts no runner, and passes it on (anything else fails the Sunday run) |
 | `.github/workflows/package-ci.yml` | *(reusable, not synced)* | Archetype-blind CI: every declared system evaluated with import from derivation forbidden, then every output built on a runner per declared system |
 | `.github/workflows/package-update.yml` | *(reusable, not synced)* | The update, verified on every declared system before it pushes |
 | `.github/workflows/package-maintenance.yml` | *(reusable, not synced)* | `flake.lock` refresh on the repo's cadence: heal probe, every declared system evaluated, the checks built on a runner per declared system, pushed only if all are green |
@@ -1092,14 +1092,18 @@ either way. Mark a deliberate exception on the same line with `pipefail-safe`.
 Rolling inputs break in classes, and every class is either fenced or NAMED:
 update verification builds and the updater's check suite run with
 `--keep-going`, so one red run enumerates every failing dependency instead of
-fix-one-discover-next; every failure issue carries a machine class
-(`transient-infra`, `eval-error`, `compile-error`, `sandbox-download`,
-`setup-hook-error`, `upstream-rerelease-hash-mismatch`, `nixpkgs-package-drop`,
-`missing-python-dep`, `requirements-coverage`,
-`python-metadata-version-mismatch`, `substitution-pattern-drift`,
-`import-from-derivation`, or an honest
-`unclassified`) plus the failed attributes of every runner and the failed
-derivations (`classify-build-failure.sh`); temporary divergences
+fix-one-discover-next; every failure issue carries a machine class plus the
+failed attributes of every runner and the failed derivations
+(`classify-build-failure.sh`). The step that failed gives the class
+(`eval-error`, `build-error`, `check-error` when only checks failed and no
+package, `updater-error`, `runner-error` when a setup step failed, `runner-lost`
+when a failed job sent no log), and a log pattern only refines it
+(`transient-infra`, `source-not-found`, `compile-error`, `sandbox-download`,
+`setup-hook-error`, `upstream-rerelease-hash-mismatch`, in an update
+`updater-missed-hash`, `nixpkgs-package-drop`, `missing-python-dep`,
+`requirements-coverage`, `python-metadata-version-mismatch`,
+`substitution-pattern-drift`, `import-from-derivation`); `unclassified` is left
+to a caller that names no step, such as a retry; temporary divergences
 bridge nixpkgs regressions, missing dependencies, and pins, and remove
 themselves once they stop doing any work; and the weekly Fleet CI watch
 (standard repo only) keeps one open issue naming any consumer with an open
@@ -1118,13 +1122,24 @@ one (`path '...' is not valid`): the same revision re-runs green, so it is never
 a repo defect to chase. It is read only from lines of the derivations that
 failed and from Nix's own lines, never from a warning Nix retried past, so a
 mirror that refused before another served the file, or a substituter that
-recovered, cannot make a real failure transient. It is the one thing every retry
+recovered, cannot make a real failure transient. nix-fast-build prefixes every
+line with the attribute it builds, so its streamed lines no longer say which
+derivation wrote them: of a failed attribute only Nix's own error blocks are
+read. It is the one thing every retry
 retries on: CI, Maintenance, Update and its verify build all run through
 `retry-transient.sh` (`tests/run.sh` Test 29). The Update retry starts again from
 the checked-out tree with empty step outputs, so a retry never reads a failed
 attempt's rewrite as already up to date, and no retry starts unless it fits the
 job's time budget, so retrying cannot run a job past its timeout and lose its
 report.
+
+A job whose runner is lost runs no later step, so it sends no log. Every job
+that feeds a report therefore keeps its log on any failure, an empty one when no
+step wrote it, and a failed job that sent none is `runner-lost`. Nothing inside
+the run can retry it, so the report files the issue and dispatches the run once
+more as a `repository_dispatch` (`update-retry` or `maintenance-retry`, which
+each caller listens for); a run that is that retry dispatches nothing, and its
+success closes the issue.
 
 ## Temporary divergences from nixpkgs (self-healing)
 
@@ -1440,8 +1455,10 @@ plus a `CHANGELOG.md`).
   `std-no-retired-copies` refuses one.
 - An issue opens with a Cause section: the log line that named its class (for
   `missing-python-dep` the dependency the check found missing, for
-  `setup-hook-error` the hook's own `die` message), ahead of the first error
-  and the log tail.
+  `setup-hook-error` the hook's own `die` message, for `eval-error` the last
+  `error:` line of the trace, for `source-not-found` the URL the builder
+  tried), ahead of the first error and the log tail. The first error is the
+  failing builder's block from Nix, ending on the builder's last lines.
 - A private repo past its included Actions minutes cannot report anything:
   GitHub refuses to start every job, the report job too. `fleet-audit` names
   such a run as refused at the spending limit; the weekly Fleet CI watch runs

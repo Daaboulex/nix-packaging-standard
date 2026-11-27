@@ -289,19 +289,25 @@ if [ -z "$VARIANT_ASSETS" ] && [ "$TRACK_ONLY" != "true" ] &&
   while IFS= read -r subpackage; do
     SUBPACKAGE_ARGS+=(--subpackage "$subpackage")
   done < <(echo "$CONFIG" | jq -r '.subpackages // [] | .[]')
+  NIX_UPDATE_FAILED=no
   if ! $NIX_UPDATE --flake default --override-filename "$VERSION_FILE" "${SUBPACKAGE_ARGS[@]}" 2>&1 | tee "$NIX_UPDATE_LOG"; then
+    NIX_UPDATE_FAILED=yes
+  fi
+  SEEN_VERSION=$(grep -m1 -oP '^Update \S+ -> \K\S+' "$NIX_UPDATE_LOG" || true)
+  rm -f "$NIX_UPDATE_LOG"
+  if [ -n "$SEEN_VERSION" ]; then
+    output "new_version" "$SEEN_VERSION"
+  fi
+  if [ "$NIX_UPDATE_FAILED" = yes ]; then
     err "nix-update failed"
     output "updated" "false"
-    output "error_type" "build-error"
+    output "error_type" "updater-error"
     exit 1
   fi
   NEW_VERSION=$(grep -oP "(?<![A-Za-z_])${VERSION_ATTR_RE}\s*[?=]\s*\"\K[^\"]+" \
     "$VERSION_FILE" 2>/dev/null | head -1 || true)
-  SEEN_VERSION=$(grep -m1 -oP '^Update \S+ -> \K\S+' "$NIX_UPDATE_LOG" || true)
-  rm -f "$NIX_UPDATE_LOG"
   if [ "$NEW_VERSION" = "$CURRENT_VERSION" ] && [ -n "$SEEN_VERSION" ] && [ "$SEEN_VERSION" != "$CURRENT_VERSION" ]; then
     err "nix-update found $SEEN_VERSION but $VERSION_FILE still says $CURRENT_VERSION: it rewrote nothing in the file the version lives in"
-    output "new_version" "$SEEN_VERSION"
     output "updated" "false"
     output "error_type" "config-error"
     exit 1

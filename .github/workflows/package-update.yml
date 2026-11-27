@@ -46,7 +46,7 @@ jobs:
             exit 1
             ;;
           esac
-          if [ "$EVENT" = workflow_dispatch ]; then run=yes; fi
+          if [ "$EVENT" = workflow_dispatch ] || [ "$EVENT" = repository_dispatch ]; then run=yes; fi
           echo "cadence=$CADENCE dow=$dow event=$EVENT -> run=$run"
           echo "run=$run" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -204,6 +204,10 @@ jobs:
           bash "$STD/retry-transient.sh" "$LOG" 13200 -- \
             bash "$STD/build-checks.sh" "$SYS"
 
+      - name: Keep an empty log when the build never started, so only a job whose runner was lost sends none
+        if: failure()
+        run: touch "$LOG"
+
       - name: Keep the build log for the report
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -219,6 +223,7 @@ jobs:
     env:
       SUCCEEDED: ${{ needs.update.outputs.exit_code == '0' && (needs.verify.result == 'success' || needs.verify.result == 'skipped') }}
       FAILED: ${{ needs.update.outputs.exit_code == '1' || needs.update.outputs.stalled == 'true' || needs.verify.result == 'failure' }}
+      ERROR_TYPE: ${{ (needs.verify.result == 'failure' && 'build-error') || needs.update.outputs.error_type || (needs.update.outputs.stalled == 'true' && 'stalled') || 'updater-error' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -295,30 +300,36 @@ jobs:
 
       - name: Gather the failure logs
         if: env.FAILED == 'true'
+        env:
+          VERIFY: ${{ needs.verify.result }}
         run: |
           : >/tmp/update.log
           found=0
+          verify_logs=0
           for f in /tmp/logs/log-*.log; do
             [ -f "$f" ] || continue
             found=1
+            [ "$f" = /tmp/logs/log-update.log ] || verify_logs=1
             printf '=== %s\n' "$(basename "$f" .log)" >>/tmp/update.log
             cat "$f" >>/tmp/update.log
           done
           if [ "$found" = 0 ]; then
             echo "No log reached the report: the download found no log-*.log file." >>/tmp/update.log
           fi
+          if [ "$VERIFY" = failure ] && [ "$verify_logs" = 0 ]; then
+            echo "runner-lost: no log reached the report from the verify job that failed, so its runner stopped before the job could keep one" >>/tmp/update.log
+          fi
 
       - name: Classify the failure
         id: classify
         if: env.FAILED == 'true'
-        run: bash "$STD/classify-build-failure.sh" /tmp/update.log
+        run: bash "$STD/classify-build-failure.sh" --update /tmp/update.log "$ERROR_TYPE"
 
       - name: Report the failure
         id: report
         if: env.FAILED == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          ERROR_TYPE: ${{ (needs.verify.result == 'failure' && 'build-error') || needs.update.outputs.error_type || (needs.update.outputs.stalled == 'true' && 'stalled') || '' }}
           OTHER_SYSTEM_FAILED: ${{ needs.verify.result == 'failure' }}
           OLD_VERSION: ${{ needs.update.outputs.old_version }}
           NEW_VERSION: ${{ needs.update.outputs.new_version }}
@@ -335,13 +346,9 @@ jobs:
           if [ -n "$OLD_VERSION$NEW_VERSION" ]; then
             versions=" ${OLD_VERSION:-(current version not read)} -> ${NEW_VERSION:-(target version not read)}"
           fi
-          title_class="$error_type"
-          if [ -n "$FAIL_CLASS" ] && [ "$FAIL_CLASS" != unclassified ]; then
-            title_class="$FAIL_CLASS"
-          fi
-          title="Update $pkg$versions: $title_class"
+          title="Update $pkg$versions: $FAIL_CLASS"
           if [ -z "$versions" ]; then
-            title="Update $pkg: $title_class (the updater reported no version)"
+            title="Update $pkg: $FAIL_CLASS (the updater reported no version)"
           fi
           case "$error_type" in
           remirror-needed) heading="Upstream moved past the mirrored commit, a re-mirror is needed" ;;
@@ -390,6 +397,12 @@ jobs:
           } >/tmp/issue-head.md
           bash "$STD/report-failure.sh" update-failed "Update " "$title" /tmp/issue-head.md /tmp/update.log
           echo "error_type=$error_type" >>"$GITHUB_OUTPUT"
+
+      - name: Run the update once more when a runner was lost, unless this run is that retry
+        if: env.FAILED == 'true' && steps.classify.outputs.class == 'runner-lost' && github.event_name != 'repository_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/$GITHUB_REPOSITORY/dispatches" -f event_type=update-retry
 
       - name: Retire attempt branches that no longer have an open issue, only from the default branch
         if: >-
