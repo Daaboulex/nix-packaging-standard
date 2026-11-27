@@ -628,8 +628,13 @@
             let
               inherit (import ./lib.nix) steamCompatTool;
               fetch =
-                { tag, token, ... }:
-                pkgs.runCommand "fixture-${tag}-${token}" { } ''
+                {
+                  tag,
+                  token,
+                  url,
+                  ...
+                }:
+                pkgs.runCommand "fixture-${tag}-${token}" { inherit url; } ''
                   mkdir -p "$out"
                   touch "$out/proton" "$out/toolmanifest.vdf"
                   echo upstream > "$out/compatibilitytool.vdf"
@@ -649,7 +654,10 @@
                 sources = {
                   version = "GE-Proton11-12";
                   variants = {
-                    x86_64 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+                    x86_64 = {
+                      url = "https://example.invalid/renamed/GE-Proton11-12-x86_64.tar.gz";
+                      hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+                    };
                     aarch64 = "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";
                   };
                   pins."GE-Proton10-34".variants.x86_64 = "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=";
@@ -729,6 +737,12 @@
                 )
                 ++ want "a GE pin's key is the attribute and v<major>" (
                   ge.tools.proton-ge-x86_64.v10.key == "proton-ge-v10"
+                )
+                ++ want "a variant given as url and hash is fetched from that url" (
+                  ge.tools.proton-ge-x86_64.src.url == "https://example.invalid/renamed/GE-Proton11-12-x86_64.tar.gz"
+                )
+                ++ want "a variant given as a bare hash is fetched from assetUrl" (
+                  ge.tools.proton-ge-x86_64.v10.src.url == "https://example.invalid/GE-Proton10-34-x86_64.tar.gz"
                 )
                 ++ want "a pin with no asset for this host is absent from the host's tool" (
                   (ge.tools.proton-ge ? v10) == !onArm

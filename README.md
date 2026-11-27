@@ -289,7 +289,7 @@ without building the closure — eval-only and cheap, even in CI.
 | `drvEvalCheck { pkgs, name?, drv }` | Packages whose closure is not on `cache.nixos.org` and cannot build on a free CI runner (CUDA/ROCm, very large builds). Forces `drv`'s full build-graph evaluation without realizing it; skips with a trivial pass on a system the drv's `meta.platforms` excludes. See the off-CI exception below. |
 | `pythonSitePackagesCheck { pkgs, drv, package, name? }` | First-party python application repos. Proves the BUILT output ships exactly one top-level import package (plus its dist-info) in `site-packages` -- a flat top-level module (`cli.py`, `utils.py`) collides with any other application in a merged environment. See "Python apps: one top-level package" below. |
 | `pristineBinaryCheck { pkgs, package, binaryPath, name? }` | Prebuilt self-reading binaries (embedded resources / appended payloads). Asserts the installed binary is byte-identical to `package.src`, so no fixup phase can silently corrupt it. See "Prebuilt self-reading binaries" below. |
-| `steamCompatTool (pkgs: { attribute, brand, homepage, description, license, sources, majorPattern, buildOf, assetUrl, variantsOf, tokens, fetch? })` | Prebuilt Steam compatibility tools (GE-Proton, Proton-CachyOS, UMU-Proton). Takes the tool's facts as a function of the nixpkgs they are built against and returns `overlay`, the flake's `overlays.default`, written from `prev` because the helper decides its attribute names from the pkgs it is given, and `forPkgs pkgs`: the host's tool attributes with their channel passthrus and the x86_64 payload, every channel of every variant a two-output derivation with a stable vdf key and a display name in the fleet's format, plus `checks.compat-tool-shape`, which builds every pin, and `checks.overlay-applies`, which proves the overlay yields the flake's own derivations. See "Steam compatibility tools" below. |
+| `steamCompatTool (pkgs: { attribute, brand, homepage, description, license, sources, majorPattern, buildOf, assetUrl?, variantsOf, tokens, fetch? })` | Prebuilt Steam compatibility tools (GE-Proton, Proton-CachyOS, UMU-Proton). Takes the tool's facts as a function of the nixpkgs they are built against and returns `overlay`, the flake's `overlays.default`, written from `prev` because the helper decides its attribute names from the pkgs it is given, and `forPkgs pkgs`: the host's tool attributes with their channel passthrus and the x86_64 payload, every channel of every variant a two-output derivation with a stable vdf key and a display name in the fleet's format, plus `checks.compat-tool-shape`, which builds every pin, and `checks.overlay-applies`, which proves the overlay yields the flake's own derivations. See "Steam compatibility tools" below. |
 | `patchAssertions` (a shell string, not a function) | Any `postPatch` that rewrites upstream source with `sed`/`awk` rather than `substituteInPlace --replace-fail`. Prepend it, then assert after every edit with `landed` / `gone` / `present` / `exactly_one` / `landed_soft`. Without it a renamed upstream anchor makes the edit apply to nothing and the package still builds green. See "Patching upstream source" below. |
 | `devStateHook` (a shell string) | The exports that keep every tool's cache and home under the project's `.devshell/`; `base` wires it into the default shell. See "Self-contained dev state" below. |
 | `mkDevShell { pkgs, config } args` | A custom dev shell that cannot get the pin order wrong: the pins, then the hook install, then the caller's own hook. |
@@ -1022,8 +1022,9 @@ against to the tool's facts: `sources` (the rolling release's facts at the top,
 one entry per pinned release under `pins`, between the `# std:rolling` and
 `# std:pins` markers the updater's `majorPattern` rollover writes),
 `majorPattern` read from `.github/update.json` so the helper and the updater
-share one regex, `variantsOf` (how a release names its per-variant hashes),
-`assetUrl`, and `tokens`: upstream's asset token (`x86_64`, `x86_64_v3`,
+share one regex, `variantsOf` (a release's variants, each `{ url, hash }` or a
+bare hash), `assetUrl` (the URL of a bare-hash variant, needed only when one
+exists), and `tokens`: upstream's asset token (`x86_64`, `x86_64_v3`,
 `arm64`, `aarch64`) to the system it runs on, the attribute suffix (`-v3`) and
 the qualifier word (`v3`). The helper returns `overlay`, which the repo exports
 as `flake.overlays.default`, and `forPkgs`, which `perSystem` calls with its
@@ -1280,11 +1281,12 @@ doing any work.
   assets, takes each `<variant>` from `<assetPrefix><tag>-<variant><assetSuffix>`,
   prefetches it unpacked (the exact hash a `fetchzip` yields, root dir stripped),
   and regenerates the `variants` attrset between the `# std:variants-begin` /
-  `# std:variants-end` markers in `sourceFile`. Attribution is by asset URL, so
-  any number of variants converge in one pass and a newly published one is picked
-  up with no config change. `defaultVariant` names the variant whose asset carries
-  no `-<variant>` token (GE-Proton ships `<tag>.tar.gz` for x86_64 next to
-  `<tag>-aarch64.tar.gz`). Pins outside the markers are never rewritten.
+  `# std:variants-end` markers in `sourceFile`, each variant as `{ url, hash }`
+  with the URL it fetched, so the build fetches the file the updater hashed.
+  Attribution is by asset URL, so any number of variants converge in one pass
+  and a newly published one is picked up with no config change. `defaultVariant`
+  names the variant whose asset carries no `-<variant>` token, exactly
+  `<assetPrefix><tag><assetSuffix>`. Pins outside the markers are never rewritten.
 - **`majorPattern`** (an ERE matching the whole version with one group, the
   major line) turns a new upstream major into a pin instead of a loss. When the
   newest tag's group differs from the current version's, the updater copies the

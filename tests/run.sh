@@ -723,10 +723,55 @@ STUB_CURL_FILE="$STD/tests/fixtures/ge-releases.json" run_update "$d"
 check "run succeeds" "0" "$RC"
 check "version bumped" "GE-Proton11-2" "$(get "$d" new_version)"
 check "two variants regenerated" "2" "$(get "$d" variants)"
-check "untagged asset -> x86_64" "1" "$(grep -c '^    x86_64 = "sha256-[^O]' "$d/sources.nix")"
-check "tagged asset -> aarch64" "1" "$(grep -c '^    aarch64 = "sha256-' "$d/sources.nix")"
+check "untagged asset -> x86_64" "1" "$(grep -A1 '^    x86_64 = {$' "$d/sources.nix" | grep -c '/GE-Proton11-2\.tar\.gz";$')"
+check "tagged asset -> aarch64" "1" "$(grep -A1 '^    aarch64 = {$' "$d/sources.nix" | grep -c '/GE-Proton11-2-aarch64\.tar\.gz";$')"
 check "checksum assets ignored" "0" "$(grep -c 'sha512sum' "$d/sources.nix")"
 check "pins left untouched" "1" "$(grep -c 'sha256-PINPIN' "$d/sources.nix")"
+
+echo "Test 14b: each variant keeps the URL the updater fetched beside its hash"
+d="$WORK/t14b"
+mkdir -p "$d/.github"
+cp "$WORK/t14/.github/update.json" "$d/.github/update.json"
+a="https://example.invalid/GE-Proton11-3/GE-Proton11-3-aarch64.tar.gz"
+x="https://example.invalid/GE-Proton11-3/GE-Proton11-3-x86_64.tar.gz"
+cat >"$d/releases.json" <<JSON
+[ { "tag_name": "GE-Proton11-3", "draft": false, "prerelease": false,
+    "assets": [
+      { "name": "GE-Proton11-3-aarch64.tar.gz", "browser_download_url": "$a" },
+      { "name": "GE-Proton11-3-x86_64.sha512sum", "browser_download_url": "$x.sha512sum" },
+      { "name": "GE-Proton11-3-x86_64.tar.gz", "browser_download_url": "$x" } ] } ]
+JSON
+cat >"$d/sources.nix" <<'NIX'
+{
+  version = "GE-Proton11-2";
+  # std:variants-begin
+  variants = {
+    x86_64 = "sha256-OLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDA=";
+  };
+  # std:variants-end
+}
+NIX
+: >"$d/package.nix"
+: >"$d/.nixflag"
+STUB_CURL_FILE="$d/releases.json" run_update "$d"
+check "run succeeds" "0" "$RC"
+want=$(
+  cat <<NIX
+  # std:variants-begin
+  variants = {
+    aarch64 = {
+      url = "$a";
+      hash = "sha256-$(printf '%s' "$a" | sha256sum | cut -c1-43)=";
+    };
+    x86_64 = {
+      url = "$x";
+      hash = "sha256-$(printf '%s' "$x" | sha256sum | cut -c1-43)=";
+    };
+  };
+  # std:variants-end
+NIX
+)
+check "each variant holds its own asset's URL and hash" "$want" "$(sed -n '/std:variants-begin/,/std:variants-end/p' "$d/sources.nix")"
 
 # ---- Test 15: tagFilter match beyond the first page -------------------------
 # A single-page fetch made a tracked namespace invisible when upstream pushes a

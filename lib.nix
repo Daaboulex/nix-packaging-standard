@@ -391,7 +391,7 @@ rec {
           sources,
           majorPattern,
           buildOf,
-          assetUrl,
+          assetUrl ? null,
           variantsOf,
           tokens,
           fetch ? ({ url, hash, ... }: pkgs.fetchzip { inherit url hash; }),
@@ -429,15 +429,27 @@ rec {
             let
               t = tokens.${token};
               foreign = t.system != hostSystem;
+              variant = (variantsOf releases.${tag}).${token};
             in
             pkgs.stdenvNoCC.mkDerivation {
               pname = "${attribute}${lib.optionalString foreign "-${archOf t.system}"}${t.suffix}";
               version = tag;
-              src = fetch {
-                inherit tag token;
-                url = assetUrl tag token;
-                hash = (variantsOf releases.${tag}).${token};
-              };
+              src = fetch (
+                {
+                  inherit tag token;
+                }
+                // (
+                  if lib.isAttrs variant then
+                    { inherit (variant) url hash; }
+                  else if assetUrl == null then
+                    throw "${attribute}: the ${token} variant of ${tag} is a bare hash and no assetUrl is given to build its URL"
+                  else
+                    {
+                      url = assetUrl tag token;
+                      hash = variant;
+                    }
+                )
+              );
               dontUnpack = true;
               dontConfigure = true;
               dontBuild = true;

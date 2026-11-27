@@ -790,8 +790,8 @@ fi
 # sourceFile. A newly published variant (a future -x86_64_v4) is picked up with
 # no config change; a dropped one disappears. Pins sit outside the markers and
 # are never rewritten. Mutually exclusive with `hashes` (which stays empty).
-# defaultVariant names the variant whose asset carries no `-<variant>` token
-# (GE-Proton ships `<tag>.tar.gz` for x86_64 and `<tag>-aarch64.tar.gz`).
+# defaultVariant names the variant whose asset carries no `-<variant>` token,
+# exactly <assetPrefix><tag><assetSuffix>.
 if [ -n "$VARIANT_ASSETS" ]; then
   if [ "$UPSTREAM_TYPE" != "github-release" ]; then
     err "variantAssets requires upstream.type 'github-release'"
@@ -834,7 +834,8 @@ if [ -n "$VARIANT_ASSETS" ]; then
       output "error_type" "hash-extraction"
       exit 1
     fi
-    VA_BLOCK="${VA_BLOCK}    ${variant} = \"${v_hash}\";"$'\n'
+    printf -v VA_BLOCK '%s    %s = {\n      url = "%s";\n      hash = "%s";\n    };\n' \
+      "$VA_BLOCK" "$variant" "$a_url" "$v_hash"
     VA_COUNT=$((VA_COUNT + 1))
   done < <(echo "$VA_ASSETS" | jq -r '.[] | [.name, .browser_download_url] | @tsv')
   if [ "$VA_COUNT" -eq 0 ]; then

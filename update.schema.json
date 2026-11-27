@@ -281,7 +281,7 @@
         "defaultVariant": {
           "type": "string",
           "pattern": "^[A-Za-z0-9_]+$",
-          "description": "Variant name for the asset that carries no `-<variant>` token, i.e. exactly `<assetPrefix><tag><assetSuffix>` — GE-Proton ships `<tag>.tar.gz` for x86_64 alongside `<tag>-aarch64.tar.gz`. Omit when every asset is variant-tagged."
+          "description": "Variant name for the asset that carries no `-<variant>` token, i.e. exactly `<assetPrefix><tag><assetSuffix>`. Omit when every asset is variant-tagged."
         }
       }
     },
