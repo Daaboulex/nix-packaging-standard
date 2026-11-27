@@ -129,7 +129,7 @@ jobs:
             echo "::error::the updater has exited 2 (transient, retry next run) on ${n} consecutive runs; a permanent failure is hiding behind the transient exit"
             echo "stalled=true" >> "$GITHUB_OUTPUT"
           fi
-      - name: Save the transient-exit streak
+      - name: Save the transient-exit streak under this run's id, since a saved cache is never overwritten and the next run restores the newest
         if: steps.cadence.outputs.run == 'yes'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -194,12 +194,12 @@ jobs:
       - name: Apply the candidate
         run: git apply --index /tmp/candidate/candidate.patch
 
-      - name: Restore the Nix store of the newest earlier run, saved again under this lock
+      - name: Restore the newest Nix store for this runner and save none, since the weekly Maintenance refresh is the one run that saves a store
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/flake.lock', '**/*.nix') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-${{ runner.arch }}-
-          gc-max-store-size-linux: 8G
+          save: false
 
       - name: Build every check for this system, retrying only a transient fetch failure
         run: |

@@ -3402,6 +3402,55 @@ sweep(github, { repo: { owner: 'owner', repo: 'standard' } }).then(
 JS
 node "$d/run.js" "$d/sweep.js" "$gate_runs" >"$d/body" 2>"$d/err"
 check "the fleet watch names it too" "0 1" "$? $(grep -c '^- corecycler: maintenance.yml = failure$' "$d/body")"
+
+echo "Test 59: the weekly Maintenance refresh is the one run that saves a Nix store, under the one key rule every run restores"
+d="$WORK/t59"
+mkdir -p "$d/bin"
+store_steps() {
+  awk '
+    function emit() { printf "%s %s\t%s\t%s\t%s\t%s\n", file, job, key, prefix, save, purge; open = 0 }
+    FNR == 1 { if (open) emit(); file = FILENAME; sub(/.*\//, "", file) }
+    /^  [a-z][a-z-]*:$/ { if (open) emit(); job = $1; sub(/:$/, "", job) }
+    /^      - / && open { emit() }
+    /uses: nix-community\/cache-nix-action@/ { open = 1; key = ""; prefix = ""; save = "true"; purge = "false"; next }
+    open && sub(/^ +primary-key: /, "") { key = $0 }
+    open && sub(/^ +restore-prefixes-first-match: /, "") { prefix = $0 }
+    open && sub(/^ +save: /, "") { save = $0 }
+    open && sub(/^ +purge: /, "") { purge = $0 }
+    END { if (open) emit() }
+  ' "$@"
+}
+steps=$(store_steps "$standard_root"/.github/workflows/package-{ci,update,maintenance}.yml)
+printf 'jobs:\n  a:\n    steps:\n      - uses: nix-community/cache-nix-action@x\n        with:\n          primary-key: k-1\n      - uses: nix-community/cache-nix-action@x\n        with:\n          primary-key: k-2\n' >"$d/twin.yml"
+check "every Nix store cache step keys and restores by one rule, and the rule tells two rules apart" "3 1 2" \
+  "$(wc -l <<<"$steps") $(cut -f2,3 <<<"$steps" | sort -u | wc -l) $(store_steps "$d/twin.yml" | cut -f2 | sort -u | wc -l)"
+check "only the Maintenance verify saves a store, on the day the gate names" \
+  "package-maintenance.yml verify \${{ needs.gate.outputs.store == 'save' }}" "$(awk -F'\t' '$4 != "false" { print $1 " " $4 }' <<<"$steps")"
+check "so a pull request, a push and a tag save none" "false" "$(awk -F'\t' '$1 == "package-ci.yml build" { print $4 }' <<<"$steps")"
+unpermitted=""
+while IFS=$'\t' read -r where _ _ _ purge; do
+  [ "$purge" = true ] || continue
+  wf=${where%% *}
+  if [ "$(grep -c 'actions: write' "$standard_root/.github/workflows/$wf")" = 0 ] || [ "$(grep -c 'actions: write' "$standard_root/callers/${wf#package-}")" = 0 ]; then
+    unpermitted="$unpermitted $wf"
+  fi
+done <<<"$steps"
+check "no step purges a cache that its workflow and caller give no actions: write to delete" "" "$unpermitted"
+awk '/- name: Apply the repository.s cadence$/ { f = 1 } f && /^ +run: \|$/ { r = 1; next } r && $0 != "" && $0 !~ /^          / { exit } r { sub(/^          /, ""); print }' \
+  "$standard_root/.github/workflows/package-maintenance.yml" >"$d/gate.sh"
+cat >"$d/bin/date" <<'SH'
+#!/usr/bin/env bash
+echo "$DOW"
+SH
+chmod +x "$d/bin/date"
+gate() {
+  : >"$d/out"
+  PATH="$d/bin:$PATH" DOW=$1 CADENCE=$2 EVENT=$3 GITHUB_OUTPUT="$d/out" bash "$d/gate.sh" >/dev/null
+  printf '%s %s' "$?" "$(tr '\n' ' ' <"$d/out")"
+}
+check "a daily refresh on a weekday runs and restores the store" "0 run=yes store=restore " "$(gate 3 daily schedule)"
+check "the Sunday refresh saves it" "0 run=yes store=save " "$(gate 7 daily schedule)"
+check "a refresh dispatched on a weekday saves none" "0 run=yes store=restore " "$(gate 2 weekly workflow_dispatch)"
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

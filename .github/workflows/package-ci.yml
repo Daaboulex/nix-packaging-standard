@@ -92,17 +92,13 @@ jobs:
             keep-outputs = true
             keep-derivations = true
 
-      - name: Cache the Nix store
+      - name: Restore the newest Nix store for this runner and save none, since the weekly Maintenance refresh is the one run that saves a store
         id: nix-cache
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/flake.lock', '**/*.nix') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-${{ runner.arch }}-
-          gc-max-store-size-linux: 8G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-${{ runner.arch }}-
-          purge-last-accessed: P1DT12H
-          purge-primary-key: never
+          save: false
 
       - name: Reclaim runner disk for large source builds
         if: inputs.reclaim-disk == 'on'
@@ -145,7 +141,7 @@ jobs:
             echo "::error::$B derivations would build from source -- a flake.lock bump moved far ahead of cache.nixos.org (runaway that would risk the 6h timeout). Investigate the lock, or wait for cache.nixos.org to catch up, before rerunning."
             exit 1
           elif [ "$B" -gt 500 ]; then
-            echo "::warning::$B derivations build from source -- a flake.lock bump moved ahead of cache.nixos.org. The store cache absorbs it after this run."
+            echo "::warning::$B derivations build from source -- a flake.lock bump moved ahead of cache.nixos.org."
           fi
 
       - name: Build the checks this push changed, or every check when the commit before it is not proven

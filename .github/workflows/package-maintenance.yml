@@ -17,6 +17,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       run: ${{ steps.c.outputs.run }}
+      store: ${{ steps.c.outputs.store }}
     steps:
       - name: Apply the repository's cadence
         id: c
@@ -35,8 +36,10 @@ jobs:
             ;;
           esac
           if [ "$EVENT" = workflow_dispatch ] || [ "$EVENT" = repository_dispatch ]; then run=yes; fi
-          echo "cadence=$CADENCE dow=$dow event=$EVENT -> run=$run"
+          if [ "$dow" = 7 ]; then store=save; else store=restore; fi
+          echo "cadence=$CADENCE dow=$dow event=$EVENT -> run=$run store=$store"
           echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "store=$store" >> "$GITHUB_OUTPUT"
 
   prepare:
     needs: gate
@@ -157,7 +160,7 @@ jobs:
           path: ${{ env.LOG }}
 
   verify:
-    needs: prepare
+    needs: [gate, prepare]
     if: needs.prepare.outputs.changed == 'true'
     strategy:
       fail-fast: false
@@ -186,12 +189,13 @@ jobs:
       - name: Apply the candidate
         run: git apply --index /tmp/candidate/candidate.patch
 
-      - name: Restore the Nix store of the newest earlier run, saved again under this lock
+      - name: Restore the newest Nix store for this runner, and on the weekly refresh save it under this lock as the one store per system that the week's runs restore
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/flake.lock', '**/*.nix') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-${{ runner.arch }}-
-          gc-max-store-size-linux: 8G
+          save: ${{ needs.gate.outputs.store == 'save' }}
+          gc-max-store-size-linux: 4G
 
       - name: Build every check for this system, retrying only a transient fetch failure
         run: |

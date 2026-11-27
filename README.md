@@ -526,6 +526,21 @@ there (declared == built, per system *and* per package). There
 is no per-repo build target, no archetype conditional, and no binary-cache token:
 `cache.nixos.org` substitutes every unmodified dependency for free.
 
+The Nix store of each declared system is kept in the Actions cache under one
+key rule, the runner's system and a hash of `flake.lock` and every `*.nix`
+file, and every build and verify job restores the newest one for its runner.
+Only the Maintenance verify of the weekly refresh (the Sunday run, UTC) saves
+one: it builds every check of the refreshed lock on every declared system,
+which is the store the week's pushes, pull requests and updates restore.
+[GitHub](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching)
+keeps 10 GB of cache per repository and past it evicts the least recently used
+cache without a word, removes a cache nobody restored for 7 days, never
+overwrites a saved one, and deletes one only for a token with `actions: write`,
+which no caller grants. So last week's store stays beside this week's until 7
+days after the refresh restored it, and the refresh trims the store to 4 GiB
+before it saves it: at the 0.23 to 0.48 compression measured on 2026-11-27, two
+stores per system stay clearly under the limit.
+
 A dry run before the build counts the derivations that will build from source, so
 a lock bump far ahead of `cache.nixos.org` stops before it meets the timeout. A
 check that does not evaluate for that count is named in a warning and left out of
@@ -1514,9 +1529,10 @@ plus a `CHANGELOG.md`).
   the verify job is skipped and nothing is pushed, while the rehearsal below
   still runs. Once it passes, an open `maintenance` issue is closed, because
   the lock it asked for is already on the branch.
-- Every verify job restores the Nix store of the newest earlier run for its
-  runner and saves it again under the new lock, so CI on the pushed commit
-  starts from the store the verification built.
+- Every verify job restores the newest Nix store for its runner. The
+  Maintenance verify of the weekly refresh saves it again under the refreshed
+  lock, so CI on the pushed commit and the week's updates start from the store
+  that verification built; no other run saves one (see CI model).
 - Beside the verify jobs, Maintenance rehearses the update: a fresh
   `ubuntu-latest` runner takes the refreshed lock, restores no Nix store and
   runs `update.sh --rehearse` from the standard that lock pins, and the lock is
