@@ -282,6 +282,24 @@
                 lib.concatMapStringsSep "\n" (f: "echo ${lib.escapeShellArg f}") failures + "\nexit 1\n"
             );
 
+          checks.std-temporary-fixes-fixtures =
+            let
+              on = fixture: (baseOn fixture [ system ]).${system}.std-temporary-fixes;
+            in
+            pkgs.runCommand "std-temporary-fixes-fixtures"
+              {
+                owned = on ./tests/fixtures/consumer-fix-owns;
+                named = pkgs.testers.testBuildFailure (on ./tests/fixtures/consumer-fix-named);
+              }
+              ''
+                if ! grep -qF 'docs/notes.md:3: names overlays/linked.nix' "$named/testBuildFailure.log"; then
+                  echo "  FAIL a doc naming a fix failed std-temporary-fixes for another reason:"
+                  cat "$named/testBuildFailure.log"
+                  exit 1
+                fi
+                touch "$out"
+              '';
+
           checks.std-detect-fixtures =
             let
               shellPlanted = pkgs.writeTextDir "planted.bash" ''

@@ -355,6 +355,23 @@ in
               fi
               touch "$out"
             '';
+
+        std-temporary-fixes =
+          let
+            fixes = lib.optionals (builtins.pathExists (src + "/overlays")) (
+              lib.filter (lib.hasSuffix ".nix") (builtins.attrNames (builtins.readDir (src + "/overlays")))
+            );
+            unit = name: [ "overlays/${name}" ] ++ (import (src + "/overlays/${name}")).meta.owns or [ ];
+          in
+          pkgs.runCommand "std-temporary-fixes" { } ''
+            cd ${src}
+            bad=0
+            ${lib.concatMapStrings (name: ''
+              find . -type f -printf '%P\0' | bash ${../scripts/check-fix-unit.sh} ${lib.escapeShellArgs (unit name)} || bad=1
+            '') fixes}
+            [ "$bad" = 0 ] || exit 1
+            touch "$out"
+          '';
       };
     };
 }

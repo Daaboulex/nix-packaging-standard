@@ -87,6 +87,11 @@ need jq
   echo "fleet-audit: could not read upstream.type enum from schema" >&2
   exit 2
 }
+scratch=$(mktemp -d) || {
+  echo "fleet-audit: could not create a scratch directory under ${TMPDIR:-/tmp}" >&2
+  exit 2
+}
+trap 'rm -rf "$scratch"' EXIT
 
 # --- resolve the consumer set ------------------------------------------------
 declare -a CONSUMERS=()
@@ -123,11 +128,11 @@ gh_slug() {
 # ============================================================================
 if [ "$DO_LOCAL" -eq 1 ]; then
   hdr "byte-conformance (sync.sh --check)"
-  if PKG_REPOS_DIR="$REPOS_DIR" bash "$STD/sync.sh" --check "${TARGETS[@]}" >/tmp/fa-sync.log 2>&1; then
+  if PKG_REPOS_DIR="$REPOS_DIR" bash "$STD/sync.sh" --check "${TARGETS[@]}" >"$scratch/sync.log" 2>&1; then
     ok "all synced files byte-match the canonical"
   else
     red "sync.sh --check reported drift:"
-    sed 's/^/      /' /tmp/fa-sync.log
+    sed 's/^/      /' "$scratch/sync.log"
   fi
 
   hdr "local pre-commit hooks are live"
@@ -176,11 +181,11 @@ if [ "$DO_LOCAL" -eq 1 ]; then
   for r in "${CONSUMERS[@]}"; do has_remote "$r" && meta_targets+=("$r"); done
   if [ "${#meta_targets[@]}" -eq 0 ]; then
     warn "no repos with a remote to check metadata against"
-  elif PKG_REPOS_DIR="$REPOS_DIR" GH_OWNER="$OWNER" bash "$STD/sync-meta.sh" --check "${meta_targets[@]}" >/tmp/fa-meta.log 2>&1; then
+  elif PKG_REPOS_DIR="$REPOS_DIR" GH_OWNER="$OWNER" bash "$STD/sync-meta.sh" --check "${meta_targets[@]}" >"$scratch/meta.log" 2>&1; then
     ok "GitHub description, topics and labels match the standard"
   else
     red "sync-meta.sh --check reported drift:"
-    sed 's/^/      /' /tmp/fa-meta.log
+    sed 's/^/      /' "$scratch/meta.log"
   fi
 
   hdr "per-repo: archetype, metadata completeness, license, first-party discipline"
@@ -197,9 +202,9 @@ if [ "$DO_LOCAL" -eq 1 ]; then
       continue
     fi
     if command -v check-jsonschema >/dev/null 2>&1; then
-      if ! check-jsonschema --schemafile "$SCHEMA" "$uj" >/tmp/fa-schema.log 2>&1; then
+      if ! check-jsonschema --schemafile "$SCHEMA" "$uj" >"$scratch/schema.log" 2>&1; then
         red "$repo: update.json fails schema"
-        sed 's/^/      /' /tmp/fa-schema.log
+        sed 's/^/      /' "$scratch/schema.log"
       fi
     fi
     # archetype = upstream.type, must be a known value
@@ -284,9 +289,9 @@ if [ "$DO_LOCAL" -eq 1 ]; then
   # check), not the per-system boilerplate every declared system carries.
   if [ "$NIX_MODE" != "skip" ]; then
     hdr "per-repo: architecture honesty (declared systems vs documented drops)"
-    canon_json="$(nix eval --json "$STD#formatter" --apply 'builtins.attrNames' 2>/tmp/fa-arch.log)"
+    canon_json="$(nix eval --json "$STD#formatter" --apply 'builtins.attrNames' 2>"$scratch/arch.log")"
     if [ -z "$canon_json" ]; then
-      red "architecture: could not read canonical arch set from the standard ($(tr '\n' ' ' </tmp/fa-arch.log))"
+      red "architecture: could not read canonical arch set from the standard ($(tr '\n' ' ' <"$scratch/arch.log"))"
     else
       mapfile -t CANON < <(jq -r '.[]' <<<"$canon_json")
       for repo in "${CONSUMERS[@]}"; do
@@ -466,13 +471,23 @@ if [ "$DO_LOCAL" -eq 1 ]; then
       for f in "${ovfiles[@]}"; do
         name="$(basename "$f" .nix)"
         m="$(nix eval --json --impure --expr \
-          "let v = import $f; in { r = v.meta.reason; a = v.meta.added; d = v ? dropWhen; b = v ? dropWhenBuilds; o = v ? overlay; }" \
+          "let v = import $f; in { r = v.meta.reason; a = v.meta.added; w = v.meta.owns or [ ]; d = v ? dropWhen; b = v ? dropWhenBuilds; o = v ? overlay; }" \
           2>/dev/null)" || {
           red "$repo: overlays/$name.nix malformed (needs meta.reason, meta.added, overlay, and one of dropWhen/dropWhenBuilds)"
           continue
         }
-        if ! jq -e '(.d != .b) and .o and (.r | type == "string" and length > 0) and (.a | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))' <<<"$m" >/dev/null; then
-          red "$repo: overlays/$name.nix malformed meta, missing overlay, or not exactly one of dropWhen/dropWhenBuilds"
+        if ! jq -e '(.d != .b) and .o and (.r | type == "string" and length > 0) and (.a | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and (.w | type == "array" and all(type == "string"))' <<<"$m" >/dev/null; then
+          red "$repo: overlays/$name.nix malformed meta, meta.owns not a list of repository paths, missing overlay, or not exactly one of dropWhen/dropWhenBuilds"
+          continue
+        fi
+        owned=()
+        owns=$(jq -r '.w[]' <<<"$m") || {
+          red "$repo: overlays/$name.nix: could not read meta.owns"
+          continue
+        }
+        [ -z "$owns" ] || mapfile -t owned <<<"$owns"
+        if ! unit_errors=$(git -C "$dir" ls-files -z | (cd "$dir" && bash "$STD/scripts/check-fix-unit.sh" "overlays/$name.nix" "${owned[@]}") ); then
+          while IFS= read -r line; do red "$repo: $line"; done <<<"$unit_errors"
           continue
         fi
         if jq -e '.b' <<<"$m" >/dev/null; then
@@ -569,11 +584,11 @@ if [ "$DO_LOCAL" -eq 1 ]; then
         red "$repo: no flake.nix"
         continue
       }
-      if nix flake check $flag "$dir" >/tmp/fa-flake.log 2>&1; then
+      if nix flake check $flag "$dir" >"$scratch/flake.log" 2>&1; then
         ok "$repo: nix flake check"
       else
         red "$repo: nix flake check failed"
-        tail -8 /tmp/fa-flake.log | sed 's/^/      /'
+        tail -8 "$scratch/flake.log" | sed 's/^/      /'
       fi
     done
   else
@@ -589,21 +604,21 @@ if [ "$DO_REMOTE" -eq 1 ]; then
 
   # gh, with ONE retry on a transient failure (token/keyring races, secondary
   # rate-limits, a network blip). On success: stdout on stdout, exit 0. On a
-  # persistent failure: exit non-zero with gh's stderr in /tmp/fa-gh.log, so the
+  # persistent failure: exit non-zero with gh's stderr in $scratch/gh.log, so the
   # caller fails CLOSED with the real reason instead of misreading an error body
   # as data -- a 401 body is not a stale branch, an empty hasIssuesEnabled is not
   # "Issues disabled". (Both were real false-REDs before this guard.)
   gh_try() {
     local out
-    out="$(command gh "$@" 2>/tmp/fa-gh.log)" && {
+    out="$(command gh "$@" 2>"$scratch/gh.log")" && {
       printf '%s' "$out"
       return 0
     }
     sleep 2
-    out="$(command gh "$@" 2>/tmp/fa-gh.log)" || return 1
+    out="$(command gh "$@" 2>"$scratch/gh.log")" || return 1
     printf '%s' "$out"
   }
-  gherr() { tr '\n' ' ' </tmp/fa-gh.log | head -c 160; }
+  gherr() { tr '\n' ' ' <"$scratch/gh.log" | head -c 160; }
 
   # The fleet is every repo on GitHub carrying .github/update.json, not the
   # set that happens to be cloned here: sync, roll and this audit all walk the
@@ -621,7 +636,7 @@ if [ "$DO_REMOTE" -eq 1 ]; then
       while IFS= read -r name; do
         [ -n "$name" ] || continue
         if ! gh_try api "repos/$OWNER/$name/contents/.github/update.json" --jq '.name' >/dev/null; then
-          case "$(cat /tmp/fa-gh.log)" in
+          case "$(cat "$scratch/gh.log")" in
           *"Not Found"*) continue ;;
           *)
             red "$name: could not read .github/update.json on GitHub (gh error: $(gherr))"

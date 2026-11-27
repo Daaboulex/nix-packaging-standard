@@ -264,7 +264,7 @@ against the tree:
 
 | Module | Provides |
 | --- | --- |
-| `base` | git-hooks gate (every hook in the table below), `formatter`, `devShells.default`, every declared package aliased into `checks` on the systems its `meta.platforms` supports (so `nix flake check` BUILDS it), and these checks: `std-conformance` (synced files byte-match the canonical), `std-no-retired-copies` (no script copy the workflows no longer read), `std-rule-files` (`AGENTS.md` and `CONTRIBUTING.md` begin with the standard's heads), `std-follows-release` (`inputs.std.url` is the `release` branch, `releaseUrl`), `std-update-json` (`.github/update.json` satisfies the schema), `std-devstate` (the baseline `.gitignore` entries are present), `std-devshell-order` (every dev shell pins `PRE_COMMIT_HOME` before it installs the hooks), `std-homestate` (no `home.file` in the home root), `std-meta-maintainers` (maintainers carry the nixpkgs shape), `std-no-fail-open` (no shell shape that reports success while doing nothing), `std-no-deprecated-system` (no `pkgs.system` read), `std-no-host-profile` (no path under the host's profile), and, where the flake names a module under `std.option-reference`, `std-option-reference` (`docs/OPTIONS.md` is what the modules declare, and the README links to it) |
+| `base` | git-hooks gate (every hook in the table below), `formatter`, `devShells.default`, every declared package aliased into `checks` on the systems its `meta.platforms` supports (so `nix flake check` BUILDS it), and these checks: `std-conformance` (synced files byte-match the canonical), `std-no-retired-copies` (no script copy the workflows no longer read), `std-rule-files` (`AGENTS.md` and `CONTRIBUTING.md` begin with the standard's heads), `std-follows-release` (`inputs.std.url` is the `release` branch, `releaseUrl`), `std-update-json` (`.github/update.json` satisfies the schema), `std-devstate` (the baseline `.gitignore` entries are present), `std-devshell-order` (every dev shell pins `PRE_COMMIT_HOME` before it installs the hooks), `std-homestate` (no `home.file` in the home root), `std-meta-maintainers` (maintainers carry the nixpkgs shape), `std-no-fail-open` (no shell shape that reports success while doing nothing), `std-no-deprecated-system` (no `pkgs.system` read), `std-no-host-profile` (no path under the host's profile), `std-temporary-fixes` (no file outside a temporary fix and the files its `meta.owns` names refers to one of them), and, where the flake names a module under `std.option-reference`, `std-option-reference` (`docs/OPTIONS.md` is what the modules declare, and the README links to it) |
 
 The hooks `base` installs, rendered from `flake-modules/hooks.nix`:
 
@@ -752,7 +752,8 @@ It checks, per consumer (every dir with a `.github/update.json`):
   it scopes what GREEN means;
 - **temporary divergences** -- every `overlays/<name>.nix` fix is shape-checked
   (`meta.reason`, `meta.added`, `overlay`, exactly one of
-  `dropWhen`/`dropWhenBuilds`, plus an exported `overlays.probe`) and NAMED with
+  `dropWhen`/`dropWhenBuilds`, a `meta.owns` of tracked files that no file
+  outside the fix names, plus an exported `overlays.probe`) and NAMED with
   its reason and age, so a live workaround, added dependency, or pin is always
   visible fleet-wide; a malformed or orphaned one fails the audit;
 - **custom updaters** -- a `custom` repo's own `scripts/update.sh` gates a bump
@@ -1218,6 +1219,32 @@ the moment nixpkgs' own package carries the dependency:
 }
 ```
 
+A fix is one unit with the files only it uses. A pin it reads, a patch it
+applies: each is named, repo-relative, in `meta.owns`, and the heal removes the
+fix and every file it owns in the same commit:
+
+```nix
+{
+  meta = {
+    reason = "mesa main builds venus-protocol as a meson subproject nixpkgs' mesa does not provide";
+    added = "2026-08-11";
+    owns = [ "venus-protocol.json" ];
+  };
+  dropWhenBuilds = pkgs: pkgs.mesa-git;
+  overlay = final: prev: { ... };
+}
+```
+
+Only the fix and the files it owns may name one of them by its repo-relative
+path. A doc that links the fix, a script that rewrites its pin, or another fix
+that applies its patch would be left pointing at nothing once the heal removes
+them, so a file outside the unit that names one is refused at the commit
+(`std-temporary-fixes`), by the heal before it removes anything, and by
+`fleet-audit`, all through `scripts/check-fix-unit.sh` (`tests/run.sh` Tests 7b
+and 8c to 8e). The message names the file, the line and the path; either add
+that file to `meta.owns` because it goes with the fix, or drop the reference.
+A reference by a bare file name from the same directory is not seen.
+
 The repo composes `overlays.default` = its permanent glue + every fix, and
 exports `overlays.probe` = the glue alone. `heal-overlays.sh`, run by the
 Maintenance workflow, probes every fix against the glue plus every OTHER fix,
@@ -1240,7 +1267,8 @@ nothing, so the fixes stay, and files a `maintenance` issue naming what was kept
 and which healed removals were not pushed. Nothing is ever dropped blind.
 
 Fail-closed by construction: a fix with no predicate, with both, with malformed
-`meta`, with a `dropWhenBuilds` that cannot even evaluate, or with a
+`meta`, with a `meta.owns` entry that is not a tracked file, with a file outside
+it naming one of its files, with a `dropWhenBuilds` that cannot even evaluate, or with a
 `dropWhenBuilds` on a fixed-output derivation is a hard error in both
 `heal-overlays.sh` and `fleet-audit` -- never silently read as "still needed",
 which would pin it forever, nor as "healed", which would drop it blind. The lock keeps moving under automated

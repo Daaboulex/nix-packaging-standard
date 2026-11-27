@@ -335,7 +335,7 @@ jobs:
             if [ "$HEAL" = success ]; then
               printf '**Temporary fixes kept**: %s\n' "${KEPT:-(none declared)}"
               if [ -n "$HEALED" ]; then
-                printf "**Healed fixes NOT pushed**: \`%s\`. They probed as no longer needed against the new inputs, but the verification was red, so the removal was not pushed. If the removal is what broke it, correct that predicate; otherwise the lock bump itself broke the build.\n" "$HEALED"
+                printf "**Healed fixes NOT pushed**: \`%s\`. They probed as no longer needed against the new inputs; the refresh that removes them failed%s, so the removal was not pushed.\n" "$HEALED" "${FAILED_ATTRS:+ in \`$FAILED_ATTRS\`}"
               fi
             elif [ "$HEAL" = failure ]; then
               printf '**Temporary fixes**: not probed; the heal step failed.\n'

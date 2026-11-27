@@ -428,6 +428,53 @@ mkdir -p "$d/overlays"
 run_heal "$d"
 check "empty dir exits 1" "1" "$RC"
 
+echo "Test 7b: a fix and the files it owns are one unit, and only a file of the unit may name one of them"
+d="$WORK/t7b"
+mkdir -p "$d/overlays" "$d/docs"
+printf 'pin = importJSON ../pin.json;\n' >"$d/overlays/pinned.nix"
+printf '{ }\n' >"$d/pin.json"
+printf '{ }\n' >"$d/overlays/linked.nix"
+printf 'See [overlays/linked.nix](../overlays/linked.nix).\n' >"$d/docs/notes.md"
+printf 'overlays/linked.nix\n' >"$d/scratch.txt"
+git -C "$d" init -q
+git -C "$d" add overlays pin.json docs
+unit() {
+  (cd "$d" && git ls-files -z | bash "$STD/scripts/check-fix-unit.sh" "$@" >"$d/out" 2>&1)
+  RC=$?
+}
+unit overlays/pinned.nix pin.json
+check "a fix that owns the pin it reads passes" "0" "$RC"
+unit overlays/linked.nix
+check "a tracked file naming the fix is refused once per line with the value and the rule; an untracked one is not read" "1 1 0" \
+  "$RC $(grep -c '^docs/notes.md:1: names overlays/linked.nix, a file of the temporary fix overlays/linked.nix; only the fix and the files its meta.owns names may name one' "$d/out") $(grep -c scratch.txt "$d/out")"
+unit overlays/linked.nix docs/notes.md
+check "a file the fix owns may name it" "0" "$RC"
+unit overlays/pinned.nix pin.json absent.json
+check "an owned file that is not tracked is refused by name" "1 1" "$RC $(grep -c '^overlays/pinned.nix: absent.json is not a tracked file' "$d/out")"
+
+echo "Test 7c: heal-overlays keeps its scratch files in a directory of its own under TMPDIR and removes it"
+d="$WORK/t7c"
+mkdir -p "$d/overlays" "$d/bin" "$d/tmp"
+cat >"$d/bin/nix" <<'SH'
+#!/usr/bin/env bash
+readlink "/proc/$$/fd/1" "/proc/$$/fd/2" >>"$STREAMS_AT"
+case "$*" in
+*hasDrop*) echo '{"reason":"r","added":"2026-11-27","owns":[],"hasDrop":true,"hasBuildDrop":false,"hasOverlay":true}' ;;
+*) echo false ;;
+esac
+SH
+chmod +x "$d/bin/nix"
+printf '{ }\n' >"$d/overlays/kept.nix"
+git -C "$d" init -q
+git -C "$d" add overlays
+(cd "$d" && PATH="$d/bin:$PATH" TMPDIR="$d/tmp" STREAMS_AT="$d/streams" GITHUB_OUTPUT="$d/out.env" bash "$HEAL" >"$d/log" 2>&1)
+RC=$?
+tmp=$(cd "$d/tmp" && pwd -P)
+files=$(grep -c '^/' "$d/streams")
+under=$(grep -c "^$tmp/" "$d/streams")
+check "every file the probe writes is under the TMPDIR it was given, and nothing is left there" "0 1 0 0" \
+  "$RC $((files > 0)) $((files - under)) $(find "$d/tmp" -mindepth 1 | wc -l)"
+
 if command -v nix >/dev/null 2>&1; then
   echo "Test 8: heal-overlays malformed fix (no meta/dropWhen) -> fail closed, exit 1"
   d="$WORK/t8"
@@ -469,6 +516,53 @@ NIX
   check "the probe runs" "0" "$RC"
   check "a fix healed beside the others is dropped" "b" "$(geth "$d" healed)"
   check "a fix is never judged with itself applied" "a" "$(geth "$d" kept)"
+
+  echo "Test 8c: a healed fix is removed together with every file its meta.owns names"
+  d="$WORK/t8c"
+  mkdir -p "$d/overlays"
+  cp "$WORK/t8b/flake.nix" "$d/flake.nix"
+  printf '{ "rev": "1" }\n' >"$d/pin.json"
+  cat >"$d/overlays/pinned.nix" <<'NIX'
+{
+  meta = { reason = "pinned reads a pin of its own, which has no use once the fix heals"; added = "2026-11-27"; owns = [ "pin.json" ]; };
+  dropWhen = _pkgs: true;
+  overlay = _final: _prev: { pin = (builtins.fromJSON (builtins.readFile ../pin.json)).rev; };
+}
+NIX
+  git -C "$d" init -q
+  git -C "$d" add -A
+  git -C "$d" -c user.name=t -c user.email=t@localhost commit -qm fixture
+  run_heal "$d"
+  check "the healed fix and the pin it owns are removed in one change" "0 pinned overlays/pinned.nix pin.json" \
+    "$RC $(geth "$d" healed) $(git -C "$d" diff --cached --name-only | tr '\n' ' ' | sed 's/ $//')"
+
+  echo "Test 8d: a fix that a file outside it names fails the heal before anything is removed"
+  d="$WORK/t8d"
+  mkdir -p "$d/overlays" "$d/docs"
+  cp "$WORK/t8b/flake.nix" "$d/flake.nix"
+  cat >"$d/overlays/linked.nix" <<'NIX'
+{
+  meta = { reason = "linked is named by a doc, which would point at nothing once the heal removed it"; added = "2026-11-27"; };
+  dropWhen = _pkgs: true;
+  overlay = _final: _prev: { };
+}
+NIX
+  printf 'See [the fix](../overlays/linked.nix).\n' >"$d/docs/notes.md"
+  git -C "$d" init -q
+  git -C "$d" add -A
+  git -C "$d" -c user.name=t -c user.email=t@localhost commit -qm fixture
+  run_heal "$d"
+  check "the heal fails closed, names the reference and removes nothing" "1 1 " \
+    "$RC $(grep -c '^::error::docs/notes.md:1: names overlays/linked.nix' "$d/log") $(git -C "$d" diff --cached --name-only)"
+
+  echo "Test 8e: fleet-audit names a fix that a file outside it names"
+  d="$WORK/t8e"
+  mkdir -p "$d/repos"
+  git clone -q "$WORK/t8d" "$d/repos/linked"
+  git -C "$d/repos/linked" remote remove origin
+  (cd "$d" && PKG_REPOS_DIR="$d/repos" bash "$STD/scripts/fleet-audit.sh" --local --no-build linked >"$d/log" 2>&1)
+  check "the audit names the file, its line and the fix it names" "1" \
+    "$(grep -c '^FAIL  linked: docs/notes.md:1: names overlays/linked.nix, a file of the temporary fix overlays/linked.nix' "$d/log")"
 else
   echo "Test 8 skipped (nix unavailable)"
 fi
@@ -2805,6 +2899,22 @@ check "a clone in step with GitHub on the current release is not named" "0" \
 audit --local --skip-nix ahead
 check "a --local run compares nothing with GitHub" "0" "$(grep -c 'holds 2 commit(s)' "$d/log")"
 
+echo "Test 44b: fleet-audit keeps its scratch files in a directory of its own under TMPDIR and removes it"
+mkdir -p "$d/streams-bin" "$d/tmp"
+cat >"$d/streams-bin/gh" <<'SH'
+#!/usr/bin/env bash
+readlink "/proc/$$/fd/2" >>"$STREAMS_AT"
+exec "$GH_STUB" "$@"
+SH
+chmod +x "$d/streams-bin/gh"
+(cd "$d" && PATH="$d/streams-bin:$d/bin:$PATH" GH_STUB="$d/bin/gh" STREAMS_AT="$d/streams" TMPDIR="$d/tmp" GH_DATA="$d/gh" GH_OWNER=owner PKG_REPOS_DIR="$d/repos" \
+  bash "$standard_root/scripts/fleet-audit.sh" --remote --skip-nix steady >"$d/log" 2>&1)
+tmp=$(cd "$d/tmp" && pwd -P)
+files=$(grep -c '^/' "$d/streams")
+under=$(grep -c "^$tmp/" "$d/streams")
+check "every file gh's errors go to is under the TMPDIR it was given, and nothing is left there" "1 0 0" \
+  "$((files > 0)) $((files - under)) $(find "$d/tmp" -mindepth 1 | wc -l)"
+
 echo "Test 45: the fleet watch names a repo it could not read, sweeps on, and dates its issue"
 d="$WORK/t45"
 mkdir -p "$d"
@@ -2872,6 +2982,17 @@ check "a dispatched retry passes the Maintenance cadence" "1" "$(grep -cF "[ \"\
 check "a dispatched retry passes the Update cadence" "1" "$(grep -cF "[ \"\$EVENT\" = repository_dispatch ]" "$uwf")"
 check "the Maintenance caller starts the retry" "1" "$(grep -cF 'types: [maintenance-retry]' "$standard_root/callers/maintenance.yml")"
 check "the Update caller starts the retry" "1" "$(grep -cF 'types: [update-retry]' "$standard_root/callers/update.yml")"
+
+echo "Test 47: a red refresh that held back healed fixes names what failed, and blames no predicate"
+d="$WORK/t47"
+mkdir -p "$d/std"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$d/std/report-failure.sh"
+awk '/- name: Report the failure$/ { f = 1 } f && /^ +run: \|$/ { r = 1; next } r && $0 != "" && $0 !~ /^          / { exit } r { sub(/^          /, ""); print }' "$mwf" |
+  sed "s#/tmp/#$d/#g" >"$d/report.sh"
+(cd "$d" && STD="$d/std" PREPARE=success STOPPED='' HEAL=success HEALED=venus-protocol KEPT=amd-options \
+  FAIL_CLASS=check-error FAILED_ATTRS=.#checks.x86_64-linux.pre-commit bash report.sh)
+check "the held-back fixes are named with the target that failed, and no predicate is blamed" "0 1 0" \
+  "$? $(grep -c '^\*\*Healed fixes NOT pushed\*\*: .venus-protocol.\..* failed in .\.#checks\.x86_64-linux\.pre-commit.,' "$d/issue-head.md") $(grep -ci predicate "$d/issue-head.md")"
 
 echo
 echo "------------------------------------------"
