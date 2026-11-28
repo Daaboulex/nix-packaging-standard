@@ -3960,6 +3960,39 @@ check "and leaves nothing under TMPDIR" "" "$(left_in blocks)"
 check "heal-overlays without GITHUB_OUTPUT, piped as the maintenance workflow pipes it, exits 0 where there is nothing to heal" "0" "$?"
 check "and writes its outputs to stdout" "1 1" "$(grep -cx 'kept=' "$d/heal.log") $(grep -cx 'healed=' "$d/heal.log")"
 
+echo "Test 70: fleet-audit names what a clone holds untracked or ignored at its top beside the names the canonical .gitignore enforces, and each worktree outside its .devshell/"
+d="$WORK/t70"
+mkdir -p "$d/repos"
+fresh_clone() {
+  git init -q -b main "$d/repos/$1"
+  cp "$standard_root/.gitignore" "$d/repos/$1/.gitignore"
+  git -C "$d/repos/$1" add .gitignore
+  git -C "$d/repos/$1" -c user.name=t -c user.email=t@t commit -qm base
+}
+fresh_clone tidy
+fresh_clone littered
+for entry in tidy/.devshell/work littered/.devshell/work littered/.direnv littered/.ruff_cache littered/scratch littered/runs/1 littered/node_modules; do
+  mkdir -p "$d/repos/$entry"
+  : >"$d/repos/$entry/kept"
+done
+ln -s /nix/store "$d/repos/littered/result"
+ln -s /dev/null "$d/repos/littered/.pre-commit-config.yaml"
+git -C "$d/repos/littered" worktree add -q --detach "$d/repos/littered/.devshell/work/inside"
+git -C "$d/repos/littered" worktree add -q --detach "$d/outside"
+outside=$(cd "$d/outside" && pwd -P)
+anchored() {
+  (cd "$d" && PKG_REPOS_DIR="$d/repos" bash "$standard_root/scripts/fleet-audit.sh" --local --skip-nix "$1" >"$d/$1.audit" 2>&1)
+  sed -n '/^== local clones keep what their tools make under .devshell\/ ==$/,/^== /p' "$d/$1.audit"
+}
+anchored littered >"$d/littered.section"
+check "an entry outside .devshell/ that the canonical .gitignore does not enforce is named, ignored or not" "1" \
+  "$(grep -cx 'FAIL  littered: untracked or ignored at the top of the clone, beside .devshell/ and the names the standard.s .gitignore enforces: runs/ scratch/ .ruff_cache/ node_modules/' "$d/littered.section")"
+check "a worktree outside .devshell/ is named, and one inside it is not" "1 0" \
+  "$(grep -cxF "FAIL  littered: worktree(s) outside .devshell/: $outside" "$d/littered.section") $(grep -c 'work/inside' "$d/littered.section")"
+anchored tidy >"$d/tidy.section"
+check "a clone with nothing outside .devshell/ and the enforced names, and no worktree outside it, is not named" "0 1" \
+  "$(grep -c '^FAIL' "$d/tidy.section") $(grep -c '^ok    tidy: ' "$d/tidy.section")"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

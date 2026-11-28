@@ -168,6 +168,43 @@ if [ "$DO_LOCAL" -eq 1 ]; then
     [ -n "$extra$others" ] || ok "$repo: no extra local branch or remote"
   done
 
+  hdr "local clones keep what their tools make under .devshell/"
+  enforced="$scratch/enforced"
+  if ! git init -q "$enforced" || ! sed '/^# advisory/q' "$STD/.gitignore" >"$enforced/.git/info/exclude"; then
+    red "could not read the names the standard's .gitignore enforces from $STD/.gitignore"
+  else
+    for repo in "${CONSUMERS[@]}"; do
+      dir="$REPOS_DIR/$repo"
+      if ! status="$(git -C "$dir" --no-optional-locks status --porcelain --ignored)" ||
+        ! worktrees="$(git -C "$dir" worktree list --porcelain)"; then
+        red "$repo: could not read the clone's untracked entries and worktrees"
+        continue
+      fi
+      top="$(sed -nE 's#^(\?\?|!!) ([^/]+/?)$#\2#p' <<<"$status")"
+      allowed=""
+      if [ -n "$top" ]; then
+        allowed="$(git -C "$enforced" -c core.excludesFile=/dev/null check-ignore --no-index --stdin <<<"$top")"
+        if [ $? -gt 1 ]; then
+          red "$repo: could not match its top-level entries against the names the standard's .gitignore enforces"
+          continue
+        fi
+      fi
+      stray=""
+      while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        grep -qxF -- "$entry" <<<"$allowed" || stray="$stray $entry"
+      done <<<"$top"
+      mapfile -t trees < <(sed -n 's/^worktree //p' <<<"$worktrees")
+      outside=""
+      for path in "${trees[@]:1}"; do
+        case "$path" in "${trees[0]}/.devshell/"*) ;; *) outside="$outside $path" ;; esac
+      done
+      [ -z "$stray" ] || red "$repo: untracked or ignored at the top of the clone, beside .devshell/ and the names the standard's .gitignore enforces:$stray"
+      [ -z "$outside" ] || red "$repo: worktree(s) outside .devshell/:$outside"
+      [ -n "$stray$outside" ] || ok "$repo: nothing untracked or ignored at the top beside .devshell/ and the enforced names, and no worktree outside .devshell/"
+    done
+  fi
+
   hdr "metadata drift (sync-meta.sh --check)"
   # sync-meta compares update.json to LIVE GitHub metadata, so it only applies
   # to repos that have a remote -- a local-only WIP (no origin) has nothing to
