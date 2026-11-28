@@ -834,7 +834,11 @@ configured with. pre-commit and prek each move a hook they do not recognise as
 their own to `<hook>.legacy` and run it too; a wrapper of the other tool there
 finds itself as its own legacy hook and refuses every commit, and the move
 overwrites a hook a person had already kept there. A hook a person wrote
-carries no such line and is left alone.
+carries no such line and is left alone. With each hook it deletes it also
+removes the checkout's link to the generated config: git-hooks installs
+nothing while that link already names the current config, and that is how a
+checkout finds it after another checkout of the same clone, on the other
+tool's lock, installed its own hooks into the hooks they share.
 
 ## Packaged apps keep their state out of the home root
 
