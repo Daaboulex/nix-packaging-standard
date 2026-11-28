@@ -711,7 +711,11 @@ if [ "$DO_REMOTE" -eq 1 ]; then
     fi
     read -r src ref rev <<<"$pin"
     if ! head="$(gh_try api "repos/$src/branches/$ref" --jq '.commit.sha')"; then
-      red "$repo: could not read the head of $src $ref (gh error: $(gherr))"
+      if grep -qF 'HTTP 404' "$scratch/gh.log"; then
+        red "$repo: std follows $ref, which is no branch of $src, so no lock refresh moves it"
+      else
+        red "$repo: could not read the head of $src $ref (gh error: $(gherr))"
+      fi
       continue
     fi
     if [ "$rev" = "$head" ]; then

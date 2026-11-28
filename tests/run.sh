@@ -2882,8 +2882,14 @@ g unmerged commit -q --allow-empty -m upstream
 on_github unmerged "$(g unmerged rev-parse HEAD)"
 g unmerged update-ref refs/remotes/origin/main HEAD
 g unmerged reset -q --hard HEAD~1
+consumer detached "$pinned"
+sed -i 's/"ref":"release"/"ref":"v1.0.0"/' "$d/repos/detached/flake.lock"
+g detached commit -qam "follow a tag"
+on_github detached "$(g detached rev-parse HEAD)"
 audit() { (cd "$d" && PATH="$d/bin:$PATH" GH_DATA="$d/gh" GH_OWNER=owner PKG_REPOS_DIR="$d/repos" bash "$standard_root/scripts/fleet-audit.sh" "$@" >"$d/log" 2>&1); }
-audit --skip-nix steady trailing cluttered ahead unfetched unmerged
+audit --skip-nix steady trailing cluttered ahead unfetched unmerged detached
+check "a lock that follows a ref which is no branch is named as one no refresh moves" "1" \
+  "$(grep -c '^FAIL  detached: std follows v1.0.0, which is no branch of owner/std, so no lock refresh moves it$' "$d/log")"
 check "a lock behind the release is named with the release it pins and the one the branch is at" "1" \
   "$(grep -c '^FAIL  trailing: flake.lock pins owner/std at v1.0.0 while its release branch is at v1.1.0$' "$d/log")"
 check "a local branch other than the allowed ones is named, merged or not" "1" \
