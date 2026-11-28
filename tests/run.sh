@@ -3993,6 +3993,14 @@ anchored tidy >"$d/tidy.section"
 check "a clone with nothing outside .devshell/ and the enforced names, and no worktree outside it, is not named" "0 1" \
   "$(grep -c '^FAIL' "$d/tidy.section") $(grep -c '^ok    tidy: ' "$d/tidy.section")"
 
+echo "Test 71: the head every repo carries names .devshell/work/ as the one scratch place, the standard's own CONTRIBUTING.md begins with that head, and the README names it too"
+head_bytes=$(wc -c <"$HEADS/CONTRIBUTING.md")
+check "heads/CONTRIBUTING.md names .devshell/work/ in one line" "1" "$(grep -cF '.devshell/work/' "$HEADS/CONTRIBUTING.md")"
+check "the standard's own CONTRIBUTING.md begins with that head" "yes" \
+  "$(if [ "$(head -c "$head_bytes" "$standard_root/CONTRIBUTING.md")" = "$(cat "$HEADS/CONTRIBUTING.md")" ]; then echo yes; else echo no; fi)"
+check "the README names it as the scratch place" "1" "$(grep -c 'is the one scratch place' "$standard_root/README.md")"
+check "and says the temp folder lives on the runtime dir, which systemd sizes at 10 percent of RAM" "1" "$(grep -c 'systemd sizes at 10 percent of RAM' "$standard_root/README.md")"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

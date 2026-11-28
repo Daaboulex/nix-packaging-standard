@@ -858,7 +858,9 @@ The temp folder is the one place the hook keeps outside the tree: a unix socket
 path holds at most 108 bytes, and a test that binds one under pytest's
 `tmp_path` overruns that from a TMPDIR inside a clone. So `TMPDIR`, `TMP`,
 `TEMP` and `TEMPDIR` name a short folder per repo under `$XDG_RUNTIME_DIR`, and
-`.devshell/tmp` links to it so the repo still shows where. Only where
+`.devshell/tmp` links to it so the repo still shows where. The folder lives on
+the runtime dir, which systemd sizes at 10 percent of RAM, so a job that needs
+more sets its own `TMPDIR`. Only where
 `XDG_RUNTIME_DIR` is unset does that folder fall back to `/tmp`, under a name
 any user there can predict. nix-direnv puts the caller's four variables back
 after the hook, so the canonical `.envrc` sets them again from `$DEVSHELL_TMP`.
@@ -868,6 +870,9 @@ caller running `nix develop` once per command points `TMPDIR` at the repo's
 `.devshell/tmp`. Nix refuses a TMPDIR that does not exist, and the link
 resolves only after a first entry and until its folder is cleared, as a reboot
 does.
+
+`.devshell/work/` is the one scratch place: one folder per job, removed when
+the work lands.
 
 Every one of these shells is composed by `std.lib.mkDevShell`, which, after
 the pins and before the hook install, deletes each git hook whose second line
