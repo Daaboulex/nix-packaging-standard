@@ -203,13 +203,14 @@ trap on_abort EXIT INT TERM HUP
 
 # A pre-commit hook records an ABSOLUTE nix store path that nix-collect-garbage
 # can remove, and no consumer clone is gcrooted (none has .direnv), so every hook
-# is one GC away from breaking. A DANGLING hook fails the commit loudly. A MISSING
-# hook is worse: the commit succeeds and the repo's own gate never runs at all.
+# is one GC away from breaking. A DANGLING hook fails the commit, or runs whatever
+# hook tool PATH holds. A MISSING hook is worse: the commit succeeds and the
+# repo's own gate never runs at all.
 hook_live() {
-  local hook="$1/.git/hooks/pre-commit" p
-  [ -f "$hook" ] || return 1
-  p=$(grep -oE '/nix/store/[a-z0-9]+-[^/]*/bin/pre-commit' "$hook" 2>/dev/null | head -1)
-  [ -n "$p" ] && [ -e "$p" ] && [ -e "$1/.pre-commit-config.yaml" ]
+  local why
+  why=$(bash "$STD/scripts/hook-live.sh" "$1") && return 0
+  printf '  %s\n' "$why"
+  return 1
 }
 
 # The hook set is a function of the standard the consumer pins, so a pin bump

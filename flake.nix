@@ -1108,8 +1108,8 @@
                   exit 1
                 fi
 
-                if ! grep -q 'e "\$p"' "$roll"; then
-                  echo "the hook check does not test that the recorded store path still EXISTS, so a hook garbage-collected out from under the clone still reads as present"
+                if ! grep -q 'scripts/hook-live.sh' "$roll"; then
+                  echo "fleet-roll does not read its hook through scripts/hook-live.sh, the check tests/run.sh proves for every hook tool, so a hook garbage-collected out from under the clone, or one whose config no longer resolves, can read as present"
                   exit 1
                 fi
 
@@ -1123,13 +1123,8 @@
                   exit 1
                 fi
 
-                if ! grep -q 'e "\$1/.pre-commit-config.yaml"' "$roll"; then
-                  echo "the hook check does not test that the config link still resolves; the hook binary can survive a collection that took the config, and the commit then fails on a missing config"
-                  exit 1
-                fi
-
-                if ! grep -q 'hook_absent' "$audit"; then
-                  echo "fleet-audit does not report a clone with NO pre-commit hook, so the silent half of this failure never announces itself"
+                if ! grep -q 'scripts/hook-live.sh' "$audit"; then
+                  echo "fleet-audit does not read the hooks through scripts/hook-live.sh, so a clone with NO pre-commit hook, the silent half of this failure, can go unreported"
                   exit 1
                 fi
 

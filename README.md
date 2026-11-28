@@ -756,7 +756,11 @@ export PKG_REPOS_DIR=/path/to/repos
 It checks, per consumer (every dir with a `.github/update.json`):
 
 - **local** -- `sync.sh --check` (synced files byte-match), `sync-meta.sh
-  --check` (GitHub metadata matches `update.json`), a clone with no local
+  --check` (GitHub metadata matches `update.json`), a pre-commit hook whose
+  store programs and the config it names are still in place
+  (`scripts/hook-live.sh`, which `fleet-roll.sh` also asks before it commits;
+  it reads both from the hook file, so it holds whichever hook tool wrote it),
+  a clone with no local
   branch beyond those `scripts/extra-branches.sh` allows and no remote but
   `origin`, a known `upstream.type`,
   complete metadata (`description` + `topics`), the first-party discipline (a
