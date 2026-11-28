@@ -3270,12 +3270,21 @@ check "and restores no Nix store" "0" "$(grep -c 'cache-nix-action' <<<"$rehears
 check "the lock is pushed only after the rehearsal passed" "1" "$(grep -cF "needs.rehearse.result == 'success'" "$mwf")"
 check "a failed rehearsal files the maintenance issue under the updater's class" "2" "$(grep -cF "needs.rehearse.result == 'failure'" "$mwf")"
 
-echo "Test 56: the rehearsal runs only where the standard's updater has a path to rehearse"
+echo "Test 56: the updater is rehearsed where it has a path to rehearse, and everywhere else every pinned source no binary cache holds is fetched"
 d="$WORK/t56"
-mkdir -p "$d/bin" "$d/repo/.github" "$d/locked"
+mkdir -p "$d/bin" "$d/repo/.github" "$d/locked" "$d/old" "$d/std"
 cat >"$d/locked/update.sh" <<'SH'
 #!/usr/bin/env bash
 [ "$1" = --rehearse ] && echo rehearsed >"$RAN"
+SH
+cat >"$d/old/update.sh" <<'SH'
+#!/usr/bin/env bash
+echo updated >"$RAN"
+SH
+cp "$standard_root/retry-transient.sh" "$standard_root/classify-build-failure.sh" "$d/std/"
+cat >"$d/std/fetch-uncached-sources.sh" <<'SH'
+#!/usr/bin/env bash
+echo fetched >"$RAN"
 SH
 cat >"$d/bin/nix" <<'SH'
 #!/usr/bin/env bash
@@ -3291,22 +3300,117 @@ awk '
   inside && /^        run: \|$/ { body = 1; next }
   body { sub(/^          /, ""); print }
 ' "$standard_root/.github/workflows/package-maintenance.yml" >"$d/step.sh"
-rehearsed() { # rehearsed <update.json> -> the step's exit code and whether the updater ran
-  printf '%s\n' "$1" >"$d/repo/.github/update.json"
-  rm -f "$d/ran"
-  (cd "$d/repo" && PATH="$d/bin:$PATH" STD="$standard_root" LOCKED="$d/locked" RAN="$d/ran" LOG="$d/log" \
+rehearsed() { # rehearsed <update.json, empty for a repo without one> [<locked standard>] -> the step's exit code, what ran, and what the job hands the report
+  rm -f "$d/repo/.github/update.json" "$d/ran"
+  [ -z "$1" ] || printf '%s\n' "$1" >"$d/repo/.github/update.json"
+  : >"$d/out"
+  (cd "$d/repo" && PATH="$d/bin:$PATH" STD="$d/std" LOCKED="${2:-$d/locked}" RAN="$d/ran" LOG="$d/log" GITHUB_OUTPUT="$d/out" \
     bash -e "$d/step.sh" >"$d/step.log" 2>&1)
-  echo "$? $(cat "$d/ran" 2>/dev/null)"
+  echo "$? $(cat "$d/ran" 2>/dev/null) $(cat "$d/out")"
 }
-check "a repo on the standard's updater is rehearsed" "0 rehearsed" "$(rehearsed '{ "upstream": { "type": "github-release" } }')"
-check "a repo with no upstream is not" "0 " "$(rehearsed '{ "upstream": { "type": "none" } }')"
-check "a repo with its own updater is not" "0 " "$(rehearsed '{ "upstream": { "type": "custom" } }')"
-check "a repo that only tracks its upstream is not" "0 " "$(rehearsed '{ "upstream": { "type": "github-commit" }, "trackOnly": true }')"
-check "and the log says why" "1" "$(grep -c 'nothing to rehearse' "$d/step.log")"
-rm "$d/repo/.github/update.json"
-rm -f "$d/ran"
-(cd "$d/repo" && PATH="$d/bin:$PATH" STD="$standard_root" LOCKED="$d/locked" RAN="$d/ran" LOG="$d/log" bash -e "$d/step.sh" >"$d/step.log" 2>&1)
-check "a repo with no update config has no updater and is not rehearsed" "0 " "$? $(cat "$d/ran" 2>/dev/null)"
+check "a repo on the standard's updater is rehearsed, and no source fetch runs apart from it" "0 rehearsed " "$(rehearsed '{ "upstream": { "type": "github-release" } }')"
+check "a repo with no upstream has its pinned sources fetched" "0 fetched ran=source-fetch" "$(rehearsed '{ "upstream": { "type": "none" } }')"
+check "a repo with its own updater has them fetched" "0 fetched ran=source-fetch" "$(rehearsed '{ "upstream": { "type": "custom" } }')"
+check "a repo that only tracks its upstream has them fetched" "0 fetched ran=source-fetch" "$(rehearsed '{ "upstream": { "type": "github-commit" }, "trackOnly": true }')"
+check "and the log says why its updater is not rehearsed" "1" "$(grep -c '^the updater is not rehearsed: ' "$d/step.log")"
+check "a repo with no update config has them fetched" "0 fetched ran=source-fetch" "$(rehearsed '')"
+check "an update.sh without --rehearse is named and not run, and the sources are fetched instead" "0 fetched ran=source-fetch 1" \
+  "$(rehearsed '{ "upstream": { "type": "github-release" } }' "$d/old") $(grep -c '^::warning::.*without --rehearse' "$d/step.log")"
+
+echo "Test 56b: fetch-uncached-sources fetches each fixed-output derivation the dry run would build, and refuses a plan it cannot read"
+d="$WORK/t56b"
+mkdir -p "$d/bin" "$d/shown"
+cat >"$d/bin/nix" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+*getFlake*) cat "$DRVS" ;;
+*--dry-run*)
+  cat "$DRY"
+  exit "${DRY_RC:-0}"
+  ;;
+"derivation show "*) cat "$SHOWN/${3##*/}.json" ;;
+*--keep-going*)
+  for a in "$@"; do
+    case "$a" in
+    /*) echo "$a" ;;
+    esac
+  done >"$BUILT"
+  exit "${BUILD_RC:-0}"
+  ;;
+*) exit 1 ;;
+esac
+SH
+chmod +x "$d/bin/nix"
+printf '["/nix/store/bbbb-pkg-1.0.drv", "/nix/store/ffff-pkg-check.drv"]\n' >"$d/drvs"
+cat >"$d/plan" <<'PLAN'
+these 3 derivations will be built:
+  /nix/store/aaaa-one-src.drv
+  /nix/store/bbbb-pkg-1.0.drv
+  /nix/store/cccc-two-vendor.drv
+these 2 paths will be fetched (1.00 MiB download, 4.00 MiB unpacked):
+  /nix/store/dddd-bash-5.3
+  /nix/store/eeee-curl-8.0-dev
+PLAN
+cat >"$d/shown/aaaa-one-src.drv.json" <<'JSON'
+{"derivations":{"aaaa-one-src.drv":{"env":{"out":"/nix/store/oooo-one-src"},"structuredAttrs":{"outputHash":"sha256-A","urls":["https://example.org/one.tar.gz"]}}},"version":4}
+JSON
+cat >"$d/shown/bbbb-pkg-1.0.drv.json" <<'JSON'
+{"derivations":{"bbbb-pkg-1.0.drv":{"env":{"out":"/nix/store/pppp-pkg-1.0"},"structuredAttrs":{"name":"pkg-1.0"}}},"version":4}
+JSON
+cat >"$d/shown/cccc-two-vendor.drv.json" <<'JSON'
+{"/nix/store/cccc-two-vendor.drv":{"env":{"outputHash":"sha256-B","url":"https://example.org/two.git"}}}
+JSON
+printf 'this path will be fetched (1.00 MiB download, 4.00 MiB unpacked):\n  /nix/store/dddd-bash-5.3\n' >"$d/cached"
+printf 'warning: Git tree is dirty\n' >"$d/noplan"
+fetch_sources() { # fetch_sources <plan> [<env assignments>...] -> RC; its output in $d/log, what it built in $d/built
+  local plan=$1
+  shift
+  : >"$d/built"
+  (cd "$d" && env PATH="$d/bin:$PATH" DRVS="$d/drvs" DRY="$plan" SHOWN="$d/shown" BUILT="$d/built" "$@" \
+    bash "$standard_root/fetch-uncached-sources.sh" >"$d/log" 2>&1)
+  RC=$?
+}
+fetch_sources "$d/plan"
+check "exactly the two fixed-output derivations are built, not the package nor what a cache serves" \
+  "0 /nix/store/aaaa-one-src.drv^* /nix/store/cccc-two-vendor.drv^*" "$RC $(paste -sd' ' "$d/built")"
+check "each source is named with its url, and the count is said" "3" \
+  "$(grep -cxE 'fetching one-src from https://example.org/one.tar.gz|fetching two-vendor from https://example.org/two.git|fetched 2 pinned source\(s\) no binary cache holds' "$d/log")"
+fetch_sources "$d/cached"
+check "a plan that builds nothing exits 0, fetches nothing and says so" "0 0 1" \
+  "$RC $(wc -l <"$d/built") $(grep -c '^nothing needed fetching: ' "$d/log")"
+fetch_sources "$d/plan" BUILD_RC=1
+check "a fetch that fails exits non-zero, after trying every source" "1 2" "$RC $(wc -l <"$d/built")"
+fetch_sources "$d/plan" DRY_RC=1
+check "a dry run that fails exits non-zero, named, and fetches nothing" "1 1 0" \
+  "$RC $(grep -c '^::error::fetch-uncached-sources: the dry run failed' "$d/log") $(wc -l <"$d/built")"
+fetch_sources "$d/noplan"
+check "a dry run that printed no plan exits non-zero, named, and fetches nothing" "1 1 0" \
+  "$RC $(grep -c '^::error::fetch-uncached-sources: the dry run printed no plan' "$d/log") $(wc -l <"$d/built")"
+printf '[]\n' >"$d/drvs"
+fetch_sources "$d/plan"
+check "a flake with no package or check for this system has nothing to fetch, and says so" "0 0 1" \
+  "$RC $(wc -l <"$d/built") $(grep -c '^nothing needed fetching: ' "$d/log")"
+
+echo "Test 56c: a failed source fetch is reported as a pinned source that could not be fetched, under its own class"
+d="$WORK/t56c"
+mkdir -p "$d/std"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$d/std/report-failure.sh"
+awk '/- name: Report the failure$/ { f = 1 } f && /^ +run: \|$/ { r = 1; next } r && $0 != "" && $0 !~ /^          / { exit } r { sub(/^          /, ""); print }' "$mwf" |
+  sed "s#/tmp/#$d/#g" >"$d/report.sh"
+reported() { # reported <what the rehearse job ran> -> the sentence the issue opens with
+  (cd "$d" && STD="$d/std" PREPARE=success STOPPED='' VERIFY=success HEAL=success HEALED='' KEPT='' \
+    FAIL_CLASS=source-not-found REHEARSAL="$1" bash report.sh >/dev/null 2>&1)
+  sed -n 3p "$d/issue-head.md"
+}
+check "a failed source fetch is named as such, and a failed rehearsal of the updater still as the rehearsal" "1 1" \
+  "$(reported source-fetch | grep -c '^A pinned source could not be fetched on a runner whose store was not restored\. ') $(reported '' | grep -c '^The rehearsal of an update to the version already pinned failed on a runner whose store was not restored\. ')"
+check "the rehearse job hands the report what it ran" "1 1" \
+  "$(grep -cxF "      ran: \${{ steps.rehearsal.outputs.ran }}" "$mwf") $(grep -cxF "          REHEARSAL: \${{ needs.rehearse.outputs.ran }}" "$mwf")"
+step_class=$(sed -nE "s/.*needs\.rehearse\.outputs\.ran == 'source-fetch' && '([a-z-]+)'.*/\1/p" "$mwf")
+printf "error: Cannot build '/nix/store/aaaa-one-src.drv'.\n       Reason: builder failed with exit code 1.\n" >"$d/unknown.log"
+printf "error: hash mismatch in fixed-output derivation '/nix/store/aaaa-one-src.drv':\n" >"$d/moved.log"
+check "a fetch that failed without a known pattern reads source-not-found, and a moved source still reads as its own class" \
+  "source-not-found upstream-rerelease-hash-mismatch" "$(classified "$d/unknown.log" "$step_class") $(classified "$d/moved.log" "$step_class")"
 
 echo "Test 57: a desktop verify that finds no desktop file fails the update"
 d="$WORK/t57"

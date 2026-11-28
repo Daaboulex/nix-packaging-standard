@@ -333,6 +333,7 @@ checks.module-eval-nixos = inputs.std.lib.nixosModuleCheck {
 | `write-option-reference.sh` | *(run from here)* | Write `docs/OPTIONS.md` from the modules a flake names under `std.option-reference`, by evaluating the page the check renders; a flake that names none is left alone |
 | `classify-build-failure.sh` | *(run from here; retired copy `scripts/classify-build-failure.sh`)* | Name a red run's failure class and enumerate its failed targets |
 | `retry-transient.sh` | *(run from here)* | Run an updater or a build, retrying only a `transient-infra` failure within a time budget, optionally from the checked-out tree, and leave the final attempt as the log |
+| `fetch-uncached-sources.sh` | *(run from here)* | Build each fixed-output derivation the dry run of the flake's packages and checks for this system would build, so on a store nothing was restored into every pinned source no binary cache holds is fetched from upstream; a plan it cannot read fails |
 | `declared-runners.sh` | *(run from here; retired copy `scripts/declared-runners.sh`)* | Name a GitHub runner for every system the flake declares checks on, refusing an unknown system or a flake that does not evaluate |
 | `evaluate-every-system.sh` | *(run from here)* | Evaluate every system the flake declares with import from derivation forbidden, so a check that reads a built file at evaluation fails on every store alike and the failure is named; CI's plan job, the Maintenance refresh and `fleet-roll` run it |
 | `report-failure.sh` | *(run from here; retired copy `scripts/report-failure.sh`)* | Keep one open issue per failure: file it the first day, then rewrite it each failing run with the days since it opened, commenting only when the failure changes |
@@ -1509,7 +1510,8 @@ plus a `CHANGELOG.md`).
   `upstream-rerelease-hash-mismatch`, except a declared hash that `.#default`
   built without ever fetching: it keeps the dummy, and the rehearsal names that
   field and its file as `hash-extraction`. `none`, `custom` and `trackOnly`
-  have no updater path to run, so the Maintenance job rehearses nothing for them.
+  have no updater path to run, so for them, and for a repo with no
+  `update.json`, the Maintenance job fetches their pinned sources instead.
 
 ## Update and Maintenance behaviour
 
@@ -1555,9 +1557,13 @@ plus a `CHANGELOG.md`).
   runs `update.sh --rehearse` from the standard that lock pins, and the lock is
   pushed only once it passed. An `update.sh` older than `--rehearse` ignores
   the flag and would run a real update, so the job names it in a warning and
-  rehearses nothing; the refresh moves the lock to the release head, so this
-  stays only where `inputs.std` does not follow the release branch, which
-  `std-follows-release` already refuses. A hash the updater recomputes is
+  fetches the pinned sources instead; the refresh moves the lock to the release
+  head, so this stays only where `inputs.std` does not follow the release
+  branch, which `std-follows-release` already refuses. Where the updater is not
+  rehearsed, `fetch-uncached-sources.sh` builds each fixed-output derivation
+  the dry run of every package and check would build, which on that store is
+  every pinned source no binary cache holds; its failure is reported as a
+  pinned source that could not be fetched. A hash the updater recomputes is
   built under a dummy or fake hash, a path no store holds, so its source is
   downloaded from upstream; a source the updater does not touch, such as a pin
   per major or a patch, is built by the check suite with its committed hash on

@@ -220,6 +220,8 @@ jobs:
     timeout-minutes: 180
     env:
       LOG: /tmp/log-rehearsal.log
+    outputs:
+      ran: ${{ steps.rehearsal.outputs.ran }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -252,25 +254,29 @@ jobs:
             exit 1
           }
 
-      - name: Rehearse an update to the version already pinned with the updater the refreshed lock pins, on a store nothing was restored into, retrying only a transient fetch failure
+      - name: Rehearse an update to the version already pinned with the updater the refreshed lock pins, else fetch every pinned source no binary cache holds, on a store nothing was restored into, retrying only a transient fetch failure
+        id: rehearsal
         run: |
           if [ ! -f .github/update.json ]; then
-            echo "nothing to rehearse: this repo has no .github/update.json, so it has no updater"
-            exit 0
+            echo "the updater is not rehearsed: this repo has no .github/update.json, so it has no updater"
+          else
+            rehearsable=$(jq -r 'if .upstream.type == "none" or .upstream.type == "custom" or .trackOnly == true then "no" else "yes" end' .github/update.json)
+            if [ "$rehearsable" = no ]; then
+              echo "the updater is not rehearsed: this repo has no upstream, runs its own updater or only tracks its upstream, so the standard's updater has no path to run here"
+            else
+              pinned_standard=$(nix eval --raw --impure --expr '(builtins.getFlake (toString ./.)).inputs.std.outPath')
+              updater="$pinned_standard/update.sh"
+              if grep -qF -- '--rehearse' "$updater"; then
+                echo "updater: $updater"
+                bash "$STD/retry-transient.sh" "$LOG" 9000 --reset-tree -- bash "$updater" --rehearse
+                exit
+              fi
+              echo "::warning::the updater was not rehearsed: the standard this lock pins ($pinned_standard) ships an update.sh without --rehearse, which would run a real update instead; the lock moves to the release branch only where inputs.std follows it, and std-follows-release names a repo where it does not"
+            fi
           fi
-          rehearsable=$(jq -r 'if .upstream.type == "none" or .upstream.type == "custom" or .trackOnly == true then "no" else "yes" end' .github/update.json)
-          if [ "$rehearsable" = no ]; then
-            echo "nothing to rehearse: this repo has no upstream, runs its own updater or only tracks its upstream, so the standard's updater has no path to run here"
-            exit 0
-          fi
-          pinned_standard=$(nix eval --raw --impure --expr '(builtins.getFlake (toString ./.)).inputs.std.outPath')
-          updater="$pinned_standard/update.sh"
-          if ! grep -qF -- '--rehearse' "$updater"; then
-            echo "::warning::nothing was rehearsed: the standard this lock pins ($pinned_standard) ships an update.sh without --rehearse, which would run a real update instead; the lock moves to the release branch only where inputs.std follows it, and std-follows-release names a repo where it does not"
-            exit 0
-          fi
-          echo "updater: $updater"
-          bash "$STD/retry-transient.sh" "$LOG" 9000 --reset-tree -- bash "$updater" --rehearse
+          echo "every pinned source no binary cache holds is fetched instead, so a source upstream removed is noticed"
+          echo "ran=source-fetch" >>"$GITHUB_OUTPUT"
+          bash "$STD/retry-transient.sh" "$LOG" 9000 -- bash "$STD/fetch-uncached-sources.sh"
 
       - name: Keep an empty log when the rehearsal never started, so only a job whose runner was lost sends none
         if: failure()
@@ -379,7 +385,7 @@ jobs:
       - name: Classify failure
         id: classify
         env:
-          STEP_CLASS: ${{ (needs.prepare.result == 'failure' && needs.prepare.outputs.stopped_class) || (needs.verify.result != 'failure' && needs.rehearse.result == 'failure' && 'updater-error') || 'build-error' }}
+          STEP_CLASS: ${{ (needs.prepare.result == 'failure' && needs.prepare.outputs.stopped_class) || (needs.verify.result != 'failure' && needs.rehearse.result == 'failure' && (needs.rehearse.outputs.ran == 'source-fetch' && 'source-not-found' || 'updater-error')) || 'build-error' }}
         run: bash "$STD/classify-build-failure.sh" /tmp/lock-build.log "$STEP_CLASS"
 
       - name: Report the failure
@@ -393,6 +399,7 @@ jobs:
           KEPT: ${{ needs.prepare.outputs.kept }}
           HEAL: ${{ needs.prepare.outputs.heal }}
           PREPARE: ${{ needs.prepare.result }}
+          REHEARSAL: ${{ needs.rehearse.outputs.ran }}
           STOPPED: ${{ needs.prepare.outputs.stopped }}
           VERIFY: ${{ needs.verify.result }}
         run: |
@@ -403,6 +410,8 @@ jobs:
             what="The scheduled lock refresh stopped while $STOPPED"
           elif [ "$VERIFY" = failure ]; then
             what="The refreshed flake.lock did not build on every declared system"
+          elif [ "$REHEARSAL" = source-fetch ]; then
+            what="A pinned source could not be fetched on a runner whose store was not restored"
           else
             what="The rehearsal of an update to the version already pinned failed on a runner whose store was not restored"
           fi
