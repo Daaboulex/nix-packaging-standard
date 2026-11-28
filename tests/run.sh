@@ -3871,6 +3871,45 @@ check "and kept the option the caller set" "yes" "$([ -f "$repo/report.xml" ] &&
 check "and wrote its cache into .devshell" "yes" "$([ -f "$state/pytest/CACHEDIR.TAG" ] && echo yes || echo no)"
 check "and none at the top of the repo" "no" "$([ -e "$repo/.pytest_cache" ] && echo yes || echo no)"
 
+echo "Test 68: std-home-proof names what the shell left in its runtime dir beside the hook's temp folder, and what it left untracked or ignored in the clone beside .devshell/ and .pre-commit-config.yaml"
+d="$WORK/t68"
+mkdir -p "$d/bin" "$d/repo"
+cat >"$d/bin/nix" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+*currentSystem*) printf 'x86_64-linux' ;;
+develop*)
+  mkdir -p "$XDG_RUNTIME_DIR/d0a1b2c/made-by-a-test" .devshell
+  ln -sfnT "$XDG_RUNTIME_DIR/d0a1b2c" .devshell/tmp
+  ln -sfn /dev/null .pre-commit-config.yaml
+  if [ -e "${0%/bin/nix}/in-run" ]; then : >"$XDG_RUNTIME_DIR/left-in-run"; fi
+  if [ -e "${0%/bin/nix}/in-clone" ]; then mkdir -p .ruff_cache && : >.ruff_cache/x && : >scratch.txt; fi
+  ;;
+esac
+SH
+chmod +x "$d/bin/nix"
+printf 'use flake\n' >"$d/repo/.envrc"
+printf '.devshell/\n.pre-commit-config.yaml\n.ruff_cache/\n' >"$d/repo/.gitignore"
+git -C "$d/repo" init -q
+git -C "$d/repo" add .envrc .gitignore
+git -C "$d/repo" -c user.name=t -c user.email=t@localhost commit -q -m fixture
+leave() {
+  (cd "$d/repo" && PATH="$d/bin:$PATH" "$proof") >"$d/$1.log" 2>&1
+}
+leave clean
+check "a shell that leaves only the hook's temp folder in the runtime dir, and only .devshell/ and .pre-commit-config.yaml in the clone, passes" "0" "$?"
+: >"$d/in-run"
+leave run
+check "a shell that leaves anything else in its runtime dir fails" "1" "$?"
+check "and the failure names what it left" "1" "$(grep -c '^\./left-in-run$' "$d/run.log")"
+check "and nothing in the hook's temp folder" "0" "$(grep -c '^\./d0a1b2c' "$d/run.log")"
+rm "$d/in-run"
+: >"$d/in-clone"
+leave clone
+check "a shell that leaves an untracked or an ignored entry in the clone fails" "1" "$?"
+check "and the failure names each" "1 1" "$(grep -cx 'scratch\.txt' "$d/clone.log") $(grep -cx '\.ruff_cache/' "$d/clone.log")"
+check "and neither .devshell/ nor .pre-commit-config.yaml" "0" "$(grep -cxE '\.devshell/|\.pre-commit-config\.yaml' "$d/clone.log")"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

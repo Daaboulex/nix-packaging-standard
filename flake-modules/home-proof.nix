@@ -39,6 +39,21 @@ pkgs.writeShellApplication {
       -not -path './.cache/nix*' -not -path './.local/state/nix*' -not -path './.local/share/nix*' -not -path './.config/nix*' \
       -not -path './.cache' -not -path './.local' -not -path './.local/state' -not -path './.local/share' -not -path './.config' | sort)
     left=$(cd "$probe/tmp" && find . -mindepth 1 \( -path './nix-develop-*' -o -path './nix-shell.*' \) -prune -o -print | sort)
+    hook_tmp=()
+    if [ -L "$probe/repo/.devshell/tmp" ]; then
+      linked=$(readlink "$probe/repo/.devshell/tmp")
+      hook_tmp=(-path "./''${linked#"$probe/run/"}" -prune -o)
+    fi
+    ran=$(cd "$probe/run" && find . -mindepth 1 "''${hook_tmp[@]}" -print | sort)
+    status=$(git -C "$probe/repo" status --porcelain --ignored)
+    stray=$(
+      while IFS= read -r entry; do
+        case "$entry" in
+          "?? .devshell/" | "!! .devshell/" | "?? .pre-commit-config.yaml" | "!! .pre-commit-config.yaml") ;;
+          "?? "* | "!! "*) printf '%s\n' "''${entry:3}" ;;
+        esac
+      done <<<"$status"
+    )
     if [ -n "$written" ]; then
       echo "std-home-proof: entered $entered in a fresh clone with an empty HOME, and it wrote there; pin each tool into .devshell:"
       echo "$written"
@@ -47,9 +62,18 @@ pkgs.writeShellApplication {
       echo "std-home-proof: entered $entered with an empty TMPDIR of its own, and it left this there beside Nix's own nix-develop-* and nix-shell.* folders; keep scratch files under the TMPDIR devStateHook sets:"
       echo "$left"
     fi
-    if [ -n "$written$left" ]; then
+    if [ -n "$ran" ]; then
+      echo "std-home-proof: entered $entered with a runtime dir of its own, and it left this there beside the temp folder devStateHook makes; keep scratch files in that folder, which TMPDIR and .devshell/tmp name:"
+      echo "$ran"
+    fi
+    if [ -n "$stray" ]; then
+      echo "std-home-proof: entered $entered in a fresh clone, and it left this untracked or ignored beside .devshell/ and .pre-commit-config.yaml; pin each tool into .devshell:"
+      echo "$stray"
+    fi
+    if [ -n "$written$left$ran$stray" ]; then
       exit 1
     fi
     echo "std-home-proof: entered $entered in a fresh clone with an empty HOME and an empty TMPDIR of its own, and it wrote nothing in HOME and left nothing in TMPDIR beside Nix's own folders"
+    echo "std-home-proof: it left nothing in its runtime dir beside the temp folder devStateHook makes, and nothing untracked or ignored in the clone beside .devshell/ and .pre-commit-config.yaml"
   '';
 }
