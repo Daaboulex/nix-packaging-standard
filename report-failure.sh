@@ -21,6 +21,15 @@ trap 'rm -rf "$work"' EXIT
 sed 's/\x1b\[[0-9;]*m//g' "$log_file" | cut -c1-300 >"$work/plain"
 
 log_section() {
+  local runners
+  runners=$(awk '
+    /^=== / { job = substr($0, 5); sub(/^log-/, "", job); next }
+    sub(/^build-checks: runner /, "") {
+      line = (job != "" ? job ": " : "") $0
+      if (!seen[line]++) print "- " line
+    }
+  ' "$work/plain")
+  if [ -n "$runners" ]; then printf '\n### Runner\n\n%s\n' "$runners"; fi
   if [ -n "${FAIL_EVIDENCE:-}" ]; then
     local fence='```'
     printf '\n### Cause\n\nThe log line that names the failure class:\n\n%s\n%s\n%s\n' "$fence" "$FAIL_EVIDENCE" "$fence"

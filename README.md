@@ -531,6 +531,9 @@ output the flake declares for each runner's system via `build-checks.sh`, the
 only caller of `nix-fast-build --skip-cached` in the standard, which sizes the
 evaluation workers to the available memory: nix-fast-build's own default is one
 worker per core, each growing to 4 GiB, which on a runner is all of its memory.
+Its first line names the machine the build ran on (processor, cores, available
+memory and the runner image), and a failure issue carries that line for each
+system under Runner, so a failure that depends on the host shows as one.
 A push builds less when it can prove less is needed
 (`scripts/checks-to-build.sh`): only the checks whose derivation differs from
 the commit before the push, when that commit has a green CI run or was

@@ -3716,6 +3716,46 @@ check "a flake with no std input says nothing" "" "$(bash "$standard_root/name-s
 (bash "$standard_root/name-standard-gap.sh" "$d/absent.lock" 2222222 >/dev/null 2>&1)
 check "a lock that cannot be read fails the step" "1" "$((0 < $?))"
 
+echo "Test 63: a build names the runner it ran on, and a failure report carries that line for each system"
+d="$WORK/t63"
+mkdir -p "$d/bin"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$d/bin/nix"
+printf '#!/usr/bin/env bash\necho 4\n' >"$d/bin/nproc"
+chmod +x "$d/bin/nix" "$d/bin/nproc"
+printf 'MemTotal:       16384000 kB\nMemAvailable:    8192000 kB\n' >"$d/meminfo"
+printf 'processor\t: 0\nmodel name\t: Example CPU 9000 8-Core\nprocessor\t: 1\nmodel name\t: Example CPU 9000 8-Core\n' >"$d/cpuinfo-named"
+printf 'processor\t: 0\nCPU implementer\t: 0x41\nCPU part\t: 0xd49\n' >"$d/cpuinfo-coded"
+runner_line() { # runner_line <cpuinfo> [VAR=value]...
+  local cpuinfo=$1
+  shift
+  (cd "$d" && env -u ImageOS -u ImageVersion "$@" PATH="$d/bin:$PATH" MEMINFO="$d/meminfo" CPUINFO="$cpuinfo" \
+    bash "$standard_root/build-checks.sh" x86_64-linux 2>&1) | grep '^build-checks: runner '
+}
+check "a build on a hosted runner names its CPU, cores, memory and image" \
+  "build-checks: runner Example CPU 9000 8-Core, 4 core(s), 8000 MiB available, image ubuntu24 20260101.1.0" \
+  "$(runner_line "$d/cpuinfo-named" ImageOS=ubuntu24 ImageVersion=20260101.1.0)"
+check "a build outside a hosted runner names no image" \
+  "build-checks: runner Example CPU 9000 8-Core, 4 core(s), 8000 MiB available" "$(runner_line "$d/cpuinfo-named")"
+check "a CPU the kernel gives no model name for is named by its implementer and part" \
+  "build-checks: runner implementer 0x41 part 0xd49, 4 core(s), 8000 MiB available" "$(runner_line "$d/cpuinfo-coded")"
+report_fixture "$d/report" '[]'
+cat >"$d/report/build.log" <<'LOG'
+=== log-ubuntu-latest
+build-checks: runner Example CPU 9000 8-Core, 4 core(s), 8000 MiB available, image ubuntu24 20260101.1.0
+building x
+error: builder for x failed
+=== log-ubuntu-24.04-arm
+build-checks: runner implementer 0x41 part 0xd49, 4 core(s), 8000 MiB available, image ubuntu24 20260101.1.0
+build-checks: runner implementer 0x41 part 0xd49, 4 core(s), 8000 MiB available, image ubuntu24 20260101.1.0
+LOG
+run_report "$d/report" "Update x 1 -> 2: build-error"
+check "the report names each system's runner once, under its own heading" \
+  "### Runner|- ubuntu-latest: Example CPU 9000 8-Core, 4 core(s), 8000 MiB available, image ubuntu24 20260101.1.0|- ubuntu-24.04-arm: implementer 0x41 part 0xd49, 4 core(s), 8000 MiB available, image ubuntu24 20260101.1.0|" \
+  "$(sed -n '/^### Runner$/,/^### \|^<details/p' "$d/report/body.md" | grep -E '^(### Runner|- )' | tr '\n' '|')"
+report_fixture "$d/plain" '[]'
+run_report "$d/plain" "Update x 1 -> 2: build-error"
+check "a log that names no runner gets no runner section" "0" "$(grep -c '^### Runner$' "$d/plain/body.md")"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"
