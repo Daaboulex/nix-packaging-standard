@@ -3699,6 +3699,23 @@ check "and so does the audit" "live dead live dead " "$(audit_reads old-present 
 check "the roll reads a hook whose config no longer resolves as dead, whatever the tool, and a clone with no hook too" \
   "dead dead dead " "$(roll_reads old-unlinked new-unlinked hookless)"
 check "and so does the audit" "dead dead dead " "$(audit_reads old-unlinked new-unlinked hookless)"
+echo "Test 62: a run names the gap between the standard its workflow runs at and the one its lock pins"
+d="$WORK/t62"
+mkdir -p "$d"
+lock_pinning() {
+  printf '{"nodes":{"root":{"inputs":{%s}},"std":{"locked":{"rev":"%s"}}},"root":"root"}\n' "$1" "$2"
+}
+lock_pinning '"std":"std"' 1111111 >"$d/trailing.lock"
+lock_pinning '"std":"std"' 2222222 >"$d/level.lock"
+lock_pinning '"nixpkgs":"nixpkgs"' 1111111 >"$d/no-std.lock"
+check "a lock that pins another commit is named with both commits" \
+  "::notice title=The workflow and the lock are at different commits of the standard::the workflow and its scripts run at 2222222; flake.lock pins 1111111 for the checks, hooks and lib until a lock refresh passes" \
+  "$(bash "$standard_root/name-standard-gap.sh" "$d/trailing.lock" 2222222 2>&1)"
+check "a lock that pins the running commit says nothing" "" "$(bash "$standard_root/name-standard-gap.sh" "$d/level.lock" 2222222 2>&1)"
+check "a flake with no std input says nothing" "" "$(bash "$standard_root/name-standard-gap.sh" "$d/no-std.lock" 2222222 2>&1)"
+(bash "$standard_root/name-standard-gap.sh" "$d/absent.lock" 2222222 >/dev/null 2>&1)
+check "a lock that cannot be read fails the step" "1" "$((0 < $?))"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

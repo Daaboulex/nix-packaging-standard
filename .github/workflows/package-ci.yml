@@ -50,6 +50,10 @@ jobs:
             tar -xz --strip-components=1 -C "$RUNNER_TEMP/std"
           echo "STD=$RUNNER_TEMP/std" >>"$GITHUB_ENV"
           echo "running the scripts of $STD_REPOSITORY at $STD_SHA"
+      - name: Name a gap between this workflow and the standard the lock pins
+        env:
+          STD_SHA: ${{ job.workflow_sha }}
+        run: bash "$STD/name-standard-gap.sh" flake.lock "$STD_SHA"
       - uses: DeterminateSystems/determinate-nix-action@16f94ba7aae399b9f9077c254b6719ec6de7e3e3 # v3.24.2
         with:
           extra-conf: lazy-trees = false
