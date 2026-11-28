@@ -3846,6 +3846,31 @@ rm "$state/tmp"
 mkdir "$state/tmp"
 check "and with a real .devshell/tmp folder they stay the caller's" "$d/outer|$d/outer|$d/outer|$d/outer" "$(load refused)"
 
+echo "Test 67: devStateHook pins rumdl's cache, coverage's data file and pytest's cache into .devshell, pytest's through a repo path with a space and after the options the caller set"
+d="$WORK/t67"
+repo="$d/with space/repo"
+mkdir -p "$d/run" "$repo"
+git -C "$repo" init -q
+printf 'def test_one():\n    pass\n' >"$repo/test_one.py"
+state="$(git -C "$repo" rev-parse --show-toplevel)/.devshell"
+pytest_bin="$(nix build --no-link --print-out-paths --inputs-from "$standard_root" nixpkgs#python3Packages.pytest 2>"$d/build.log")/bin/pytest"
+check "pytest builds" "yes" "$([ -x "$pytest_bin" ] && echo yes || echo no)"
+cat >"$d/enter.sh" <<'SH'
+eval "$HOOK"
+printf '%s|%s|%s\n' "${RUMDL_CACHE_DIR-unset}" "${COVERAGE_FILE-unset}" "$PYTEST_ADDOPTS"
+"$PYTEST" -q >"$LOG" 2>&1
+SH
+(cd "$repo" && env HOOK="$hook" PYTEST="$pytest_bin" LOG="$d/pytest.log" XDG_RUNTIME_DIR="$d/run" PYTEST_ADDOPTS="--junitxml=report.xml" \
+  bash "$d/enter.sh") >"$d/entered" 2>"$d/entered.err"
+IFS='|' read -r rumdl_cache coverage_file pytest_addopts <"$d/entered"
+check "rumdl's cache is in .devshell" "$state/rumdl" "$rumdl_cache"
+check "coverage's data file is in .devshell" "$state/coverage" "$coverage_file"
+check "pytest's options keep the caller's first" "--junitxml=report.xml" "${pytest_addopts%% *}"
+check "pytest ran with them" "yes" "$(grep -q '1 passed' "$d/pytest.log" && echo yes || echo no)"
+check "and kept the option the caller set" "yes" "$([ -f "$repo/report.xml" ] && echo yes || echo no)"
+check "and wrote its cache into .devshell" "yes" "$([ -f "$state/pytest/CACHEDIR.TAG" ] && echo yes || echo no)"
+check "and none at the top of the repo" "no" "$([ -e "$repo/.pytest_cache" ] && echo yes || echo no)"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

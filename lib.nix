@@ -372,7 +372,12 @@ rec {
     export PRE_COMMIT_HOME="$DEVSHELL_STATE/pre-commit"
     export PREK_HOME="$DEVSHELL_STATE/prek"
     export RUFF_CACHE_DIR="$DEVSHELL_STATE/ruff"
+    export RUMDL_CACHE_DIR="$DEVSHELL_STATE/rumdl"
     export MYPY_CACHE_DIR="$DEVSHELL_STATE/mypy"
+    export COVERAGE_FILE="$DEVSHELL_STATE/coverage"
+    printf -v pytest_cache_dir '%q' "cache_dir=$DEVSHELL_STATE/pytest"
+    export PYTEST_ADDOPTS="''${PYTEST_ADDOPTS:+$PYTEST_ADDOPTS }-o $pytest_cache_dir"
+    unset pytest_cache_dir
     export PYTHONPYCACHEPREFIX="$DEVSHELL_STATE/pycache"
     export PIP_CACHE_DIR="$DEVSHELL_STATE/pip"
     export CARGO_TARGET_DIR="$DEVSHELL_STATE/cargo-target"
