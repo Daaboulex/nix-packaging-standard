@@ -60,14 +60,13 @@ evidence=""
 if [ -n "$failed_attrs" ] && [[ " $attr_names" != *" package-"* ]]; then
   class=check-error
 fi
-match_in() {
-  local file="$1" line
-  if line=$(grep -m1 "$3" -- "$4" "$file"); then
-    class="$2"
+match() {
+  local line
+  if line=$(grep -m1 "$2" -- "$3" "$NET"); then
+    class="$1"
     evidence=$(printf '%s' "$line" | sed 's/^[[:space:]]*//' | cut -c1-300)
   fi
 }
-match() { match_in "$LOG" "$@"; }
 not_found=$(awk '
   /error: Cannot build / { url = "" }
   /[[:space:]]> trying https?:\/\// { url = $0 }
@@ -78,15 +77,15 @@ if [ -n "$not_found" ]; then
   class=source-not-found
   evidence=$(printf '%s' "$not_found" | sed 's/^[[:space:]]*//' | cut -c1-300)
 fi
-match_in "$NET" transient-infra -iE "couldn.t resolve host|could not resolve host|temporary failure in name resolution|connection reset by peer|status code: (403|429|5[0-9][0-9])|http error (429|5[0-9][0-9])|returned error: (429|5[0-9][0-9])|curl: \((6|7|28|35|52|56)\)|unable to download '[^']+': .*\((6|7|28|35|52|56)\)$|operation timed out|timeout was reached|service unavailable"
-match_in "$NET" transient-infra -E "unable to download '[^']*crates\.io[^']*': HTTP error (403|429)"
+match transient-infra -iE "couldn.t resolve host|could not resolve host|temporary failure in name resolution|connection reset by peer|status code: (403|429|5[0-9][0-9])|http error (429|5[0-9][0-9])|returned error: (429|5[0-9][0-9])|curl: \((6|7|28|35|52|56)\)|unable to download '[^']+': .*\((6|7|28|35|52|56)\)$|operation timed out|timeout was reached|service unavailable"
+match transient-infra -E "unable to download '[^']*crates\.io[^']*': HTTP error (403|429)"
 if line=$(grep -A3 -E "trying https://([a-z0-9-]+\.)*crates\.io/" -- "$NET" | grep -m1 -E 'returned error: (403|429)'); then
   class=transient-infra
   evidence=$(printf '%s' "$line" | sed 's/^[[:space:]]*//' | cut -c1-300)
 fi
-match_in "$NET" transient-infra -E "path '[^']+' is not valid|does not exist in the Nix store|no such path in the store"
+match transient-infra -E "path '[^']+' is not valid|does not exist in the Nix store|no such path in the store"
 nix_trace_frame=$'\xe2\x80\xa6 while '
-if at=$(grep -n -m1 -E "nix_fast_build:EVAL: [0-9]+ successes, [1-9]|error: Failed assertions|while evaluating (the attribute|the option|derivation)|$nix_trace_frame" -- "$LOG"); then
+if at=$(grep -n -m1 -E "nix_fast_build:EVAL: [0-9]+ successes, [1-9]|error: Failed assertions|while evaluating (the attribute|the option|derivation)|$nix_trace_frame" -- "$NET"); then
   class=eval-error
   evidence=$(awk -v from="${at%%:*}" '
     NR < from { next }
@@ -94,7 +93,7 @@ if at=$(grep -n -m1 -E "nix_fast_build:EVAL: [0-9]+ successes, [1-9]|error: Fail
     NR > from && /^[^[:space:]]/ { exit }
     /^[[:space:]]*error: [^[:space:]]/ { last = $0 }
     END { print last }
-  ' "$LOG" | sed 's/^[[:space:]]*//' | cut -c1-300)
+  ' "$NET" | sed 's/^[[:space:]]*//' | cut -c1-300)
 fi
 match compile-error -E '\.(c|cc|cpp|cxx|h|hh|hpp|hxx):[0-9]+:[0-9]+: (fatal )?error: |\[-Werror(=[a-z0-9-]+)?\]'
 match setup-hook-error -F 'Builder called die:'
@@ -113,6 +112,15 @@ match python-metadata-version-mismatch -F 'METADATA specifies version'
 match substitution-pattern-drift -E "ERROR: pattern .* doesn.t match anything in file"
 match import-from-derivation -F 'evaluate-every-system: import from derivation:'
 match runner-lost -E '^runner-lost: '
+if [ "$class" = check-error ]; then
+  evidence=$(awk '
+    { sub(/^[A-Za-z0-9][A-Za-z0-9+._-]*> /, "") }
+    /^error: Cannot build / { if (said != "") exit; block = 1; next }
+    block && /^[[:space:]]+> .*[^[:space:]]/ { said = $0; next }
+    block && /^[^[:space:]]/ { block = 0 }
+    END { print said }
+  ' "$NET" | sed 's/^[[:space:]]*//' | cut -c1-300)
+fi
 
 out "class" "$class"
 out "evidence" "$evidence"

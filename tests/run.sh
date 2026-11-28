@@ -665,6 +665,7 @@ eden> -- [CPMUtil] Using bundled package zbic@11b08f2712264bbed731545085cbd97020
 eden>   status: [6;"Could not resolve hostname"]
 eden> CMake Error at CMakeModules/CPMUtil.cmake:190 (file):
 eden>   file DOWNLOAD cannot compute hash on failed download
+error: Cannot build '/nix/store/aaaa-eden-0.2.1.drv'.
 LOG
 run_classify "$d" "$d/build.log"
 check "class sandbox-download" "sandbox-download" "$(get "$d" class)"
@@ -1404,9 +1405,10 @@ d="$WORK/t10d"
 mkdir -p "$d"
 : >"$d/out.env"
 cat >"$d/build.log" <<'LOG'
-error: Cannot build '/nix/store/iiii-durdraw-0.31.1.drv'.
+smoke> error: Cannot build '/nix/store/iiii-durdraw-0.31.1.drv'.
 smoke>        > Builder called die: makeWrapper doesn't understand the arg --prefix PATH : /nix/store/jjjj-ansilove-4.2.2/bin
 smoke>        > Backtrace:
+ERROR:nix_fast_build:Failed attributes: .#checks.x86_64-linux.smoke
 LOG
 run_classify "$d" "$d/build.log"
 check "a setup hook that dies is named" "setup-hook-error" "$(get "$d" class)"
@@ -3455,6 +3457,35 @@ gate() {
 check "a daily refresh on a weekday runs and restores the store" "0 run=yes store=restore " "$(gate 3 daily schedule)"
 check "the Sunday refresh saves it" "0 run=yes store=save " "$(gate 7 daily schedule)"
 check "a refresh dispatched on a weekday saves none" "0 run=yes store=restore " "$(gate 2 weekly workflow_dispatch)"
+
+echo "Test 60: a line printed by a check that passed never names the class of the check that failed"
+d="$WORK/t60"
+mkdir -p "$d"
+with_escapes >"$d/real.log" <<'LOG'
+=== log-ubuntu-24.04-arm
+^[[2mstd-detect-fixtures>^[[0m ^[[35;1mwarning:^[[0m unknown setting 'lazy-trees'^[[0m
+^[[2mstd-detect-fixtures>^[[0m original builder: main.cpp:2:11: note: Null pointer dereference
+^[[2mstd-detect-fixtures>^[[0m original builder: main.cpp:2:11: error: Null pointer dereference: pointer [ctunullpointer]
+^[[2mstd-devshell-pins-before-hooks>^[[0m no Makefile or custom installCheckPhase, doing nothing
+^[[2mstd-devshell-pins-before-hooks>^[[0m ^[[31;1merror:^[[0m Cannot build '^[[35;1m/nix/store/a92arlnn39dsms60qi2zcxkrzarrzdpm-std-devshell-pins-before-hooks.drv^[[0m'.^[[0m
+^[[2mstd-devshell-pins-before-hooks>^[[0m        Reason: ^[[31;1mbuilder failed with exit code 1^[[0m.^[[0m
+^[[2mstd-devshell-pins-before-hooks>^[[0m        Output paths:
+^[[2mstd-devshell-pins-before-hooks>^[[0m          ^[[35;1m/nix/store/lwiy2nk3s5852pgvmgpgbbk99dm7mjnq-std-devshell-pins-before-hooks^[[0m^[[0m
+WARNING:nix_fast_build.build:build std-devshell-pins-before-hooks exited with 1 (attempt 1/1)
+ERROR:nix_fast_build:BUILD: 29 successes, 1 failures
+ERROR:nix_fast_build:Failed attributes: .#checks.aarch64-linux.std-devshell-pins-before-hooks
+LOG
+classify_into() { # classify_into <log>
+  : >"$d/out.env"
+  GITHUB_OUTPUT="$d/out.env" bash "$standard_root/classify-build-failure.sh" "$1" build-error >"$d/clog" 2>&1
+}
+classify_into "$d/real.log"
+check "the failed check is check-error, though a fixture that passed printed a compiler error" "check-error" "$(get "$d" class)"
+check "and a check that died without a word has no line quoted for it" "" "$(get "$d" evidence)"
+awk '{ print } /Output paths:/ { getline; print; print "^[[2mstd-devshell-pins-before-hooks>^[[0m        Last 1 log lines:"; print "^[[2mstd-devshell-pins-before-hooks>^[[0m        > mkDevShell runs prek-shimful-0.5.10 before devStateHook has pinned its home, so it writes the real home" }' "$d/real.log" | with_escapes >"$d/said.log"
+classify_into "$d/said.log"
+check "a check that says why it failed has that line quoted, not a line of a build before it" \
+  "> mkDevShell runs prek-shimful-0.5.10 before devStateHook has pinned its home, so it writes the real home" "$(get "$d" evidence)"
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"
