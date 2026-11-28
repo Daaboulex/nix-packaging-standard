@@ -358,6 +358,10 @@ rec {
   devStateHook = ''
     export DEVSHELL_STATE="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.devshell"
     mkdir -p "$DEVSHELL_STATE"
+    DEVSHELL_TMP="''${XDG_RUNTIME_DIR:-/tmp}/ds-$(printf '%s' "$DEVSHELL_STATE" | sha256sum | cut -c1-8)"
+    mkdir -p "$DEVSHELL_TMP"
+    ln -sfn "$DEVSHELL_TMP" "$DEVSHELL_STATE/tmp"
+    export TMPDIR="$DEVSHELL_TMP"
     export NIX_CACHE_HOME="''${NIX_CACHE_HOME:-''${XDG_CACHE_HOME:-$HOME/.cache}/nix}"
     export XDG_CACHE_HOME="$DEVSHELL_STATE/cache"
     export PRE_COMMIT_HOME="$DEVSHELL_STATE/pre-commit"

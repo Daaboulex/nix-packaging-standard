@@ -3756,6 +3756,40 @@ report_fixture "$d/plain" '[]'
 run_report "$d/plain" "Update x 1 -> 2: build-error"
 check "a log that names no runner gets no runner section" "0" "$(grep -c '^### Runner$' "$d/plain/body.md")"
 
+echo "Test 64: std-home-proof gives the shell an empty TMPDIR of its own and names what it left there beside Nix's own folders"
+d="$WORK/t64"
+mkdir -p "$d/bin" "$d/inherited" "$d/repo"
+proof="$(nix build --no-link --print-out-paths "$standard_root#std-home-proof" 2>"$d/build.log")/bin/std-home-proof"
+check "std-home-proof builds" "yes" "$([ -x "$proof" ] && echo yes || echo no)"
+cat >"$d/bin/nix" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+*currentSystem*) printf 'x86_64-linux' ;;
+develop*)
+  t="${TMPDIR:-${0%/bin/nix}/inherited}"
+  mkdir -p "$t/nix-develop-1-0" "$t/nix-shell.AbCdEf"
+  : >"$t/nix-develop-1-0/.attrs.sh"
+  if [ -e "${0%/bin/nix}/stray" ]; then : >"$t/left-by-the-shell"; fi
+  ;;
+esac
+SH
+chmod +x "$d/bin/nix"
+printf 'use flake\n' >"$d/repo/.envrc"
+git -C "$d/repo" init -q
+git -C "$d/repo" add .envrc
+git -C "$d/repo" -c user.name=t -c user.email=t@localhost commit -q -m fixture
+prove() {
+  (cd "$d/repo" && PATH="$d/bin:$PATH" "$proof") >"$d/$1.log" 2>&1
+}
+prove clean
+check "a shell that leaves only Nix's own nix-develop-* and nix-shell.* folders passes" "0" "$?"
+check "and Nix made them in a TMPDIR the proof gave the shell, not in the one it inherited" "" "$(ls -A "$d/inherited")"
+: >"$d/stray"
+prove stray
+check "a shell that leaves anything else in that TMPDIR fails" "1" "$?"
+check "and the failure names what it left" "1" "$(grep -c '^\./left-by-the-shell$' "$d/stray.log")"
+check "and names none of Nix's own folders" "0" "$(grep -c '^\./nix-' "$d/stray.log")"
+
 echo
 echo "------------------------------------------"
 echo "passed: $pass   failed: $fail"

@@ -848,10 +848,24 @@ develop`, `nix run`, `nix shell`, and raw tool calls. Build outputs (`result*`),
 `node_modules/`, venvs) stay untracked via the baseline `.gitignore`; the
 `std-devstate` check fails a repo whose core entries went missing. The proof
 behind the rule, `std-home-proof`, runs at push time: it enters the dev shell
-in a fresh clone with an empty home and fails on anything written there; on a
-host the flake declares no dev shell for, it enters the hook set
-`host-hooks.nix` builds for that host instead, the shell that host actually
-uses.
+in a fresh clone with an empty home and an empty TMPDIR of its own, and fails
+on anything written in the home or left in that TMPDIR beside Nix's own
+`nix-develop-*` and `nix-shell.*` folders; on a host the flake declares no dev
+shell for, it enters the hook set `host-hooks.nix` builds for that host
+instead, the shell that host actually uses.
+
+The temp folder is the one place the hook keeps outside the tree: a unix socket
+path holds at most 108 bytes, and a test that binds one under pytest's
+`tmp_path` overruns that from a TMPDIR inside a clone. So `TMPDIR` is a short
+folder per repo under `$XDG_RUNTIME_DIR` (`/tmp` without one), and
+`.devshell/tmp` links to it so the repo still shows where. nix-direnv puts the
+caller's `TMPDIR` back after the hook, so under direnv only the link is made.
+Nix makes its own `nix-develop-*` and `nix-shell.*` folders in the TMPDIR it
+starts with, before any hook runs, and leaves them after a clean exit, so a
+caller running `nix develop` once per command points `TMPDIR` at the repo's
+`.devshell/tmp`. Nix refuses a TMPDIR that does not exist, and the link
+resolves only after a first entry and until its folder is cleared, as a reboot
+does.
 
 Every one of these shells is composed by `std.lib.mkDevShell`, which, after
 the pins and before the hook install, deletes each git hook whose second line
