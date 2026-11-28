@@ -48,7 +48,7 @@ awk -v names="$failed_names" -v attrs="$attr_names" '
     else if (name in attr) {
       if (rest ~ /^error:/) nix_block[name] = 1
       else if (rest !~ /^[[:space:]]/) nix_block[name] = 0
-      if (nix_block[name]) print
+      if (nix_block[name] || rest ~ /^[^[:space:]>]+\.\.\.+Failed$/) print
     }
     next
   }
@@ -115,10 +115,11 @@ match runner-lost -E '^runner-lost: '
 if [ "$class" = check-error ]; then
   evidence=$(awk '
     { sub(/^[A-Za-z0-9][A-Za-z0-9+._-]*> /, "") }
+    failed_hook == "" && match($0, /[^[:space:]>]+\.\.\.+Failed$/) { failed_hook = substr($0, RSTART) }
     /^error: Cannot build / { if (said != "") exit; block = 1; next }
     block && /^[[:space:]]+> .*[^[:space:]]/ { said = $0; next }
     block && /^[^[:space:]]/ { block = 0 }
-    END { print said }
+    END { print (failed_hook != "" ? failed_hook : said) }
   ' "$NET" | sed 's/^[[:space:]]*//' | cut -c1-300)
 fi
 

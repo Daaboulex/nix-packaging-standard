@@ -890,6 +890,28 @@ printf '%s\n' 'ERROR:nix_fast_build:Failed attributes: .#checks.aarch64-linux.op
 (GITHUB_OUTPUT="$d/out.env" bash "$CLASSIFY" "$d/build.log" build-error >"$d/clog" 2>&1)
 check "a failing package beside it keeps the build class" "build-error" "$(get "$d" class)"
 
+echo "Test 11j2: a hook run that failed names the hook that failed, not the last hook that ran"
+d="$WORK/t11j2"
+mkdir -p "$d"
+: >"$d/out.env"
+with_escapes >"$d/build.log" <<'LOG'
+^[[2mpre-commit>^[[0m ruff-format..............................................................Passed
+^[[2mpre-commit>^[[0m rumdl....................................................................Failed
+^[[2mpre-commit>^[[0m - hook id: rumdl
+^[[2mpre-commit>^[[0m   README.md:257:1: [MD076] Missing blank line between list items [*]
+^[[2mpre-commit>^[[0m typos....................................................................Passed
+^[[2mpre-commit>^[[0m ^[[31;1merror:^[[0m Cannot build '^[[35;1m/nix/store/sqnfg87wglp0yg48yj03v7k806fmsik3-pre-commit-run.drv^[[0m'.^[[0m
+^[[2mpre-commit>^[[0m        Reason: ^[[31;1mbuilder failed with exit code 1^[[0m.^[[0m
+^[[2mpre-commit>^[[0m        Last 25 log lines:
+^[[2mpre-commit>^[[0m        > shfmt....................................................................Passed
+^[[2mpre-commit>^[[0m        > typos....................................................................Passed
+ERROR:nix_fast_build:BUILD: 10 successes, 1 failures
+ERROR:nix_fast_build:Failed attributes: .#checks.x86_64-linux.pre-commit
+LOG
+(GITHUB_OUTPUT="$d/out.env" bash "$CLASSIFY" "$d/build.log" build-error >"$d/clog" 2>&1)
+check "a failed hook run is check-error" "check-error" "$(get "$d" class)"
+check "its evidence is the hook that failed" "rumdl....................................................................Failed" "$(get "$d" evidence)"
+
 echo "Test 11k: lines carrying the attribute prefix nix-fast-build writes are read, Nix's own lines only"
 d="$WORK/t11k"
 mkdir -p "$d"
