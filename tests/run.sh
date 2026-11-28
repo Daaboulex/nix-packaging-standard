@@ -3989,6 +3989,7 @@ check "an entry outside .devshell/ that the canonical .gitignore does not enforc
   "$(grep -cx 'FAIL  littered: untracked or ignored at the top of the clone, beside .devshell/ and the names the standard.s .gitignore enforces: runs/ scratch/ .ruff_cache/ node_modules/' "$d/littered.section")"
 check "a worktree outside .devshell/ is named, and one inside it is not" "1 0" \
   "$(grep -cxF "FAIL  littered: worktree(s) outside .devshell/: $outside" "$d/littered.section") $(grep -c 'work/inside' "$d/littered.section")"
+: >"$d/repos/tidy/CLAUDE.local.md"
 anchored tidy >"$d/tidy.section"
 check "a clone with nothing outside .devshell/ and the enforced names, and no worktree outside it, is not named" "0 1" \
   "$(grep -c '^FAIL' "$d/tidy.section") $(grep -c '^ok    tidy: ' "$d/tidy.section")"
