@@ -82,23 +82,28 @@ Every consumer repo follows these. Metadata (description + topics) is declared i
   a push to it as it does on `main`. `scripts/extra-branches.sh` names
   every other branch, `fleet-audit` reds it, and the Maintenance cleanup
   job prunes stale `update/*` branches.
+
 - **No per-repo dependabot**: GitHub Actions are pinned by SHA in this
   standard's reusable workflows and bumped here by dependabot; a consumer's
   callers pin no action, so a consumer `.github/dependabot.yml` has nothing to
   bump and consumers carry none. `fleet-audit` enforces this.
+
 - **Issues enabled**: the Update and Maintenance workflows report a failed update or
   lock bump by filing an issue, so every repo keeps GitHub Issues enabled — a
   disabled-Issues repo would swallow those failures silently. `fleet-audit`
   enforces this.
+
 - **Rule files**: every repo carries an `AGENTS.md` and a `CONTRIBUTING.md`.
   Each begins with the standard's own text (`heads/`), which `std-rule-files`
   holds it to, and keeps the repo's own rules under `## This project`.
   `AGENTS.md` is the one file written for an assistant that is tracked;
   `CLAUDE.md` and `GEMINI.md` stay on the ignore list, and `std-rule-files`
   refuses a `CLAUDE.md` tracked at the top of a repo.
+
 - **Keys and large files**: at the commit `ripsecrets` refuses a file that
   holds what reads as a key or a token, and `check-added-large-files` refuses a
   newly added file over 500 kB.
+
 - **Where things live**: why a repo exists is the README's first sentence. A
   decision's reason is the commit body, and a decision that shapes the project
   also gets one short file in `docs/`. Open work is one issue per matter, made
@@ -106,6 +111,7 @@ Every consumer repo follows these. Metadata (description + topics) is declared i
   Every form opens with what we want to achieve; a task also says when it is
   done.
   What was done is the git history. `CONTRIBUTING.md` says the rest.
+
 - **License**: the repo's `LICENSE` is **MIT** — it licenses *your* Nix packaging
   code, which is permissive and reusable. The packaged software's licence is
   declared in the derivation's `meta.license`, which **must be accurate**. Two
@@ -113,16 +119,20 @@ Every consumer repo follows these. Metadata (description + topics) is declared i
   upstream source) and **derivative transcriptions** (e.g. a module that
   re-expresses GPL config). Proprietary upstreams: MIT packaging + `meta.license`
   marked unfree.
+
 - **Topics**: `nix`, `nixos`, `flake` baseline; add `nixos-module` /
   `home-manager` when the repo ships one; then the software name and a few domain
   topics. Lowercase, hyphenated.
+
 - **Description**: `<Upstream Name> packaged for NixOS — <one concise clause>`.
   HM-only → "… Home Manager module — …"; forks lead with the fork's value-add;
   original (non-packaging) projects describe themselves directly. ≤120 chars,
   one clause, **no cross-repo references, no marketing fluff**.
+
 - **Architecture**: the flake's `systems` is the supported arch set; every arch
   dropped from the fleet canonical set carries a reason in `platforms` — see
   [Architecture and platforms](#architecture-and-platforms).
+
 - **Commit message**: `check-commit-message` runs on every commit's message.
   The subject reads `type(scope): summary`, lowercase after the prefix, at most
   72 characters, no full stop; a blank line; a body saying why; one `Test:`
@@ -202,13 +212,17 @@ against the tree:
 - **True to the code.** Every package attribute (`nix build .#x`), NixOS/Home
   Manager option path, and command the README shows resolves against the repo's
   flake. A documented output or option that does not exist is a defect.
+
 - **License agreement.** The License section, the `LICENSE` file, and the
   derivation `meta.license` state the same license (packaging MIT, per Repo
   conventions); a section disclaiming or contradicting the shipped LICENSE is wrong.
+
 - **No branding.** No maintainer attribution or personal-identity line; functional
   links (upstream, clone URL) stay.
+
 - **Plain, not marketing.** Concrete terms for what the repo is and does — no hype
   adjectives, no generic CI-boilerplate paragraph, no emoji.
+
 - **Written for a person who has never seen the repo.** The page answers, in
   this order: what it is and who it is for, whether it works and on what, how
   to install it, how to use it, what does not work, what to do when it
@@ -221,16 +235,19 @@ against the tree:
   holds only the floor, a title and an install section; no tool can judge
   whether a page reads well, so the rest is read by a person. The README of
   `steam-arm64-nix` is the worked example.
+
 - **Links resolve.** A reference to a file of the same repository is written
   as a link, and the `lychee` hook checks every relative link in every `.md`
   file, offline. A file name in backticks is not checked: it may name someone
   else's file, an upstream source or a runtime log. Measured before the rule
   was written: all 149 relative links of the fleet resolved, and 87 of 324
   backticked names matched no file, most of them not the repository's own.
+
 - **A table that restates the code is generated from it.** The detections
   table below is rendered by `flake-modules/detections.nix`, which the options
   read too, and the hook list by `flake-modules/hooks.nix`;
   `std-readme-tables-current` fails when either differs from the page.
+
 - **Options are listed in `docs/OPTIONS.md`, written from the modules.** A
   flake that exports a module names it in `perSystem`, under the heading its
   options are listed under:
@@ -252,14 +269,17 @@ against the tree:
   from the check by evaluation, so it works on a host the flake declares
   nothing for), so a type nixpkgs words differently cannot leave it behind.
   A flake that names no module gets neither the check nor the app.
+
 - **No history.** A page says what is true now. What a release changed lives
   in its tag message.
+
 - **A file for an assistant stays short.** The README is the one source, for
   a person and a tool alike. `AGENTS.md` holds only what the code cannot show,
   stays at 200 lines or under, and names no path under `/home` and no personal
   email address (`check-assistant-files`, which reads `CONTRIBUTING.md` as
   well). A rule that must hold becomes a hook or a check, never a sentence in
   that file.
+
 - **An open point is a question, never an errand.** `check-no-errands` refuses
   a line in a Markdown file that says who asks, waits for or confirms
   something with someone. Fenced blocks and inline code are not read.
@@ -631,6 +651,7 @@ works. So the standard makes every dropped arch **declared, with a reason**:
 
 - **To support an arch** — add it to `systems`. The native runner then builds
   and proves it on every push; nothing else to declare.
+
 - **To drop an arch** — record a one-line reason in `.github/update.json`
   `platforms`, keyed by the dropped arch:
 
@@ -1359,10 +1380,14 @@ doing any work.
   value is the one-line drop reason. Absent means the repo builds the full set.
   The supported set is never restated here — it stays in `systems`. See
   [Architecture and platforms](#architecture-and-platforms).
+
 - **`versionAttr`** matches both `version = "x"` and parameterized
   `<attr> ? "x"` default-argument forms.
+
 - **`versionFile`** decouples the version literal's location from `packageFile`.
+
 - **`revFile`** scopes the `rev` literal bump for commit-tracked upstreams.
+
 - **`hashes`** entries list SRI hash fields in evaluation-dependency order
   (source first), each a bare field name or `{"field","file"}` to disambiguate.
   The updater rewrites a field **by name**, and only the **first** literal of
@@ -1379,6 +1404,7 @@ doing any work.
   declared non-vendor field; a second source hash absorbs nothing, stays dummied,
   and the convergence loop can never finish. Declaring two fails closed with
   `config-error` — use `variantAssets` instead.
+
 - **`subpackages`** names attributes of the default package whose own
   fixed-output hashes nix-update must refresh too, each handed to it as
   `--subpackage`. nix-update reaches only the hashes of the package it updates,
@@ -1386,6 +1412,7 @@ doing any work.
   the daemon that embeds it, stays stale and the next bump fails on it. Expose
   that derivation through `passthru` (`passthru.ui = coolercontrol-ui-data;`)
   and list the attribute here (`"subpackages": [ "ui" ]`).
+
 - **`variantAssets`** is the multi-variant prebuilt-release mode (mutually
   exclusive with `hashes`). The updater enumerates the newest matching release's
   assets, takes each `<variant>` from `<assetPrefix><tag>-<variant><assetSuffix>`,
@@ -1397,6 +1424,7 @@ doing any work.
   and a newly published one is picked up with no config change. `defaultVariant`
   names the variant whose asset carries no `-<variant>` token, exactly
   `<assetPrefix><tag><assetSuffix>`. Pins outside the markers are never rewritten.
+
 - **`majorPattern`** (an ERE matching the whole version with one group, the
   major line) turns a new upstream major into a pin instead of a loss. When the
   newest tag's group differs from the current version's, the updater copies the
@@ -1408,7 +1436,9 @@ doing any work.
   hand edit; a release inside the same major pins nothing, and a version already
   pinned is left alone. Both marker pairs are required and the pattern may not
   contain `|`.
+
 - For commit-tracked packages prefer **`versionFile: "version.json"`**.
+
 - **`versionScheme`** controls the written version literal (commit-tracked types
   only). `literal` (default) writes the upstream string verbatim (a bare 7-char
   SHA for commit-tracked repos); `unstable-date` writes
@@ -1424,6 +1454,7 @@ doing any work.
   string untouched (git-snapshot packages like mesa-git whose version is
   upstream's self-reported value). Comparison is by `rev` for both non-`literal`
   schemes.
+
 - **`tagFilter`** (an ERE under `upstream`, for `github-release`/`github-tag`,
   and for the base-tag lookup of a `github-commit` package on `unstable-date`)
   pins to one tag namespace when upstream publishes several (e.g. `^[0-9]` to
@@ -1432,6 +1463,7 @@ doing any work.
   tracked namespace stays reachable behind a high-volume one — CachyOS/wine-cachyos
   carries ~370 rolling `experimental-*` tags ahead of its newest `*-wine` build
   tag. A filter that matches nothing fails closed with `no-matching-tag`.
+
 - **`trackOnly: true`** is the hand-mirrored mode: the updater only DETECTS
   upstream movement (against `trackFile`/`trackKey`, default
   `upstream-version.json`/`commit`) and files a `remirror-needed` reminder issue.
@@ -1448,6 +1480,7 @@ doing any work.
   upstream unchanged checks that the ledger lists exactly the files upstream
   has, and fails as `config-error` naming each difference. A ledger needs a
   `github-commit` upstream (`tests/run.sh` Test 2e).
+
 - **`verify.check`** is one of `elf` / `wrapper` / `desktop` / `eval`. `eval`
   (also the default when omitted) makes eval + a clean build the whole
   verification; the others additionally assert the named artifact exists under
