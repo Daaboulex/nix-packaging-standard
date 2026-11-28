@@ -25,7 +25,10 @@ let
     inherit hooks;
   };
 in
-pkgs.mkShell {
-  packages = [ pkgs.nil ] ++ pc.enabledPackages;
-  shellHook = (import (std.outPath + "/lib.nix")).devStateHook + pc.shellHook;
-}
+(import (std.outPath + "/lib.nix")).mkDevShell {
+  inherit pkgs;
+  config.pre-commit = {
+    settings = pc.config;
+    inherit (pc.config) installationScript;
+  };
+} { packages = [ pkgs.nil ]; }

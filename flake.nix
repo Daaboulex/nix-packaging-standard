@@ -1430,20 +1430,15 @@
             exec ${pkgs.nixfmt-tree}/bin/treefmt --no-cache "$@"
           '';
           packages.std-home-proof = import ./flake-modules/home-proof.nix { inherit pkgs; };
-          devShells.default = pkgs.mkShell {
-            packages =
-              with pkgs;
-              [
-                nil
-                nixfmt
-                jq
-                nodejs
-                shellcheck
-                check-jsonschema
-                config.pre-commit.settings.package
-              ]
-              ++ config.pre-commit.settings.enabledPackages;
-            shellHook = (import ./lib.nix).devStateHook + config.pre-commit.installationScript;
+          devShells.default = (import ./lib.nix).mkDevShell { inherit pkgs config; } {
+            packages = with pkgs; [
+              nil
+              nixfmt
+              jq
+              nodejs
+              shellcheck
+              check-jsonschema
+            ];
           };
         };
     };

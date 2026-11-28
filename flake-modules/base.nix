@@ -163,18 +163,13 @@ in
         exec ${pkgs.nixfmt-tree}/bin/treefmt --no-cache "$@"
       '';
 
-      devShells.default = pkgs.mkShell {
-        packages = [
-          pkgs.nil
-          config.pre-commit.settings.package
-        ]
-        ++ config.pre-commit.settings.enabledPackages;
-        # Self-contained dev state: shell-provided tools keep caches/homes in
-        # the project's gitignored .devshell/, never $HOME. The pins run
-        # BEFORE the hook install: inputsFrom would run git-hooks first and
-        # the hook tool would write its cache into the home. Custom shells
-        # do the same: devStateHook, then the installation script.
-        shellHook = (import ../lib.nix).devStateHook + config.pre-commit.installationScript;
+      # Self-contained dev state: shell-provided tools keep caches/homes in
+      # the project's gitignored .devshell/, never $HOME. The pins run
+      # BEFORE the hook install: inputsFrom would run git-hooks first and
+      # the hook tool would write its cache into the home. Custom shells
+      # are composed by the same mkDevShell.
+      devShells.default = (import ../lib.nix).mkDevShell { inherit pkgs config; } {
+        packages = [ pkgs.nil ];
       };
 
       checks = (lib.mapAttrs' (n: v: lib.nameValuePair "package-${n}" v) buildable) // {
