@@ -112,6 +112,7 @@ case "$*" in
     exit 0 ;;
   *"flake check --no-build"*) exit 0 ;;
   *"flake check"*)
+    [ -n "${STUB_CHECKS_KILL:-}" ] && kill -TERM "$PPID"
     [ -n "${STUB_CHECKS_FAIL:-}" ] && { echo "stub: a check in the suite failed" >&2; exit 1; }
     exit 0 ;;
   "eval "*) echo true; exit 0 ;;
@@ -2701,9 +2702,6 @@ printf 'type/bug\n' >"$d/labels"
 GH_CALLS="$d/calls" GH_LABELS="$d/labels" PATH="$d/bin:$PATH" PKG_REPOS_DIR="$d/repos" bash "$HEADS/../sync-meta.sh" --check forms >"$d/log" 2>&1
 check "a repo that carries the issue forms and no update.json is held to the labels too" "1" "$?"
 check "and its drift is named as labels" "1" "$(grep -c 'DRIFT  forms \[labels\]' "$d/log")"
-mkdir -p "$d/tmp"
-TMPDIR="$d/tmp" GH_CALLS="$d/calls" GH_LABELS="$d/labels" PATH="$d/bin:$PATH" PKG_REPOS_DIR="$d/repos" bash "$HEADS/../sync-meta.sh" --check forms >"$d/log" 2>&1
-check "and the error file of its GitHub queries goes under TMPDIR" "yes" "$([ -f "$d/tmp/sync-meta-gh.err" ] && echo yes || echo no)"
 
 echo "Test 40: fleet-roll's restore removes a file the sync wrote, also one the restored ignore list hides again"
 d="$WORK/t41"
@@ -3909,6 +3907,58 @@ leave clone
 check "a shell that leaves an untracked or an ignored entry in the clone fails" "1" "$?"
 check "and the failure names each" "1 1" "$(grep -cx 'scratch\.txt' "$d/clone.log") $(grep -cx '\.ruff_cache/' "$d/clone.log")"
 check "and neither .devshell/ nor .pre-commit-config.yaml" "0" "$(grep -cxE '\.devshell/|\.pre-commit-config\.yaml' "$d/clone.log")"
+
+echo "Test 69: sync-meta, update.sh, check-commit-message and check-nix-blocks remove what they make under TMPDIR on every exit path, and heal-overlays without GITHUB_OUTPUT writes its outputs to stdout"
+d="$WORK/t69"
+mkdir -p "$d/bin" "$d/repos/plain/.github" "$d/update/.github" "$d/docs" "$d/healless"
+for job in meta nix-update suite scanner blocks; do mkdir -p "$d/tmp/$job"; done
+left_in() { find "$d/tmp/$1" -mindepth 1 -printf '%P\n'; }
+cat >"$d/bin/gh" <<'SH'
+#!/usr/bin/env bash
+readlink "/proc/$$/fd/2" >>"$STREAMS_AT"
+echo "gh: the query failed" >&2
+exit 1
+SH
+cat >"$d/bin/killing-scanner" <<'SH'
+#!/usr/bin/env bash
+kill -TERM "$PPID"
+SH
+cp "$d/bin/killing-scanner" "$BIN/fake-nix-update-killed"
+chmod +x "$d/bin/gh" "$d/bin/killing-scanner" "$BIN/fake-nix-update-killed"
+git -C "$d/repos/plain" init -q
+git -C "$d/repos/plain" remote add origin https://github.com/owner/plain.git
+printf '{"description":"Plain packaged for NixOS","topics":["nix"]}\n' >"$d/repos/plain/.github/update.json"
+(TMPDIR="$d/tmp/meta" STREAMS_AT="$d/streams" PATH="$d/bin:$PATH" PKG_REPOS_DIR="$d/repos" bash "$standard_root/sync-meta.sh" --check plain >"$d/meta.log" 2>&1)
+check "sync-meta names the error gh gave" "1" "$(grep -c '^ERROR  plain: could not query GitHub metadata: gh: the query failed$' "$d/meta.log")"
+check "from a file under the TMPDIR it was given" "1" "$(grep -c "^$(cd "$d/tmp/meta" && pwd -P)/" "$d/streams")"
+check "and leaves nothing there" "" "$(left_in meta)"
+cp "$WORK/t16/.github/update.json" "$d/update/.github/update.json"
+printf '{\n  version = "1.0.0";\n  hash = "sha256-old";\n}\n' >"$d/update/package.nix"
+TMPDIR="$d/tmp/nix-update" NIX_UPDATE="fake-nix-update-killed" run_update "$d/update" 2>>"$d/stopped.err"
+check "update.sh stopped while nix-update ran" "143" "$RC"
+check "and left nothing under TMPDIR" "" "$(left_in nix-update)"
+printf '{\n  version = "1.0.0";\n  hash = "sha256-old";\n}\n' >"$d/update/package.nix"
+TMPDIR="$d/tmp/suite" STUB_CHECKS_KILL=1 NIX_UPDATE="fake-nix-update" run_update "$d/update" 2>>"$d/stopped.err"
+check "update.sh stopped while its check suite ran" "143" "$RC"
+check "and left nothing under TMPDIR" "" "$(left_in suite)"
+printf 'fix(update): keep the lock\n\nThe lock moved.\n\nTest: tests/run.sh\nCause: a race\n' >"$d/message"
+(cd "$d" && TMPDIR="$d/tmp/scanner" SECRET_SCANNER="$d/bin/killing-scanner" bash "$CHECKER" "$d/message" >"$d/message.log" 2>&1) 2>>"$d/stopped.err"
+check "check-commit-message stopped while its secret scanner ran" "143" "$?"
+check "and left nothing under TMPDIR" "" "$(left_in scanner)"
+cat >"$d/docs/README.md" <<'MD'
+# Doc
+
+```nix
+{ a = 1; }
+```
+MD
+gawk_bin="$(nix build --no-link --print-out-paths --inputs-from "$standard_root" 'nixpkgs#gawk^out' 2>"$d/gawk.log")/bin"
+(cd "$d/docs" && TMPDIR="$d/tmp/blocks" PATH="$gawk_bin:$PATH" bash "$standard_root/scripts/check-nix-blocks.sh" >"$d/blocks.log" 2>&1)
+check "check-nix-blocks passes a block that parses" "0" "$?"
+check "and leaves nothing under TMPDIR" "" "$(left_in blocks)"
+(cd "$d/healless" && env -u GITHUB_OUTPUT bash "$HEAL" 2>&1 | cat >"$d/heal.log")
+check "heal-overlays without GITHUB_OUTPUT, piped as the maintenance workflow pipes it, exits 0 where there is nothing to heal" "0" "$?"
+check "and writes its outputs to stdout" "1 1" "$(grep -cx 'kept=' "$d/heal.log") $(grep -cx 'healed=' "$d/heal.log")"
 
 echo
 echo "------------------------------------------"

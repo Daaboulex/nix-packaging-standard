@@ -16,7 +16,11 @@ set -uo pipefail
 # each clone's origin.
 
 REPOS_DIR="${PKG_REPOS_DIR:?set PKG_REPOS_DIR to the directory holding the packaging-repo clones}"
-gh_err="${TMPDIR:-/tmp}/sync-meta-gh.err"
+gh_err=$(mktemp) || {
+  echo "sync-meta: could not create a file for gh's errors under ${TMPDIR:-/tmp}" >&2
+  exit 1
+}
+trap 'rm -f "$gh_err"' EXIT
 
 gh_slug() {
   local u

@@ -5,6 +5,7 @@ free_names_allowed='with { }; '
 nix_parse() { nix-instantiate --store dummy:// --parse "$@" >/dev/null; }
 nix_parse --expr "$free_names_allowed{ }"
 work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
 find . -type f -name '*.md' -printf '%P\0' >"$work/documents"
 mapfile -d '' -t documents <"$work/documents"
 

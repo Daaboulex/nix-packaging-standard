@@ -9,6 +9,8 @@ set -euo pipefail
 
 OUTPUT_FILE="${GITHUB_OUTPUT:-/tmp/update-outputs.env}"
 : >"$OUTPUT_FILE"
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
 
 output() {
   case "$2" in
@@ -52,12 +54,10 @@ fi
 # --print-build-logs puts the builder's own output in the log the workflow
 # classifies.
 check_suite() {
-  local clog rc
-  clog=$(mktemp)
+  local clog="$scratch/check-suite.log" rc
   nix flake check --keep-going --no-eval-cache --print-build-logs 2>&1 | tee "$clog"
   rc=${PIPESTATUS[0]}
   if [ "$rc" -eq 0 ]; then
-    rm -f "$clog"
     return 0
   fi
   err "Check suite failed"
@@ -68,7 +68,6 @@ check_suite() {
   else
     output "error_type" "eval-error"
   fi
-  rm -f "$clog"
   return 1
 }
 
@@ -411,7 +410,7 @@ if [ -z "$VARIANT_ASSETS" ] && [ "$TRACK_ONLY" != "true" ] &&
   # literal: by default it rewrites the file that defines the package, and a
   # repo whose package.nix only takes the version as an argument then changes
   # nothing while nix-update has already seen the newer release.
-  NIX_UPDATE_LOG=$(mktemp)
+  NIX_UPDATE_LOG="$scratch/nix-update.log"
   SUBPACKAGE_ARGS=()
   while IFS= read -r subpackage; do
     SUBPACKAGE_ARGS+=(--subpackage "$subpackage")
@@ -429,7 +428,6 @@ if [ -z "$VARIANT_ASSETS" ] && [ "$TRACK_ONLY" != "true" ] &&
     NIX_UPDATE_FAILED=yes
   fi
   SEEN_VERSION=$(grep -m1 -oP '^Update \S+ -> \K\S+' "$NIX_UPDATE_LOG" || true)
-  rm -f "$NIX_UPDATE_LOG"
   if [ -n "$SEEN_VERSION" ]; then
     output "new_version" "$SEEN_VERSION"
   fi

@@ -42,12 +42,11 @@ set -uo pipefail
 #
 # Contract: exit 0 = ran (see outputs), exit 1 = malformed fix / probe error /
 # failed removal (fail closed), exit 2 = environment error. Outputs
-# (GITHUB_OUTPUT or /tmp/heal-outputs.env):
+# (GITHUB_OUTPUT, or stdout without one):
 #   kept=<names>   healed=<names>
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUTPUT_FILE="${GITHUB_OUTPUT:-/tmp/heal-outputs.env}"
-: >"$OUTPUT_FILE"
+OUTPUT_FILE="${GITHUB_OUTPUT:-/dev/stdout}"
 output() { echo "$1=$2" >>"$OUTPUT_FILE"; }
 log() { echo "==> $*"; }
 err() { echo "::error::$*"; }
