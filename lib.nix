@@ -358,10 +358,15 @@ rec {
   devStateHook = ''
     export DEVSHELL_STATE="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.devshell"
     mkdir -p "$DEVSHELL_STATE"
-    DEVSHELL_TMP="''${XDG_RUNTIME_DIR:-/tmp}/ds-$(printf '%s' "$DEVSHELL_STATE" | sha256sum | cut -c1-8)"
+    DEVSHELL_TMP="''${XDG_RUNTIME_DIR:-/tmp}/d$(printf '%s' "$DEVSHELL_STATE" | sha256sum | cut -c1-6)"
     mkdir -p "$DEVSHELL_TMP"
-    ln -sfn "$DEVSHELL_TMP" "$DEVSHELL_STATE/tmp"
-    export TMPDIR="$DEVSHELL_TMP"
+    if why=$(ln -sfnT "$DEVSHELL_TMP" "$DEVSHELL_STATE/tmp" 2>&1); then
+      export DEVSHELL_TMP TMPDIR="$DEVSHELL_TMP" TMP="$DEVSHELL_TMP" TEMP="$DEVSHELL_TMP" TEMPDIR="$DEVSHELL_TMP"
+    else
+      echo "devStateHook: TMPDIR, TMP, TEMP and TEMPDIR stay as they were until .devshell/tmp is moved aside: $why" >&2
+      unset DEVSHELL_TMP
+    fi
+    unset why
     export NIX_CACHE_HOME="''${NIX_CACHE_HOME:-''${XDG_CACHE_HOME:-$HOME/.cache}/nix}"
     export XDG_CACHE_HOME="$DEVSHELL_STATE/cache"
     export PRE_COMMIT_HOME="$DEVSHELL_STATE/pre-commit"

@@ -16,6 +16,7 @@ set -uo pipefail
 # each clone's origin.
 
 REPOS_DIR="${PKG_REPOS_DIR:?set PKG_REPOS_DIR to the directory holding the packaging-repo clones}"
+gh_err="${TMPDIR:-/tmp}/sync-meta-gh.err"
 
 gh_slug() {
   local u
@@ -74,16 +75,16 @@ for repo in "${targets[@]}"; do
 
   # One query, and a FAILED query is an error, never silently-empty live state:
   # swallowing a transient gh fault used to invent drift out of a remote blip.
-  if ! live=$(gh repo view "$(gh_slug "$repo")" --json description,repositoryTopics 2>/tmp/sync-meta-gh.err); then
-    echo "ERROR  $repo: could not query GitHub metadata: $(tail -1 /tmp/sync-meta-gh.err)"
+  if ! live=$(gh repo view "$(gh_slug "$repo")" --json description,repositoryTopics 2>"$gh_err"); then
+    echo "ERROR  $repo: could not query GitHub metadata: $(tail -1 "$gh_err")"
     drift=1
     continue
   fi
   live_desc=$(jq -r '.description // ""' <<<"$live")
   live_topics=$(jq -r '(.repositoryTopics // [])[].name' <<<"$live" | sort)
 
-  if ! live_labels=$(gh label list -R "$(gh_slug "$repo")" --limit 200 --json name --jq '.[].name' 2>/tmp/sync-meta-gh.err); then
-    echo "ERROR  $repo: could not query GitHub labels: $(tail -1 /tmp/sync-meta-gh.err)"
+  if ! live_labels=$(gh label list -R "$(gh_slug "$repo")" --limit 200 --json name --jq '.[].name' 2>"$gh_err"); then
+    echo "ERROR  $repo: could not query GitHub labels: $(tail -1 "$gh_err")"
     drift=1
     continue
   fi

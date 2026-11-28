@@ -856,10 +856,12 @@ instead, the shell that host actually uses.
 
 The temp folder is the one place the hook keeps outside the tree: a unix socket
 path holds at most 108 bytes, and a test that binds one under pytest's
-`tmp_path` overruns that from a TMPDIR inside a clone. So `TMPDIR` is a short
-folder per repo under `$XDG_RUNTIME_DIR` (`/tmp` without one), and
-`.devshell/tmp` links to it so the repo still shows where. nix-direnv puts the
-caller's `TMPDIR` back after the hook, so under direnv only the link is made.
+`tmp_path` overruns that from a TMPDIR inside a clone. So `TMPDIR`, `TMP`,
+`TEMP` and `TEMPDIR` name a short folder per repo under `$XDG_RUNTIME_DIR`, and
+`.devshell/tmp` links to it so the repo still shows where. Only where
+`XDG_RUNTIME_DIR` is unset does that folder fall back to `/tmp`, under a name
+any user there can predict. nix-direnv puts the caller's four variables back
+after the hook, so the canonical `.envrc` sets them again from `$DEVSHELL_TMP`.
 Nix makes its own `nix-develop-*` and `nix-shell.*` folders in the TMPDIR it
 starts with, before any hook runs, and leaves them after a clean exit, so a
 caller running `nix develop` once per command points `TMPDIR` at the repo's

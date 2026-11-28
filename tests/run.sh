@@ -2701,6 +2701,9 @@ printf 'type/bug\n' >"$d/labels"
 GH_CALLS="$d/calls" GH_LABELS="$d/labels" PATH="$d/bin:$PATH" PKG_REPOS_DIR="$d/repos" bash "$HEADS/../sync-meta.sh" --check forms >"$d/log" 2>&1
 check "a repo that carries the issue forms and no update.json is held to the labels too" "1" "$?"
 check "and its drift is named as labels" "1" "$(grep -c 'DRIFT  forms \[labels\]' "$d/log")"
+mkdir -p "$d/tmp"
+TMPDIR="$d/tmp" GH_CALLS="$d/calls" GH_LABELS="$d/labels" PATH="$d/bin:$PATH" PKG_REPOS_DIR="$d/repos" bash "$HEADS/../sync-meta.sh" --check forms >"$d/log" 2>&1
+check "and the error file of its GitHub queries goes under TMPDIR" "yes" "$([ -f "$d/tmp/sync-meta-gh.err" ] && echo yes || echo no)"
 
 echo "Test 40: fleet-roll's restore removes a file the sync wrote, also one the restored ignore list hides again"
 d="$WORK/t41"
@@ -3789,6 +3792,59 @@ prove stray
 check "a shell that leaves anything else in that TMPDIR fails" "1" "$?"
 check "and the failure names what it left" "1" "$(grep -c '^\./left-by-the-shell$' "$d/stray.log")"
 check "and names none of Nix's own folders" "0" "$(grep -c '^\./nix-' "$d/stray.log")"
+
+echo "Test 65: devStateHook points TMPDIR, TMP, TEMP and TEMPDIR at one short folder linked from .devshell/tmp, and leaves a real .devshell/tmp folder alone"
+d="$WORK/t65"
+mkdir -p "$d/run" "$d/outer" "$d/elsewhere" "$d/repo"
+git -C "$d/repo" init -q
+hook=$(nix eval --raw --file "$standard_root/lib.nix" devStateHook)
+state="$(git -C "$d/repo" rev-parse --show-toplevel)/.devshell"
+want="$d/run/d$(printf '%s' "$state" | sha256sum | cut -c1-6)"
+cat >"$d/enter.sh" <<'SH'
+eval "$HOOK"
+printf '%s|%s|%s|%s|%s\n' "${DEVSHELL_TMP-unset}" "$TMPDIR" "$TMP" "$TEMP" "$TEMPDIR"
+SH
+enter() {
+  (cd "$d/repo" && env HOOK="$hook" XDG_RUNTIME_DIR="$d/run" TMPDIR="$d/outer" TMP="$d/outer" TEMP="$d/outer" TEMPDIR="$d/outer" \
+    bash "$d/enter.sh") 2>"$d/$1.err"
+}
+check "DEVSHELL_TMP and the four temp variables name one folder under the runtime dir" "$want|$want|$want|$want|$want" "$(enter first)"
+check "the folder exists" "yes" "$([ -d "$want" ] && echo yes || echo no)"
+check ".devshell/tmp links to it" "$want" "$(readlink "$state/tmp")"
+ln -sfn "$d/elsewhere" "$state/tmp"
+enter again >/dev/null
+check "a link that points elsewhere is replaced" "$want" "$(readlink "$state/tmp")"
+check "and nothing lands in the folder it pointed at" "" "$(ls -A "$d/elsewhere")"
+rm "$state/tmp"
+mkdir "$state/tmp"
+: >"$state/tmp/kept"
+check "a real .devshell/tmp folder leaves every temp variable as it was" "unset|$d/outer|$d/outer|$d/outer|$d/outer" "$(enter refused)"
+check "and what it holds is untouched" "kept" "$(ls -A "$state/tmp")"
+check "and the hook names it once, in one line" "1|1" "$(grep -cF "$state/tmp" "$d/refused.err")|$(wc -l <"$d/refused.err")"
+
+echo "Test 66: the canonical .envrc sets TMPDIR, TMP, TEMP and TEMPDIR again after nix-direnv puts the caller's back, and only where the hook linked the folder"
+d="$WORK/t66"
+mkdir -p "$d/run" "$d/outer" "$d/repo"
+git -C "$d/repo" init -q
+state="$(git -C "$d/repo" rev-parse --show-toplevel)/.devshell"
+want="$d/run/d$(printf '%s' "$state" | sha256sum | cut -c1-6)"
+cat >"$d/load.sh" <<'SH'
+use() {
+  local saved=("$TMPDIR" "$TMP" "$TEMP" "$TEMPDIR")
+  eval "$HOOK"
+  export TMPDIR="${saved[0]}" TMP="${saved[1]}" TEMP="${saved[2]}" TEMPDIR="${saved[3]}"
+}
+. "$ENVRC"
+printf '%s|%s|%s|%s\n' "$TMPDIR" "$TMP" "$TEMP" "$TEMPDIR"
+SH
+load() {
+  (cd "$d/repo" && env HOOK="$hook" ENVRC="$standard_root/.envrc" XDG_RUNTIME_DIR="$d/run" TMPDIR="$d/outer" TMP="$d/outer" TEMP="$d/outer" TEMPDIR="$d/outer" \
+    bash "$d/load.sh") 2>"$d/$1.err"
+}
+check "under direnv the four temp variables name the folder the hook linked" "$want|$want|$want|$want" "$(load linked)"
+rm "$state/tmp"
+mkdir "$state/tmp"
+check "and with a real .devshell/tmp folder they stay the caller's" "$d/outer|$d/outer|$d/outer|$d/outer" "$(load refused)"
 
 echo
 echo "------------------------------------------"
